@@ -1119,7 +1119,7 @@ class Handler(SimpleHTTPRequestHandler):
             if self.headers.get_content_type() != "application/json":
                 raise ValueError("Content-Type must be application/json.")
             length = int(self.headers.get("Content-Length", "0"))
-            limit = 67108864 if self.path in ("/api/edit-nodes", "/api/path-report") else 10000000 if self.path == "/api/project" else 100000
+            limit = 67108864 if self.path in ("/api/edit-nodes", "/api/path-report", "/api/uncertainty") else 10000000 if self.path == "/api/project" else 100000
             if length <= 0 or length > limit:
                 raise ValueError("Invalid request size.")
             data = json.loads(self.rfile.read(length))
@@ -1144,6 +1144,9 @@ class Handler(SimpleHTTPRequestHandler):
                 response = propose_branch(data, key.strip())
             elif self.path == "/api/branch/apply":
                 response = apply_branch(data)
+            elif self.path == "/api/uncertainty":
+                from financial_twin.uncertainty import DEFAULT_UNCERTAINTY, analyse
+                response = analyse(data.get("nodes"), data.get("uncertainty", DEFAULT_UNCERTAINTY))
             elif self.path == "/api/edit-nodes":
                 response = edit_nodes(data)
             elif self.path == "/api/path-report":

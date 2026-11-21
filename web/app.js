@@ -21,6 +21,10 @@ const state = {
   revision: 0,
   openDetails: new Set(['branch-info']),
   presets: [],
+  showRange: false,
+  range: null,
+  rangeKey: '',
+  rangeLoading: '',
   spineRaf: null,
   spineLastMs: 0,
   spineNodesMeta: [],
@@ -1227,6 +1231,114 @@ function renderTuning(data) {
    STAGE 3A: OPEN ASTRAL TIMELINE + CORNER MINIMAP + END SUMMARY
    ========================================================================== */
 
+// ── Uncertainty range: how far a path could move if its estimates are off (POST /api/uncertainty) ──
+
+function nodesKey() {
+  return [...state.nodes.values()].map(n => `${n.id}:${Math.round(n.state.net_worth_chf)}:${Math.round(n.state.cash_chf)}`).sort().join('|');
+}
+
+// The range data if it is switched on and still matches the nodes on screen, otherwise null.
+function currentRange() {
+  if (!state.showRange || !state.range || state.rangeKey !== nodesKey()) return null;
+  return state.range;
+}
+
+function rerenderForRange() {
+  if (!state.nodes.size) return;
+  if (state.resultsView === 'tree') renderTreeGraph();
+  else renderTimelineView();
+  const node = state.nodes.get(state.selectedId);
+  const section = byId('inspector-range');
+  if (node && section) fillRangeSection(section, node);
+}
+
+async function ensureRange() {
+  if (!state.showRange || !state.nodes.size) return;
+  const key = nodesKey();
+  if ((state.range && state.rangeKey === key) || state.rangeLoading === key) return;
+  state.rangeLoading = key;
+  byId('range-toggle')?.classList.add('is-loading');
+  try {
+    const result = await request('/api/uncertainty', { nodes: [...state.nodes.values()] });
+    if (state.rangeLoading !== key) return;
+    state.range = result;
+    state.rangeKey = key;
+    rerenderForRange();
+  } catch (error) {
+    showToast(`Could not calculate the range: ${error.message}`, { error: true });
+    setRangeVisible(false);
+  } finally {
+    if (state.rangeLoading === key) state.rangeLoading = '';
+    byId('range-toggle')?.classList.remove('is-loading');
+  }
+}
+
+function setRangeVisible(on) {
+  state.showRange = on;
+  const toggle = byId('range-toggle');
+  if (toggle) {
+    toggle.setAttribute('aria-pressed', String(on));
+    toggle.textContent = on ? 'Hide range' : 'Show range';
+  }
+  rerenderForRange();
+  if (on) ensureRange();
+}
+
+const rangeOf = (range, node) => range?.nodes?.[node.id] || null;
+
+// Compact ±label for an edge or card: % of the central value, or CHF when a % would mislead.
+function rangeBadge(range, node, field = 'net_worth') {
+  const span = rangeOf(range, node)?.[field];
+  if (!span) return null;
+  const centre = node.state[`${field}_chf`];
+  const half = (span[1] - span[0]) / 2;
+  if (half < 0.5) return null;
+  const share = half / Math.abs(centre || 1);
+  return Math.abs(centre) >= 5000 && share <= 1 ? `±${Math.round(share * 100)}%` : `±${compactChf(half)}`;
+}
+
+function rangeDelta(value, centre) {
+  const delta = value - centre;
+  const percent = Math.abs(centre) >= 1000 ? ` (${delta >= 0 ? '+' : '−'}${Math.abs(delta / centre * 100).toFixed(1)}%)` : '';
+  return `${moneySigned(delta)}${percent}`;
+}
+
+function fillRangeSection(section, node) {
+  section.replaceChildren();
+  const range = currentRange();
+  if (!state.showRange) {
+    section.append(el('button', { type: 'button', class: 'range-inline-toggle', text: 'Show how far this could move',
+      onclick: () => setRangeVisible(true) }));
+    return;
+  }
+  if (!range) { section.append(el('p', { class: 'range-pending', text: 'Calculating the range…' })); return; }
+  const span = rangeOf(range, node);
+  if (!span) return;
+  const table = el('table', { class: 'range-table' },
+    el('thead', {}, el('tr', {}, el('th', { text: '' }), el('th', { text: 'Value' }), el('th', { text: 'vs. central' }))));
+  const body = el('tbody');
+  for (const [field, title] of [['net_worth', 'Net worth'], ['cash', 'Cash']]) {
+    const centre = node.state[`${field}_chf`];
+    const [low, high] = span[field];
+    body.append(el('tr', { class: 'range-group' }, el('th', { colspan: 3, text: title })));
+    body.append(el('tr', {}, el('td', { text: 'Pessimistic' }), el('td', { class: low < 0 ? 'is-neg' : '', text: money(low) }), el('td', { text: rangeDelta(low, centre) })));
+    body.append(el('tr', { class: 'is-central' }, el('td', { text: 'Central' }), el('td', { text: money(centre) }), el('td', { text: '—' })));
+    body.append(el('tr', {}, el('td', { text: 'Optimistic' }), el('td', { text: money(high) }), el('td', { text: rangeDelta(high, centre) })));
+  }
+  table.append(body);
+  section.append(el('h3', { text: 'How far this could move' }), table);
+  if (span.cash[0] < 0 && node.state.cash_chf >= 0) section.append(el('p', { class: 'range-warning', text: '⚠ Cash would be negative here in the pessimistic case.' }));
+  const shortfall = range.first_shortfall?.[node.branch_id];
+  if (shortfall) section.append(el('p', { class: 'range-warning', text: `In the pessimistic case this path first runs out of cash in ${shortfall.date}.` }));
+  const drivers = (range.drivers?.[node.branch_id] || []).filter(item => Math.abs(item.high - item.low) >= 1).slice(0, 4);
+  if (drivers.length) {
+    section.append(el('h4', { text: 'What matters most (end of this path)' }),
+      el('ul', { class: 'range-drivers' }, ...drivers.map(item => el('li', {}, el('span', { text: item.label }),
+        el('strong', { text: `${moneySigned(item.low)} / ${moneySigned(item.high)}` })))));
+  }
+  section.append(el('p', { class: 'range-note', text: range.note }));
+}
+
 function renderTimelineView() {
   if (!state.nodes.size) return;
   const index = buildTreeIndex();
@@ -1266,6 +1378,7 @@ function renderTimelineView() {
   renderEndSummary(activeMeta, index);
   renderTrajectoryChart(activeMeta, index);
   startSpineAnimation();
+  ensureRange();
 }
 
 function renderVerticalTimeline(milestones, activeMeta, index, layout) {
@@ -1347,7 +1460,20 @@ function renderVerticalTimeline(milestones, activeMeta, index, layout) {
       ${s.total_debt_chf > 0 ? `<span>Debt <strong>${escapeHtml(money(s.total_debt_chf))}</strong></span>` : ''}
     `;
 
-    content.append(eyebrow, heading, prose, figures);
+    const range = currentRange();
+    const badge = prevMilestone ? rangeBadge(range, node) : null;
+    if (badge) {
+      const span = rangeOf(range, node).net_worth;
+      content.append(el('div', { class: 'vnode-edge-range', title: `Net worth by ${node.date}: ${money(span[0])} – ${money(span[1])} if estimates are off`, text: badge }));
+    }
+    content.append(eyebrow, heading);
+    const span = rangeOf(range, node)?.net_worth;
+    if (span && span[1] - span[0] >= 1) {
+      const centre = node.state.net_worth_chf;
+      const pct = value => Math.abs(centre) >= 1000 ? ` (${value >= centre ? '+' : '−'}${Math.abs((value - centre) / centre * 100).toFixed(0)}%)` : '';
+      content.append(el('div', { class: 'vnode-range', text: `Range ${compactChf(span[0])} – ${compactChf(span[1])}${pct(span[0])}${pct(span[1])}` }));
+    }
+    content.append(prose, figures);
 
     const links = document.createElement('div');
     links.className = 'vnode-links';
@@ -1915,7 +2041,11 @@ function renderTrajectoryChart(activeMeta, index) {
   const baseChain = parentMeta?.chain || [];
   const isBranch = Boolean(parentMeta && baseChain.length > 0);
 
+  const range = currentRange();
+  const field = metric === 'cash_chf' ? 'cash' : 'net_worth';
+  const spans = range ? activeChain.map(n => rangeOf(range, n)?.[field]).filter(Boolean) : [];
   const allValues = activeChain.map(n => n.state[metric]);
+  for (const span of spans) allValues.push(span[0], span[1]);
   if (isBranch) allValues.push(...baseChain.map(n => n.state[metric]));
   let minVal = Math.min(0, ...allValues);
   let maxVal = Math.max(...allValues, 1000);
@@ -1945,6 +2075,10 @@ function renderTrajectoryChart(activeMeta, index) {
   const activePathD = toPath(activeChain);
   const areaD = `${activePathD} L${xOf(activeChain[activeChain.length - 1].month).toFixed(1)},${yOf(minVal).toFixed(1)} L${xOf(activeChain[0].month).toFixed(1)},${yOf(minVal).toFixed(1)} Z`;
   const basePathD = isBranch ? toPath(baseChain) : '';
+  const banded = spans.length === activeChain.length ? activeChain : [];
+  const bandD = banded.length ? [
+    ...banded.map((n, i) => `${i === 0 ? 'M' : 'L'}${xOf(n.month).toFixed(1)},${yOf(rangeOf(range, n)[field][1]).toFixed(1)}`),
+    ...[...banded].reverse().map(n => `L${xOf(n.month).toFixed(1)},${yOf(rangeOf(range, n)[field][0]).toFixed(1)}`), 'Z'].join(' ') : '';
   const zeroY = yOf(0);
 
   const svgNs = 'http://www.w3.org/2000/svg';
@@ -1977,6 +2111,7 @@ function renderTrajectoryChart(activeMeta, index) {
     ${gridLines}
     ${zeroLine}
     <path d="${areaD}" fill="url(#trajGrad)" />
+    ${bandD ? `<path d="${bandD}" fill="rgba(255,161,89,0.18)" stroke="rgba(255,161,89,0.45)" stroke-width="0.8" />` : ''}
     ${isBranch ? `<path d="${basePathD}" fill="none" stroke="#a88770" stroke-width="1.8" stroke-dasharray="5 5" opacity="0.85" />` : ''}
     <path d="${activePathD}" fill="none" stroke="#ffa159" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
     ${yearTicks}
@@ -1987,6 +2122,7 @@ function renderTrajectoryChart(activeMeta, index) {
     <div class="legend-items">
       <span class="legend-item"><i class="legend-swatch is-active"></i> ${escapeHtml(activeMeta.label)}</span>
       ${isBranch ? `<span class="legend-item"><i class="legend-swatch is-baseline"></i> ${escapeHtml(parentMeta.label)}</span>` : ''}
+      ${bandD ? '<span class="legend-item"><i class="legend-swatch is-range"></i> Range if estimates are off</span>' : ''}
     </div>
     <span>${activeChain[0].date} → ${activeChain[activeChain.length - 1].date}</span>
   `;
@@ -2231,6 +2367,8 @@ function treeNodeTitle(node) {
 }
 
 function renderTreeGraph({ fit = false, focusId = null } = {}) {
+  const treeRange = currentRange();
+  if (state.showRange) setTimeout(ensureRange);
   if (!state.nodes.size) return;
   const index = buildTreeIndex();
   const milestones = getAllGraphMilestones(index);
@@ -2324,6 +2462,7 @@ function renderTreeGraph({ fit = false, focusId = null } = {}) {
     const [gr, gg, gb] = hexToRgb(baseColor);
     const glowColor = `rgba(${gr}, ${gg}, ${gb}, 0.45)`;
     const isActiveEdge = activeSet.has(node.id) && activeSet.has(parentId);
+    const edgeRange = isActiveEdge ? rangeBadge(treeRange, state.nodes.get(node.id)) : null;
 
     edges.push({
       id: `${parentId}>${node.id}`,
@@ -2333,6 +2472,8 @@ function renderTreeGraph({ fit = false, focusId = null } = {}) {
       baseColor,
       glowColor,
       width: isActiveEdge ? 5.8 : 4.6,
+      label: edgeRange || '',
+      font: { color: '#f6e9dc', size: 11, strokeWidth: 3, strokeColor: '#180d07', align: 'middle' },
       color: { color: baseColor, highlight: baseColor, hover: baseColor },
       shadow: { enabled: true, color: glowColor, size: isActiveEdge ? 14 : 10, x: 0, y: 0 },
       smooth: isSameLane
@@ -2631,6 +2772,9 @@ function renderInspector(node, { focusBranchInput = false } = {}) {
     compare.textContent = `Vs. ${parentMeta.label}: ${moneySigned(nwDiff)} net worth · ${moneySigned(cashDiff)} cash`;
     header.append(compare);
   }
+  const rangeSection = el('div', { id: 'inspector-range', class: 'inspector-range' });
+  header.append(rangeSection);
+  fillRangeSection(rangeSection, node);
 
   {
     const remove = document.createElement('button');
@@ -3517,6 +3661,7 @@ document.addEventListener('visibilitychange', () => {
   }
 });
 
+byId('range-toggle')?.addEventListener('click', () => setRangeVisible(!state.showRange));
 fetch('/api/branch/presets').then(response => response.json()).then(data => { state.presets = data.presets || []; }).catch(() => {});
 startAstralBackdrop();
 
