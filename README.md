@@ -83,6 +83,30 @@ Both paths start year two with CHF 22,400. Continuing to work adds CHF 14,400 to
 
 For a CSV-backed opening state, use `load_synthetic_profile(data_dir, profile_id, monthly_expenses_chf=...)`. Supply total recurring living costs, including rent and excluding loan payments. The profile provides reference net income and rent but lacks a complete spending budget. Cash is repeated in the profile, account and asset files and enters the opening balance only once. Investment growth defaults to zero. A zero scheduled loan payment leaves accrued interest unpaid. The goals table can inform a user's chosen cash reserve. The engine does not infer preferences from a profile's age or employment.
 
+## Branching from a milestone
+
+Selecting a milestone opens **What if something changed?**. A user either picks a preset (no AI) or describes an event in their own words. The event is first turned into editable building blocks, shown in a review card, and only simulated after the user confirms.
+
+| Block | Meaning |
+| --- | --- |
+| Monthly change | Income or expense change per month, with a start offset and a duration (0 = permanent), for example −3,000 income for 24 months, then +1,000 from month 24 |
+| One-off amount | A single amount at an offset: positive for a cost, negative for money received (booked as one month of extra income) |
+| Purchase | An asset bought at the branch point with an optional loan. The server enforces price = loan + down payment, so a purchase never creates or destroys wealth; only the purchase costs reduce net worth. Annual value change models appreciation or depreciation. A rent deposit is a purchase of kind `deposit`. |
+| Investment change | Revalues existing investments at the branch point (0.7 = −30%) |
+
+Every block carries a source (`user`, `dataset`, `assumption` or `ai_estimate`), and editing a value marks it `user`. The server returns warnings when the down payment was corrected, a loan payment is below its interest, or upfront costs exceed the available cash.
+
+The presets in `financial_twin/branching.py` are Master's degree, Career change, Relocate, New home, Unexpected expense, Have a child, Buy property, Market shock and Go part-time. Tuition, study length, the unexpected-expense amount and the median rent come from `defaults.json`; the other values are labelled assumptions.
+
+| Endpoint | Purpose |
+| --- | --- |
+| `GET /api/branch/presets` | Preset ids and labels |
+| `POST /api/branch/propose` | `{parent, preset}` or `{parent, event}` → `{proposal, origin}`. Only the text variant calls the AI. |
+| `POST /api/branch/apply` | `{parent, event, months, variables, proposal}` → branch nodes. Deterministic; the first node stores the applied proposal as `branch_proposal`. |
+| `POST /api/branch` | One step (propose and apply without review), kept for compatibility |
+
+`/api/branch/apply` splits the engine's phases at every block boundary, so temporary changes end on time and their start and end appear as milestones. The random test scenario builds its branches from the presets. `tests/test_branching.py` checks durations, purchase accounting, money received, warnings, every preset and the AI and no-AI paths.
+
 ## Check the implementation
 
 Run `python3 -m unittest discover -s tests -v` from the workspace root with the challenge checkout present. The starter's original tests can also be run from `ai-financial-twin-lauzhack-2026/starter-kit` with `python3 -m unittest -v`.

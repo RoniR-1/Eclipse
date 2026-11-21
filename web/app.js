@@ -1,5 +1,5 @@
 const byId = id => document.getElementById(id);
-const state = { apiKey: '', extraction: null, years: 10, nodes: new Map(), narratives: new Map(), selectedId: null, network: null, graphNodes: null, graphEdges: null, revision: 0, openDetails: new Set(['breakdown']) };
+const state = { apiKey: '', extraction: null, years: 10, nodes: new Map(), narratives: new Map(), selectedId: null, network: null, graphNodes: null, graphEdges: null, revision: 0, presets: [], openDetails: new Set(['breakdown', 'branch-info']) };
 const money = value => new Intl.NumberFormat('en-CH', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0 }).format(value);
 
 function showStage(id) {
@@ -337,67 +337,219 @@ function renderInspector(node) {
   breakdownTitle.textContent = 'Financial breakdown & active parameters';
   breakdown.append(breakdownTitle);
   appendDetails(breakdown, node.state);
-  const form = document.createElement('form');
-  form.id = 'branch-form';
-  form.className = 'branch-form';
-  form.innerHTML = '<h3>What if something changed?</h3><label for="branch-event">Add an event or decision</label><textarea id="branch-event" required maxlength="2000" placeholder="For example, buy a house or change jobs"></textarea><details class="branch-options"><summary>Adjust branch assumptions</summary><div id="branch-sliders"></div></details><label for="branch-months">Explore this branch for</label><select id="branch-months"><option value="12">1 year</option><option value="60">5 years</option><option value="120">10 years</option><option value="240">20 years</option></select><p class="form-error" id="branch-error" role="alert"></p><button class="primary-button wide" type="submit">Diverge / Add event <span aria-hidden="true">✳</span></button>';
-  panel.append(header, narrative, breakdown, form);
-  const remaining = state.years * 12 - node.month;
-  if (remaining > 0 && ![12, 60, 120, 240].includes(remaining)) {
-    const option = document.createElement('option');
-    option.value = remaining;
-    option.textContent = `${remaining} months (to the original horizon)`;
-    byId('branch-months').append(option);
+  panel.append(header, narrative);
+  const info = renderBranchInfo(node);
+  if (info) panel.append(info);
+  panel.append(breakdown);
+  const composer = document.createElement('div');
+  composer.className = 'branch-form';
+  panel.append(composer);
+  showComposer(composer, node);
+}
+
+const SOURCE_LABELS = { user: 'You', dataset: 'Dataset', assumption: 'Assumption', ai_estimate: 'AI estimate' };
+const BLOCK_FIELDS = {
+  changes: [['label', 'text', 'Name'], ['kind', 'select', 'Type', [['income', 'Income'], ['expenses', 'Expenses']]],
+    ['amount_chf', 'number', 'Change per month (CHF, − to reduce)'], ['start_offset_months', 'int', 'Starts after (months)'],
+    ['duration_months', 'int', 'Lasts (months, 0 = permanent)']],
+  one_offs: [['label', 'text', 'Name'], ['amount_chf', 'number', 'Amount (CHF, − = received)'], ['offset_months', 'int', 'After (months)']],
+  assets: [['label', 'text', 'Name'], ['kind', 'select', 'Type', [['property', 'Property'], ['vehicle', 'Vehicle'], ['deposit', 'Deposit'], ['other', 'Other']]],
+    ['price_chf', 'number', 'Price (CHF)'], ['loan_chf', 'number', 'Loan (CHF)'], ['down_payment_chf', 'readonly', 'Down payment = price − loan'],
+    ['transaction_costs_chf', 'number', 'Purchase costs (CHF)'], ['annual_interest_rate', 'percent', 'Loan interest (% per year)'],
+    ['monthly_payment_chf', 'number', 'Loan payment per month'], ['annual_value_change', 'percent', 'Value change (% per year)']],
+};
+const NEW_BLOCKS = {
+  changes: () => ({ kind: 'expenses', label: 'New monthly change', amount_chf: 0, start_offset_months: 0, duration_months: 0, source: 'user' }),
+  one_offs: () => ({ label: 'One-off', amount_chf: 0, offset_months: 0, source: 'user' }),
+  assets: () => ({ label: 'Purchase', kind: 'other', price_chf: 0, loan_chf: 0, down_payment_chf: 0, transaction_costs_chf: 0, annual_interest_rate: 0, monthly_payment_chf: 0, annual_value_change: 0, source: 'user' }),
+};
+
+function el(tag, props = {}, ...children) {
+  const element = document.createElement(tag);
+  for (const [key, value] of Object.entries(props)) {
+    if (value === undefined || value === null || value === false) continue;
+    if (key === 'class') element.className = value;
+    else if (key === 'text') element.textContent = value;
+    else if (key.startsWith('on')) element.addEventListener(key.slice(2), value);
+    else element.setAttribute(key, value === true ? '' : value);
   }
-  byId('branch-months').value = remaining > 0 ? String(remaining) : '60';
-  for (const variable of state.extraction.variables.filter(item => item.id !== 'opening_cash_chf')) {
-    const item = document.createElement('div');
-    item.className = 'branch-slider';
-    const label = document.createElement('label');
-    label.className = 'branch-toggle';
-    const check = document.createElement('input');
-    check.type = 'checkbox';
-    const text = document.createElement('span');
-    text.textContent = variable.label;
-    const output = document.createElement('output');
-    const current = branchValue(node, variable);
-    output.textContent = formatVariable(variable, current);
-    label.append(check, text, output);
-    const input = document.createElement('input');
-    input.type = 'range';
-    input.name = variable.id;
-    input.min = Math.min(variable.min, current);
-    input.max = Math.max(variable.max, current);
-    input.step = 'any';
-    input.value = current;
-    input.disabled = true;
-    check.addEventListener('change', () => { input.disabled = !check.checked; });
-    input.addEventListener('input', () => { output.textContent = formatVariable(variable, input.value); });
-    item.append(label, input);
-    byId('branch-sliders').append(item);
+  element.append(...children.filter(child => child !== null && child !== undefined));
+  return element;
+}
+
+function setBadge(badge, source) {
+  badge.className = `source-badge source-${source}`;
+  badge.textContent = SOURCE_LABELS[source] || source;
+  return badge;
+}
+
+const signedMoney = value => `${value < 0 ? '−' : '+'}${money(Math.abs(value))}`;
+const timing = (offset, duration) => `${offset ? `after ${offset} months` : 'from now'}${duration ? `, for ${duration} months` : ', permanently'}`;
+
+function describeBlocks(plan) {
+  const items = plan.changes.map(c => [`${c.label}: ${c.kind} ${signedMoney(c.amount_chf)}/month ${timing(c.start_offset_months, c.duration_months)}`, c.source]);
+  for (const o of plan.one_offs) items.push([`${o.label}: ${o.amount_chf < 0 ? `receive ${money(-o.amount_chf)}` : `pay ${money(o.amount_chf)}`} ${o.offset_months ? `after ${o.offset_months} months` : 'now'}`, o.source]);
+  for (const a of plan.assets) items.push([`${a.label}: ${money(a.price_chf)} = ${money(a.loan_chf)} loan + ${money(a.down_payment_chf)} down${a.transaction_costs_chf ? `, ${money(a.transaction_costs_chf)} costs` : ''}`, a.source]);
+  if (plan.investment_multiplier !== 1) items.push([`Investments ${plan.investment_multiplier > 1 ? '+' : '−'}${Math.abs(Math.round((plan.investment_multiplier - 1) * 100))}%`, 'assumption']);
+  return items;
+}
+
+function branchOrigin(node) {
+  let current = node;
+  while (current) {
+    const parent = state.nodes.get(current.parent_id);
+    if (!parent || parent.branch_id !== current.branch_id) return current.branch_proposal ? current : null;
+    current = parent;
   }
-  form.addEventListener('submit', async event => {
-    event.preventDefault();
-    const button = form.querySelector('button');
-    const errorBox = byId('branch-error');
-    errorBox.textContent = '';
-    button.disabled = true;
-    button.textContent = 'Exploring…';
+  return null;
+}
+
+function renderBranchInfo(node) {
+  const origin = branchOrigin(node);
+  if (!origin) return null;
+  const plan = origin.branch_proposal;
+  const box = el('details', { class: 'branch-info' }, el('summary', { text: `What “${plan.title}” assumes` }));
+  rememberOpen(box, 'branch-info');
+  const list = el('ul');
+  for (const [text, source] of describeBlocks(plan)) list.append(el('li', {}, el('span', { text }), setBadge(el('span'), source)));
+  box.append(list);
+  if (plan.assumptions) box.append(el('p', { class: 'proposal-assumptions', text: plan.assumptions }));
+  if (plan.warnings?.length) box.append(el('ul', { class: 'proposal-warnings' }, ...plan.warnings.map(text => el('li', { text }))));
+  return box;
+}
+
+function showComposer(section, node, text = '') {
+  section.replaceChildren();
+  const error = el('p', { class: 'form-error', role: 'alert' });
+  const chips = el('div', { class: 'preset-chips' });
+  const textarea = el('textarea', { id: 'branch-event', maxlength: 2000, placeholder: 'For example: I take a six-month sabbatical, or my parents give me CHF 20,000' });
+  textarea.value = text;
+  const submit = el('button', { class: 'primary-button wide', type: 'submit' }, 'Break it down ', el('span', { 'aria-hidden': 'true', text: '✳' }));
+  const run = async body => {
+    error.textContent = '';
+    const buttons = [...section.querySelectorAll('button')];
+    buttons.forEach(button => { button.disabled = true; });
+    if (body.event) submit.firstChild.textContent = 'Reading your event… ';
     const revision = state.revision;
     try {
-      const variables = Object.fromEntries([...form.querySelectorAll('input[type="range"]:enabled')].map(input => [input.name, Number(input.value)]));
-      const result = await request('/api/branch', { parent: node, event: byId('branch-event').value.trim(), months: Number(byId('branch-months').value), variables, api_key: state.apiKey || undefined });
+      const result = await request('/api/branch/propose', { parent: node, ...body, api_key: state.apiKey || undefined });
+      if (revision === state.revision && state.selectedId === node.id) renderReview(section, node, result.proposal, textarea.value);
+    } catch (problem) { error.textContent = problem.message; }
+    finally { buttons.forEach(button => { button.disabled = false; }); submit.firstChild.textContent = 'Break it down '; }
+  };
+  for (const preset of state.presets) chips.append(el('button', { type: 'button', class: 'chip', text: preset.label, onclick: () => run({ preset: preset.id }) }));
+  const form = el('form', { onsubmit: event => { event.preventDefault(); if (textarea.value.trim()) run({ event: textarea.value.trim() }); } },
+    el('label', { for: 'branch-event', text: 'Or describe it in your own words' }), textarea, error, submit);
+  section.append(el('h3', { text: 'What if something changed?' }),
+    el('p', { class: 'composer-hint', text: 'Pick a common event or describe your own. You review every number before the branch is created.' }),
+    state.presets.length ? chips : null, form);
+}
+
+function blockEditor(key, item, onRemove) {
+  const badge = setBadge(el('span'), item.source);
+  const box = el('div', { class: 'block' }, el('div', { class: 'block-head' }, badge,
+    el('button', { type: 'button', class: 'block-remove', 'aria-label': 'Remove this item', text: '×', onclick: onRemove })));
+  const grid = el('div', { class: 'block-grid' });
+  let down = null;
+  const refreshDown = () => { if (down) { item.down_payment_chf = item.price_chf - item.loan_chf; down.textContent = money(item.down_payment_chf); } };
+  for (const [field, type, label, options] of BLOCK_FIELDS[key]) {
+    let input;
+    if (type === 'select') {
+      input = el('select', {}, ...options.map(([value, text]) => el('option', { value, text })));
+      input.value = item[field];
+    } else if (type === 'readonly') {
+      input = down = el('output', { class: 'readonly-value' });
+    } else {
+      input = el('input', { type: type === 'text' ? 'text' : 'number', step: type === 'int' ? 1 : 'any', min: type === 'int' ? 0 : null });
+      input.value = type === 'percent' ? Number((item[field] * 100).toFixed(3)) : item[field];
+    }
+    if (type !== 'readonly') input.addEventListener('input', () => {
+      const raw = input.value;
+      item[field] = type === 'text' || type === 'select' ? raw : type === 'percent' ? Number(raw) / 100 : type === 'int' ? Math.round(Number(raw)) : Number(raw);
+      item.source = 'user';
+      setBadge(badge, 'user');
+      refreshDown();
+    });
+    grid.append(el('label', { class: `block-field${type === 'text' ? ' wide' : ''}` }, el('span', { text: label }), input));
+  }
+  refreshDown();
+  box.append(grid);
+  return box;
+}
+
+function branchOptions(node) {
+  const months = el('select', { id: 'branch-months' }, ...[[12, '1 year'], [60, '5 years'], [120, '10 years'], [240, '20 years']].map(([value, text]) => el('option', { value, text })));
+  const remaining = state.years * 12 - node.month;
+  if (remaining > 0 && ![12, 60, 120, 240].includes(remaining)) months.append(el('option', { value: remaining, text: `${remaining} months (to the original horizon)` }));
+  months.value = remaining > 0 ? String(remaining) : '60';
+  const sliders = el('div');
+  for (const variable of state.extraction.variables.filter(item => item.id !== 'opening_cash_chf')) {
+    const current = branchValue(node, variable);
+    const output = el('output', { text: formatVariable(variable, current) });
+    const check = el('input', { type: 'checkbox' });
+    const input = el('input', { type: 'range', name: variable.id, min: Math.min(variable.min, current), max: Math.max(variable.max, current), step: 'any', disabled: true });
+    input.value = current;
+    check.addEventListener('change', () => { input.disabled = !check.checked; });
+    input.addEventListener('input', () => { output.textContent = formatVariable(variable, input.value); });
+    sliders.append(el('div', { class: 'branch-slider' }, el('label', { class: 'branch-toggle' }, check, el('span', { text: variable.label }), output), input));
+  }
+  const element = el('div', {},
+    el('details', { class: 'branch-options' }, el('summary', { text: 'Adjust branch assumptions' }), sliders),
+    el('label', { for: 'branch-months', text: 'Explore this branch for' }), months);
+  return {
+    element,
+    months: () => Number(months.value),
+    variables: () => Object.fromEntries([...sliders.querySelectorAll('input[type="range"]:enabled')].map(input => [input.name, Number(input.value)])),
+  };
+}
+
+function renderReview(section, node, proposal, text) {
+  const plan = structuredClone(proposal);
+  section.replaceChildren();
+  const title = el('input', { type: 'text', id: 'branch-title', maxlength: 60 });
+  title.value = plan.title;
+  section.append(el('span', { class: 'card-kicker', text: 'REVIEW BEFORE BRANCHING' }), el('h3', { text: 'Check the numbers' }),
+    el('label', { for: 'branch-title', text: 'Event name' }), title);
+  if (plan.summary) section.append(el('p', { class: 'proposal-summary', text: plan.summary }));
+  if (plan.assumptions) section.append(el('p', { class: 'proposal-assumptions', text: plan.assumptions }));
+  if (plan.warnings?.length) section.append(el('ul', { class: 'proposal-warnings' }, ...plan.warnings.map(item => el('li', { text: item }))));
+  const lists = { changes: el('div'), one_offs: el('div'), assets: el('div') };
+  const redraw = () => {
+    for (const key of Object.keys(lists)) lists[key].replaceChildren(...plan[key].map((item, index) => blockEditor(key, item, () => { plan[key].splice(index, 1); redraw(); })));
+  };
+  redraw();
+  const addButton = (key, label) => el('button', { type: 'button', class: 'text-button add-block', text: `+ ${label}`, onclick: () => { plan[key].push(NEW_BLOCKS[key]()); redraw(); } });
+  const shock = el('input', { type: 'number', step: 'any', id: 'branch-shock' });
+  shock.value = Number(((plan.investment_multiplier - 1) * 100).toFixed(2));
+  shock.addEventListener('input', () => { plan.investment_multiplier = 1 + Number(shock.value) / 100; });
+  const options = branchOptions(node);
+  const error = el('p', { class: 'form-error', role: 'alert' });
+  const create = el('button', { type: 'button', class: 'primary-button wide' }, 'Create branch ', el('span', { 'aria-hidden': 'true', text: '✳' }));
+  create.addEventListener('click', async () => {
+    error.textContent = '';
+    create.disabled = true;
+    create.firstChild.textContent = 'Simulating… ';
+    const revision = state.revision;
+    try {
+      const name = title.value.trim() || plan.title;
+      const result = await request('/api/branch/apply', { parent: node, event: name, months: options.months(), variables: options.variables(), proposal: { ...plan, title: name } });
       if (revision !== state.revision) return;
       for (const child of result.nodes) state.nodes.set(child.id, child);
       if (result.nodes.length) {
-        const first = result.nodes[0];
-        state.selectedId = first.id;
+        state.selectedId = result.nodes[0].id;
         renderGraph(true);
-        selectNode(first.id);
+        selectNode(result.nodes[0].id);
       }
-    } catch (error) { errorBox.textContent = error.message; }
-    finally { button.disabled = false; button.textContent = 'Diverge / Add event ✳'; }
+    } catch (problem) { error.textContent = problem.message; }
+    finally { create.disabled = false; create.firstChild.textContent = 'Create branch '; }
   });
+  section.append(
+    el('h4', { text: 'Monthly changes' }), lists.changes, addButton('changes', 'Add monthly change'),
+    el('h4', { text: 'One-off amounts' }), lists.one_offs, addButton('one_offs', 'Add one-off'),
+    el('h4', { text: 'Purchases' }), lists.assets, addButton('assets', 'Add purchase'),
+    el('h4', { text: 'Investments' }), el('label', { class: 'block-field', for: 'branch-shock' }, el('span', { text: 'Change in investment value (%)' }), shock),
+    options.element, error, create,
+    el('button', { type: 'button', class: 'text-button back-button', text: '← Choose a different event', onclick: () => showComposer(section, node, text) }));
 }
 
 async function selectNode(id) {
@@ -434,6 +586,8 @@ function renderResults(nodes) {
     panel.append(empty);
   }
 }
+
+fetch('/api/branch/presets').then(response => response.json()).then(data => { state.presets = data.presets || []; }).catch(() => {});
 
 byId('fit-graph').addEventListener('click', () => state.network?.fit({ animation: true }));
 byId('milestone-select').addEventListener('change', event => selectNode(event.target.value));

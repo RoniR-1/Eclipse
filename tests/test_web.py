@@ -152,10 +152,8 @@ class WebFlowTests(unittest.TestCase):
         }
         parent = simulate(create_root(scenario), 12)[-1]
         original = deepcopy(parent)
-        change = {"narrative": "The market falls.", "monthly_income_delta_chf": 0,
-                  "monthly_expenses_delta_chf": 0, "one_off_cost_chf": 0,
-                  "investment_multiplier": 0.7, "new_asset_chf": 0, "new_debt_chf": 0,
-                  "new_debt_annual_interest_rate": 0, "new_debt_monthly_payment_chf": 0}
+        change = {"title": "Market crash", "summary": "The market falls.", "assumptions": "",
+                  "changes": [], "one_offs": [], "assets": [], "investment_multiplier": 0.7}
         with patch("financial_twin.server.gemini_json", return_value=change):
             first = run_branch({"parent": parent, "event": "Market crash", "months": 2}, "key")["nodes"]
             sibling = run_branch({"parent": parent, "event": "Market crash", "months": 2}, "key")["nodes"]
@@ -170,7 +168,7 @@ class WebFlowTests(unittest.TestCase):
         self.assertAlmostEqual(first[0]["state"]["assets"][0]["value_chf"], 7000)
         self.assertAlmostEqual(nested[0]["state"]["assets"][0]["value_chf"], 4900)
         self.assertAlmostEqual(first[0]["state"]["risk_exposure"]["investment_value_chf"], 7000)
-        self.assertEqual(first[0]["event_narrative"], "Market crash")
+        self.assertEqual(first[0]["event_narrative"], "The market falls.")
         self.assertNotIn("narrative", first[0])
 
 
