@@ -6,7 +6,7 @@ from unittest.mock import patch
 from urllib.error import HTTPError, URLError
 
 from financial_twin import create_root, simulate
-from financial_twin.server import extract, run_branch, run_simulation
+from financial_twin.server import extract, node_narrative, run_branch, run_simulation
 
 
 class WebFlowTests(unittest.TestCase):
@@ -104,6 +104,15 @@ class WebFlowTests(unittest.TestCase):
             run_simulation(data)
 
 
+    def test_node_narrative_uses_local_cash_flow(self):
+        node = {"month": 1, "state": {"cash_chf": 1250, "net_worth_chf": 1250,
+                "cash_flow": {"income_chf": 3000, "expenses_chf": 2000, "net_cash_flow_chf": 250}}}
+        with patch("financial_twin.server.urlopen") as urlopen:
+            result = node_narrative({"node": node})
+        urlopen.assert_not_called()
+        self.assertIn("income is CHF 3,000", result["narrative"])
+        self.assertIn("cash changes by CHF 250 to CHF 1,250", result["narrative"])
+
     def test_branches_preserve_parent_and_siblings_across_nested_shocks(self):
         scenario = {
             "start_date": "2025-01-01", "opening_cash_chf": 10000,
@@ -133,7 +142,7 @@ class WebFlowTests(unittest.TestCase):
         self.assertAlmostEqual(first[0]["state"]["assets"][0]["value_chf"], 7000)
         self.assertAlmostEqual(nested[0]["state"]["assets"][0]["value_chf"], 4900)
         self.assertAlmostEqual(first[0]["state"]["risk_exposure"]["investment_value_chf"], 7000)
-        self.assertEqual(first[0]["event_narrative"], "The market falls.")
+        self.assertEqual(first[0]["event_narrative"], "Market crash")
         self.assertNotIn("narrative", first[0])
 
 

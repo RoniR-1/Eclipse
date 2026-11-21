@@ -312,7 +312,7 @@ async function selectNode(id) {
   if (state.narratives.has(id) || node.narrative) return;
   const revision = state.revision;
   try {
-    const result = await request('/api/narrative', { node, api_key: state.apiKey || undefined });
+    const result = await request('/api/narrative', { node });
     if (revision !== state.revision) return;
     state.narratives.set(id, result.narrative);
     if (state.selectedId === id) byId('node-narrative').textContent = result.narrative;

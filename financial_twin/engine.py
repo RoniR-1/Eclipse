@@ -3,9 +3,13 @@ from __future__ import annotations
 from calendar import monthrange
 from copy import deepcopy
 from datetime import date
+from functools import reduce
 from hashlib import sha256
 import json
 import math
+from operator import add
+import pickle
+import numpy as np
 
 
 def _number(value, name, minimum=None, maximum=None):
@@ -152,30 +156,6 @@ def create_root(scenario):
             "state": state, "scenario": scenario}
 
 
-def _apply_debt(debts):
-    interest = payments = 0.0
-    for debt in debts:
-        accrued = debt["principal_chf"] * debt["annual_interest_rate"] / 12
-        owed = debt["principal_chf"] + accrued
-        paid = min(owed, debt["monthly_payment_chf"])
-        debt["principal_chf"] = owed - paid
-        interest += accrued
-        payments += paid
-    return interest, payments
-
-
-def _grow_assets(assets, preferences):
-    returns = 0.0
-    for asset in assets:
-        if asset["id"] == "__contributions__":
-            asset["annual_return"] = preferences["investment_annual_return"]
-            asset["annual_volatility"] = preferences["investment_annual_volatility"]
-        growth = asset["value_chf"] * ((1 + asset["annual_return"]) ** (1 / 12) - 1)
-        asset["value_chf"] += growth
-        returns += growth
-    return returns
-
-
 def _allocate_surplus(cash, net_flow, expenses, assets, preferences):
     reserve = expenses * preferences["emergency_months"] * preferences["safety_priority"]
     contribution = min(max(0.0, net_flow) * preferences["savings_rate"], max(0.0, cash - reserve))
@@ -202,6 +182,7 @@ def simulate(node, months, *, preferences=None, branch_id="main", scenario_updat
             raise ValueError("scenario_updates may replace phases, one_off_costs or annual_inflation")
         scenario.update(deepcopy(scenario_updates))
     scenario = _scenario(scenario)
+    scenario_snapshot = pickle.dumps(scenario, protocol=pickle.HIGHEST_PROTOCOL)
     active_preferences = deepcopy(node["state"]["active_variables"]["preferences"])
     if preferences is not None:
         active_preferences.update(preferences)
@@ -209,6 +190,16 @@ def simulate(node, months, *, preferences=None, branch_id="main", scenario_updat
     cash = node["state"]["cash_chf"]
     assets = deepcopy(node["state"]["assets"])
     debts = deepcopy(node["state"]["debts"])
+    asset_values = np.array([asset["value_chf"] for asset in assets], dtype=float)
+    asset_growth = np.array([(1 + asset["annual_return"]) ** (1 / 12) - 1 for asset in assets], dtype=float)
+    debt_values = np.array([debt["principal_chf"] for debt in debts], dtype=float)
+    debt_rates = np.array([debt["annual_interest_rate"] for debt in debts], dtype=float)
+    debt_payments = np.array([debt["monthly_payment_chf"] for debt in debts], dtype=float)
+    contribution_index = next((i for i, asset in enumerate(assets) if asset["id"] == "__contributions__"), None)
+    if contribution_index is not None:
+        assets[contribution_index]["annual_return"] = active_preferences["investment_annual_return"]
+        assets[contribution_index]["annual_volatility"] = active_preferences["investment_annual_volatility"]
+        asset_growth[contribution_index] = (1 + active_preferences["investment_annual_return"]) ** (1 / 12) - 1
     price_factor = node["state"]["active_variables"]["price_factor"]
     output = []
     parent_id = node["id"]
@@ -222,11 +213,29 @@ def simulate(node, months, *, preferences=None, branch_id="main", scenario_updat
         expenses = phase["monthly_expenses_chf"] * price_factor
         costs = [item for item in scenario["one_off_costs"] if item["month"] == month]
         cost = sum(item["amount_chf"] for item in costs)
-        interest, payments = _apply_debt(debts)
-        returns = _grow_assets(assets, active_preferences)
+        accrued = debt_values * debt_rates / 12
+        owed = debt_values + accrued
+        paid = np.minimum(owed, debt_payments)
+        debt_values = owed - paid
+        interest = reduce(add, accrued.tolist(), 0.0)
+        payments = reduce(add, paid.tolist(), 0.0)
+        growth = asset_values * asset_growth
+        asset_values += growth
+        returns = reduce(add, growth.tolist(), 0.0)
+        for debt, value in zip(debts, debt_values.tolist()):
+            debt["principal_chf"] = value
+        for asset, value in zip(assets, asset_values.tolist()):
+            asset["value_chf"] = value
         net_flow = income - expenses - cost - payments
         cash += net_flow
         contribution = _allocate_surplus(cash, net_flow, expenses, assets, active_preferences)
+        if contribution:
+            if contribution_index is None:
+                contribution_index = len(assets) - 1
+                asset_values = np.append(asset_values, assets[contribution_index]["value_chf"])
+                asset_growth = np.append(asset_growth, (1 + active_preferences["investment_annual_return"]) ** (1 / 12) - 1)
+            else:
+                asset_values[contribution_index] = assets[contribution_index]["value_chf"]
         cash -= contribution
         flow = {"income_chf": income, "expenses_chf": expenses, "one_off_costs_chf": cost,
                 "debt_payments_chf": payments, "debt_interest_chf": interest,
@@ -243,7 +252,7 @@ def simulate(node, months, *, preferences=None, branch_id="main", scenario_updat
                  "parent_id": parent_id, "branch_id": branch_id, "month": month + 1,
                  "date": _date_at(scenario["start_date"], month + 1),
                  "event_summary": "; ".join(events) if events else "Monthly update",
-                 "state": state, "scenario": deepcopy(scenario)}
+                 "state": state, "scenario": pickle.loads(scenario_snapshot)}
         output.append(child)
         parent_id = child["id"]
     return output

@@ -2,7 +2,7 @@
 
 ## Run the website
 
-From the repository root, run `python3 -m financial_twin.server` and open [the local website](http://127.0.0.1:8000). The website and simulation engine use the Python standard library.
+From the repository root, install dependencies with `python3 -m pip install -r requirements.txt`, run `python3 -m financial_twin.server`, and open [the local website](http://127.0.0.1:8000).
 
 To configure the AI provider, copy `.env.example` to `.env`, set `AI_API_KEY`, `AI_BASE_URL`, and `AI_API_KEY_MODEL`, and restart the server. Provide model names separated by commas to try another model when one is unavailable, rate-limited, or times out. You can also enter a key through the website’s settings for the current page session.
 
@@ -10,7 +10,7 @@ Describe your finances and the decision you want to explore, using CHF for monet
 
 ## Simulation engine
 
-This Python package models monthly financial decisions for the LauzHack challenge. Its inputs and checkpoint nodes are JSON-compatible so a web backend can persist them and a browser can render paths without reproducing financial calculations. It uses the Python standard library, matching the challenge starter.
+This Python package models monthly financial decisions for the LauzHack challenge. Its inputs and checkpoint nodes are JSON-compatible so a web backend can persist them and a browser can render paths without reproducing financial calculations. It uses NumPy for asset and debt calculations.
 
 ## Challenge materials
 
