@@ -124,6 +124,23 @@ The event types in `financial_twin/branching.py` (Study, Career change, Relocate
 
 A branch continues the situation at the selected node and does not inherit phases or one-off costs that the original path planned after that node, so each branch explores one event at a time.
 
+## Uncertainty range
+
+**Show range** in the results view adds, for the selected path only, a band to the trajectory chart, a ±% badge on each timeline edge and tree edge, the range on each timeline card, and a table in the node details (pessimistic, central and optimistic net worth and cash, in CHF and as % of the central value). The badge falls back to ±CHF when the central value is below CHF 5,000 or the range exceeds 100%, because percentages near zero mislead. The range is off by default and is not a branch: it adds no nodes and cannot be branched from.
+
+`POST /api/uncertainty` takes the nodes on screen and re-simulates the whole tree month by month, the way `/api/edit-nodes` does, with adjusted inputs (`financial_twin/uncertainty.py`). Every monthly amount is split into today's situation (the first phase of the starting point) and the change since (later phases and events):
+
+| Input | Pessimistic / optimistic |
+| --- | --- |
+| Today's income | held fixed |
+| Today's living costs | +5% / −5% |
+| Event effects | each change since today 15% less / more favourable |
+| One-off costs | +15% / −15% |
+| Investment returns | − / + volatility ÷ √(horizon in years), the uncertainty of an average return |
+| Inflation | ±1 percentage point; the side that lowers final net worth counts as pessimistic |
+
+The pessimistic run moves every input to its unfavourable side at once and the optimistic run to its favourable side, so the band is an outer bound, not a probability. Ranges are centred on the values shown: low = shown + (pessimistic − unadjusted re-simulation), so the band never drifts from the timeline. The response also lists, per branch, the first month cash turns negative in the pessimistic case and the inputs ranked by their effect on the branch's final net worth (each moved on its own). The start screen does not yet tag which values the user stated, so today's living costs vary even when typed in. `tests/test_uncertainty.py` checks that the unadjusted re-simulation reproduces every node exactly, hand-calculated driver effects, widening over time and input validation.
+
 ## Check the implementation
 
 Run `.local/venv/bin/python -m unittest discover -s tests -v` from the workspace root with the challenge checkout present. This also runs the browser-logic tests when Node.js is installed; run them on their own with `node --test tests/web/app.test.mjs`. The starter's original tests can also be run from `ai-financial-twin-lauzhack-2026/starter-kit` with `python3 -m unittest -v`.
