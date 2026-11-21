@@ -6,7 +6,7 @@ from unittest.mock import patch
 from urllib.error import HTTPError, URLError
 
 from financial_twin import create_root, simulate
-from financial_twin.server import apply_branch, edit_nodes, extract, node_narrative, run_branch, run_simulation, run_projection, random_test, years_value
+from financial_twin.server import apply_branch_change, edit_nodes, extract, node_narrative, run_branch, run_simulation, run_projection, random_test, years_value
 
 
 class WebFlowTests(unittest.TestCase):
@@ -21,15 +21,10 @@ class WebFlowTests(unittest.TestCase):
                     "one_off_costs": [], "assets": [], "debts": [], "preferences": {}}
         root = create_root(scenario)
         main = simulate(root, 3)
-        # The asset is financed by a 0% loan: building blocks never create an asset from nothing.
-        proposal = {"title": "New job", "summary": "", "assumptions": "", "investment_multiplier": 1,
-                    "changes": [{"kind": "income", "label": "New job", "amount_chf": 1000, "start_offset_months": 0,
-                                 "duration_months": 0, "source": "user"}],
-                    "one_offs": [{"label": "Fee", "amount_chf": 1000, "offset_months": 0, "source": "user"}],
-                    "assets": [{"label": "Car", "kind": "vehicle", "price_chf": 20000, "loan_chf": 20000,
-                                "down_payment_chf": 0, "transaction_costs_chf": 0, "annual_interest_rate": 0,
-                                "monthly_payment_chf": 0, "annual_value_change": 0, "source": "user"}]}
-        branch = apply_branch({"parent": main[0], "event": "New job", "months": 2, "proposal": proposal})["nodes"]
+        change = {"monthly_income_delta_chf": 1000, "monthly_expenses_delta_chf": 0, "one_off_cost_chf": 1000,
+                  "investment_multiplier": 1, "new_asset_chf": 20000, "new_debt_chf": 0,
+                  "new_debt_annual_interest_rate": 0, "new_debt_monthly_payment_chf": 0}
+        branch = apply_branch_change(main[0], "New job", 2, {}, change)["nodes"]
         nodes = [root, *main, *branch]
         changed = edit_nodes({"nodes": nodes, "node_id": root["id"], "edits": {"cash_chf": 12000, "monthly_income_chf": 6000}})["nodes"]
         revised = {node["id"]: node for node in changed}
@@ -233,8 +228,10 @@ class WebFlowTests(unittest.TestCase):
         }
         parent = simulate(create_root(scenario), 12)[-1]
         original = deepcopy(parent)
-        change = {"title": "Market crash", "summary": "The market falls.", "assumptions": "",
-                  "changes": [], "one_offs": [], "assets": [], "investment_multiplier": 0.7}
+        change = {"narrative": "The market falls.", "monthly_income_delta_chf": 0,
+                  "monthly_expenses_delta_chf": 0, "one_off_cost_chf": 0,
+                  "investment_multiplier": 0.7, "new_asset_chf": 0, "new_debt_chf": 0,
+                  "new_debt_annual_interest_rate": 0, "new_debt_monthly_payment_chf": 0}
         with patch("financial_twin.server.gemini_json", return_value=change):
             first = run_branch({"parent": parent, "event": "Market crash", "months": 2}, "key")["nodes"]
             sibling = run_branch({"parent": parent, "event": "Market crash", "months": 2}, "key")["nodes"]
@@ -249,7 +246,7 @@ class WebFlowTests(unittest.TestCase):
         self.assertAlmostEqual(first[0]["state"]["assets"][0]["value_chf"], 7000)
         self.assertAlmostEqual(nested[0]["state"]["assets"][0]["value_chf"], 4900)
         self.assertAlmostEqual(first[0]["state"]["risk_exposure"]["investment_value_chf"], 7000)
-        self.assertEqual(first[0]["event_narrative"], "The market falls.")
+        self.assertEqual(first[0]["event_narrative"], "Market crash")
         self.assertNotIn("narrative", first[0])
 
     def test_branch_excludes_events_after_fork(self):
@@ -265,10 +262,10 @@ class WebFlowTests(unittest.TestCase):
             "assets": [], "debts": [],
         }
         original = simulate(create_root(scenario), 5)
-        change = {"title": "D", "summary": "", "assumptions": "", "one_offs": [], "assets": [],
-                  "investment_multiplier": 1,
-                  "changes": [{"kind": "income", "label": "Raise", "amount_chf": 500, "start_offset_months": 0,
-                               "duration_months": 0, "source": "user"}]}
+        change = {"monthly_income_delta_chf": 500, "monthly_expenses_delta_chf": 0,
+                  "one_off_cost_chf": 0, "investment_multiplier": 1, "new_asset_chf": 0,
+                  "new_debt_chf": 0, "new_debt_annual_interest_rate": 0,
+                  "new_debt_monthly_payment_chf": 0}
         with patch("financial_twin.server.gemini_json", return_value=change):
             branch = run_branch({"parent": original[1], "event": "D", "months": 3}, "key")["nodes"]
             boundary_branch = run_branch({"parent": original[2], "event": "D", "months": 2}, "key")["nodes"]

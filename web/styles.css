@@ -173,18 +173,6 @@ main {
   cursor: wait;
 }
 
-.api-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: transparent;
-}
-
-.api-dot.is-connected {
-  background: var(--accent-bright);
-  box-shadow: 0 0 8px rgba(255, 161, 89, 0.75);
-}
-
 /* ==========================================================================
    TYPOGRAPHY & SHARED CONTROLS
    ========================================================================== */
@@ -1813,16 +1801,6 @@ dialog::backdrop {
   color: #c4a893;
 }
 
-dialog input {
-  height: 48px;
-  padding: 0 13px;
-}
-
-.key-note {
-  font-size: 12px !important;
-  margin: 10px 0 24px;
-}
-
 code {
   font-size: 12px;
 }
@@ -2050,3 +2028,43 @@ code {
 .proposal-sources > span { font-weight: 700; }
 .proposal-sources ul { list-style: none; padding: 0; margin: 4px 0 0; display: flex; flex-wrap: wrap; gap: 4px 12px; }
 .proposal-sources a { color: var(--accent-bright); }
+
+.summary-head-actions { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+
+/* ==========================================================================
+   ASSUMPTION VALUE BOXES (typed values next to the sliders)
+   ========================================================================== */
+
+.slider-entry {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: #4a2614;
+  border: 1px solid transparent;
+  border-radius: 20px;
+  padding: 3px 11px;
+  color: #ffb27a;
+  font-size: 14px;
+  font-weight: 700;
+  white-space: nowrap;
+  transition: border-color 0.15s;
+}
+.slider-entry:focus-within { border-color: var(--accent-bright); }
+.slider-number {
+  width: 9ch;
+  min-width: 0;
+  height: auto;
+  padding: 3px 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-strong);
+  font: inherit;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.slider-number:focus { outline: none; }
+.slider-number.is-invalid { color: var(--danger); }
+.slider-entry:has(.is-invalid) { border-color: var(--danger); }
+.slider-unit { color: #ffb27a; font-size: 13px; }
+.slider-hint { margin: 6px 0 0; font-size: 12px; color: var(--danger); min-height: 0; }
+.slider-hint:empty { display: none; }

@@ -14,6 +14,7 @@ one-off costs, assets and debts. Every block carries a source: user, dataset, as
 ai_estimate.
 """
 from copy import deepcopy
+from hashlib import sha256
 import json
 import math
 from pathlib import Path
@@ -274,7 +275,24 @@ def _apply_variables(variables, phases, month, inflation, catalogue):
     return preferences, inflation
 
 
-def apply_proposal(parent, event, months, variables, proposal, catalogue):
+def branch_identifier(parent_id, title, months, variables, plan, sequence):
+    """Deterministic branch ID: the same parent, inputs, proposal and sequence number give the same ID."""
+    def canonical(value):
+        # A browser writes 1.0 as 1, so hash every number as a float to get the same ID after a JSON round trip.
+        if isinstance(value, bool) or value is None or isinstance(value, str):
+            return value
+        if isinstance(value, (int, float)):
+            return float(value)
+        if isinstance(value, dict):
+            return {key: canonical(item) for key, item in value.items()}
+        return [canonical(item) for item in value]
+
+    payload = json.dumps(canonical([parent_id, title, months, variables, plan, sequence]),
+                         sort_keys=True, separators=(",", ":"), allow_nan=False)
+    return "p" + sha256(payload.encode()).hexdigest()[:23]
+
+
+def apply_proposal(parent, event, months, variables, proposal, catalogue, sequence=None):
     """Simulate a branch from `parent` using a (possibly user-edited) proposal."""
     if not isinstance(parent, dict) or not isinstance(parent.get("state"), dict):
         raise ValueError("Provide a parent timeline node.")
@@ -304,7 +322,9 @@ def apply_proposal(parent, event, months, variables, proposal, catalogue):
     preferences, inflation = _apply_variables(variables, phases, month, scenario["annual_inflation"], catalogue)
 
     updated = deepcopy(parent)
-    branch_id = uuid4().hex
+    replayable = {key: value for key, value in plan.items() if key != "warnings"}
+    branch_id = uuid4().hex if sequence is None else branch_identifier(
+        parent["id"], title, months, variables, replayable, sequence)
     for asset in updated["state"]["assets"]:
         if is_investment_asset(asset):
             asset["value_chf"] *= plan["investment_multiplier"]
@@ -333,7 +353,10 @@ def apply_proposal(parent, event, months, variables, proposal, catalogue):
     nodes[0]["branch_proposal"] = plan
     for node in nodes:
         node["event_narrative"] = narrative
-    return {"nodes": nodes, "narrative": narrative, "proposal": plan, "warnings": plan["warnings"]}
+    # Everything replay needs to rebuild this branch without the AI (see financial_twin/reproduce.py).
+    branch = {"kind": "proposal", "sequence": sequence, "parent_id": parent["id"], "event": title,
+              "months": months, "variables": variables, "proposal": replayable}
+    return {"nodes": nodes, "narrative": narrative, "proposal": plan, "warnings": plan["warnings"], "branch": branch}
 
 
 # ── sample events (no AI; only for the random test scenario and tests) ─────

@@ -1,167 +1,229 @@
-import random
+"""Life events (branches), the Test button's data, narratives, input validation and .env loading."""
+
+from copy import deepcopy
+import math
+import os
+from pathlib import Path
+import tempfile
 import unittest
 from unittest.mock import patch
 
-from financial_twin import create_root, simulate
-from financial_twin.branching import PRESETS, SAMPLES, apply_proposal, normalize_proposal, sample_proposal
-from financial_twin.server import VARIABLES, apply_branch, propose_branch, random_test
+from financial_twin import server
+from financial_twin.server import (apply_branch_change, extract, load_env, node_narrative, random_test, run_branch,
+                                   run_simulation)
+
+NO_CHANGE = {"monthly_income_delta_chf": 0, "monthly_expenses_delta_chf": 0, "one_off_cost_chf": 0,
+             "investment_multiplier": 1, "new_asset_chf": 0, "new_debt_chf": 0,
+             "new_debt_annual_interest_rate": 0, "new_debt_monthly_payment_chf": 0}
 
 
-def parent_node(cash=10000, investments=20000, month=12):
+def timeline(years=2):
     scenario = {
-        "start_date": "2026-01-01", "opening_cash_chf": cash,
-        "phases": [{"name": "Work", "start_month": 0, "end_month": None,
-                    "monthly_income_chf": 4000, "monthly_expenses_chf": 2000}],
-        "assets": [{"id": "etf", "type": "investment", "value_chf": investments,
-                    "annual_return": 0, "annual_volatility": 0}],
-        "debts": [],
+        "start_date": "2026-01-01", "currency": "CHF", "opening_cash_chf": 20000, "annual_inflation": 0,
+        "phases": [{"name": "Study", "start_month": 0, "end_month": 6, "monthly_income_chf": 1500, "monthly_expenses_chf": 2000},
+                   {"name": "Work", "start_month": 6, "end_month": None, "monthly_income_chf": 5000, "monthly_expenses_chf": 3000}],
+        "one_off_costs": [], "debts": [],
+        "assets": [{"id": "etf", "type": "investment", "value_chf": 10000, "annual_return": 0, "annual_volatility": 0.1}],
+        "preferences": {"savings_rate": 0, "risk_tolerance": 0, "safety_priority": 1, "emergency_months": 0,
+                        "investment_annual_return": 0, "investment_annual_volatility": 0},
     }
-    root = create_root(scenario)
-    return simulate(root, month)[-1] if month else root
+    return run_simulation({"scenario": scenario, "years": years,
+                           "variables": {"opening_cash_chf": 20000, "savings_rate": 0, "risk_tolerance": 0}})["nodes"]
 
 
-def proposal(**blocks):
-    base = {"title": "Event", "summary": "", "assumptions": "", "changes": [], "one_offs": [],
-            "assets": [], "investment_multiplier": 1}
-    base.update(blocks)
-    return base
+def branch(parent, months=6, variables=None, **change):
+    return apply_branch_change(parent, "Event", months, variables or {}, {**NO_CHANGE, **change}, 0)["nodes"]
 
 
-def branch(parent, plan, months=24):
-    return apply_proposal(parent, plan["title"], months, {}, plan, VARIABLES)["nodes"]
+class BranchEffectTests(unittest.TestCase):
+    def setUp(self):
+        self.nodes = timeline()
+        self.parent = self.nodes[12]  # month 12, in the Work phase
+        self.baseline = branch(self.parent)
+
+    def test_one_off_cost_is_paid_once_in_the_branch_month(self):
+        nodes = branch(self.parent, one_off_cost_chf=7000)
+        self.assertEqual(nodes[0]["state"]["cash_flow"]["one_off_costs_chf"], 7000)
+        self.assertEqual(nodes[1]["state"]["cash_flow"]["one_off_costs_chf"], 0)
+        for with_cost, without in zip(nodes, self.baseline):
+            self.assertAlmostEqual(without["state"]["cash_chf"] - with_cost["state"]["cash_chf"], 7000)
+
+    def test_recurring_deltas_change_every_later_month(self):
+        nodes = branch(self.parent, monthly_income_delta_chf=1000, monthly_expenses_delta_chf=400)
+        for node in nodes:
+            self.assertEqual(node["state"]["cash_flow"]["income_chf"], 6000)
+            self.assertEqual(node["state"]["cash_flow"]["expenses_chf"], 3400)
+        self.assertAlmostEqual(nodes[-1]["state"]["cash_chf"] - self.baseline[-1]["state"]["cash_chf"], 6 * 600)
+
+    def test_income_and_expenses_never_go_below_zero(self):
+        nodes = branch(self.parent, monthly_income_delta_chf=-99999, monthly_expenses_delta_chf=-99999)
+        self.assertEqual(nodes[0]["state"]["cash_flow"]["income_chf"], 0)
+        self.assertEqual(nodes[0]["state"]["cash_flow"]["expenses_chf"], 0)
+
+    def test_financed_purchase_adds_the_asset_and_the_loan(self):
+        nodes = branch(self.parent, one_off_cost_chf=20000, new_asset_chf=100000, new_debt_chf=80000,
+                       new_debt_annual_interest_rate=0.024, new_debt_monthly_payment_chf=1000)
+        state = nodes[0]["state"]
+        self.assertTrue(any(asset["value_chf"] == 100000 for asset in state["assets"]))
+        self.assertAlmostEqual(state["cash_flow"]["debt_interest_chf"], 80000 * 0.024 / 12)
+        self.assertAlmostEqual(state["total_debt_chf"], 80000 + 160 - 1000)
+        # Buying with cash and a loan swaps cash for an asset: net worth only falls by this month's interest.
+        self.assertAlmostEqual(self.baseline[0]["state"]["net_worth_chf"] - state["net_worth_chf"], 160)
+
+    def test_market_crash_scales_investments_at_the_branch(self):
+        nodes = branch(self.parent, investment_multiplier=0.7)
+        self.assertAlmostEqual(nodes[0]["state"]["risk_exposure"]["investment_value_chf"], 7000)
+        self.assertAlmostEqual(self.parent["state"]["risk_exposure"]["investment_value_chf"], 10000)  # parent untouched
+
+    def test_a_branch_keeps_the_past_and_replaces_the_planned_future_with_its_event(self):
+        # Branches are one event deep: phases and one-off costs planned after the branch month are not carried
+        # into the branch, so it shows the effect of this event alone.
+        early = self.nodes[3]  # month 3, in the Study phase; the original plan switches to Work at month 6
+        nodes = branch(early, months=6, monthly_income_delta_chf=500)
+        phases = nodes[0]["scenario"]["phases"]
+        self.assertEqual([(p["start_month"], p["end_month"]) for p in phases], [(0, 3), (3, None)])
+        self.assertEqual([p["monthly_income_chf"] for p in phases], [1500, 2000])
+        self.assertEqual(nodes[3]["state"]["cash_flow"]["income_chf"], 2000)  # month 7: the Work phase is not inherited
+
+    def test_branch_variables_override_from_the_branch_month(self):
+        nodes = branch(self.parent, variables={"monthly_income_chf": 7000, "annual_inflation": 0.12, "savings_rate": 0.3})
+        self.assertEqual(nodes[0]["state"]["cash_flow"]["income_chf"], 7000)
+        self.assertAlmostEqual(nodes[-1]["state"]["cash_flow"]["expenses_chf"], 3000 * 1.12 ** (5 / 12))
+        self.assertEqual(nodes[0]["state"]["active_variables"]["preferences"]["savings_rate"], 0.3)
+
+    def test_event_is_labelled_on_the_branch(self):
+        nodes = apply_branch_change(self.parent, "  Buy a car  ", 3, {}, NO_CHANGE, 0)["nodes"]
+        self.assertEqual(nodes[0]["event_summary"], "Buy a car")
+        self.assertTrue(all(node["event_narrative"] == "Buy a car" for node in nodes))
 
 
-def change(kind, amount, offset=0, duration=0, label="Change"):
-    return {"kind": kind, "label": label, "amount_chf": amount, "start_offset_months": offset,
-            "duration_months": duration, "source": "user"}
+class BranchValidationTests(unittest.TestCase):
+    def setUp(self):
+        self.parent = timeline(1)[6]
+
+    def test_invalid_ai_changes_are_rejected(self):
+        bad = {"negative one-off cost": {"one_off_cost_chf": -1}, "negative new debt": {"new_debt_chf": -5},
+               "not a number": {"new_asset_chf": "lots"}, "infinite": {"monthly_income_delta_chf": math.inf},
+               "NaN": {"investment_multiplier": math.nan}, "boolean": {"one_off_cost_chf": True}}
+        for name, change in bad.items():
+            with self.subTest(name), self.assertRaises(ValueError):
+                apply_branch_change(self.parent, "x", 3, {}, {**NO_CHANGE, **change})
+        with self.assertRaises(ValueError):
+            apply_branch_change(self.parent, "x", 3, {}, {k: v for k, v in NO_CHANGE.items() if k != "new_debt_chf"})
+        with self.assertRaises(ValueError):
+            apply_branch_change(self.parent, "x", 3, {}, ["not", "a", "dict"])
+
+    def test_invalid_branch_variables_are_rejected(self):
+        bad = {"unknown": {"bogus": 1}, "opening cash cannot change mid-timeline": {"opening_cash_chf": 100},
+               "fraction above 1": {"savings_rate": 1.5}, "negative CHF": {"monthly_income_chf": -1},
+               "boolean": {"risk_tolerance": True}}
+        for name, variables in bad.items():
+            with self.subTest(name), self.assertRaises(ValueError):
+                apply_branch_change(self.parent, "x", 3, variables, NO_CHANGE)
+
+    def test_bad_requests_are_rejected_before_calling_the_ai(self):
+        good = {"parent": self.parent, "event": "Buy a car", "months": 3}
+        bad = {"no parent": {"parent": None}, "empty event": {"event": "  "}, "event too long": {"event": "x" * 4001},
+               "zero months": {"months": 0}, "too many months": {"months": 601}, "boolean months": {"months": True},
+               "variables not an object": {"variables": [1]}, "negative sequence": {"sequence": -1},
+               "boolean sequence": {"sequence": False}}
+        with patch("financial_twin.server.gemini_json") as ai:
+            for name, override in bad.items():
+                with self.subTest(name), self.assertRaises(ValueError):
+                    run_branch({**good, **override}, "key")
+            ai.assert_not_called()
+
+    def test_parent_without_a_covering_phase_is_rejected(self):
+        parent = deepcopy(self.parent)
+        parent["scenario"]["phases"] = [{"name": "Old", "start_month": 0, "end_month": 2,
+                                         "monthly_income_chf": 0, "monthly_expenses_chf": 0}]
+        with patch("financial_twin.server.gemini_json") as ai, self.assertRaises(ValueError):
+            run_branch({"parent": parent, "event": "x", "months": 1}, "key")
+        ai.assert_not_called()
 
 
-class BranchingTests(unittest.TestCase):
-    def test_temporary_change_ends_and_later_level_starts(self):
-        parent = parent_node()
-        nodes = branch(parent, proposal(changes=[change("income", -3000, 0, 6, "Studying"),
-                                                 change("income", 1000, 6, 0, "Graduate salary")]))
-        incomes = [node["state"]["cash_flow"]["income_chf"] for node in nodes[:8]]
-        self.assertEqual(incomes, [1000] * 6 + [5000] * 2)
-        self.assertEqual(nodes[0]["event_summary"], "Event")
-        self.assertIn("Graduate salary", nodes[6]["event_summary"])
+class TestDataTests(unittest.TestCase):
+    def test_structure_of_generated_test_data(self):
+        for years in (2, 5, 20):
+            with self.subTest(years=years):
+                data = random_test({"years": years, "seed": 11, "start_date": "2026-01-01"})
+                nodes = {node["id"]: node for node in data["nodes"]}
+                main = [node for node in data["nodes"] if node["branch_id"] in ("root", "main")]
+                self.assertEqual(len(main), years * 12 + 1)
+                branches = {node["branch_id"] for node in data["nodes"]} - {"root", "main"}
+                self.assertEqual(len(branches), min(3, years - 1) + (1 if years > 2 else 0))
+                for node in data["nodes"]:
+                    if node["parent_id"]:
+                        self.assertIn(node["parent_id"], nodes, "every node's parent exists")
+                        self.assertEqual(node["month"], nodes[node["parent_id"]]["month"] + 1)
+                    self.assertLessEqual(node["month"], years * 12)
+                for variable in data["extraction"]["variables"]:
+                    self.assertLessEqual(variable["min"], variable["value"])
+                    self.assertLessEqual(variable["value"], variable["max"])
+                self.assertEqual(data["nodes"][0]["date"], "2026-01-01")
 
-    def test_purchase_enforces_price_equals_loan_plus_down_payment(self):
-        parent = parent_node(cash=200000)
-        asset = {"label": "Flat", "kind": "property", "price_chf": 600000, "loan_chf": 480000,
-                 "down_payment_chf": 60000, "transaction_costs_chf": 12000, "annual_interest_rate": 0,
-                 "monthly_payment_chf": 0, "annual_value_change": 0, "source": "ai_estimate"}
-        plan = normalize_proposal(proposal(assets=[asset]), parent)
-        self.assertEqual(plan["assets"][0]["down_payment_chf"], 120000)
-        self.assertTrue(any("down payment" in warning for warning in plan["warnings"]))
-        bought = branch(parent, proposal(assets=[asset]), 1)[0]["state"]
-        baseline = branch(parent, proposal(), 1)[0]["state"]
-        # Buying moves cash into the flat; only the transaction costs reduce net worth.
-        self.assertAlmostEqual(bought["net_worth_chf"] - baseline["net_worth_chf"], -12000)
-        self.assertAlmostEqual(bought["cash_chf"] - baseline["cash_chf"], -132000)
-        self.assertAlmostEqual(bought["total_debt_chf"], 480000)
+    def test_invalid_test_data_requests_are_rejected(self):
+        for bad in ({"years": -1}, {"years": 21}, {"seed": -1}, {"seed": "abc"}, {"seed": True}, {"start_date": "tomorrow"}):
+            with self.subTest(bad), self.assertRaises(ValueError):
+                random_test(bad)
 
-    def test_money_received_is_one_month_of_income(self):
-        parent = parent_node()
-        gift = {"label": "Gift", "amount_chf": -20000, "offset_months": 2, "source": "user"}
-        nodes = branch(parent, proposal(one_offs=[gift]), 6)
-        base = branch(parent, proposal(), 6)
-        self.assertEqual(nodes[2]["state"]["cash_flow"]["income_chf"], 24000)
-        self.assertEqual(nodes[3]["state"]["cash_flow"]["income_chf"], 4000)
-        self.assertAlmostEqual(nodes[-1]["state"]["cash_chf"] - base[-1]["state"]["cash_chf"], 20000)
 
-    def test_warnings_for_upfront_costs_and_growing_loans(self):
-        parent = parent_node(cash=5000, month=0)
-        car ={"label": "Car", "kind": "vehicle", "price_chf": 30000, "loan_chf": 20000, "down_payment_chf": 10000,
-               "transaction_costs_chf": 0, "annual_interest_rate": 0.06, "monthly_payment_chf": 50,
-               "annual_value_change": -0.15, "source": "user"}
-        warnings = normalize_proposal(proposal(assets=[car]), parent)["warnings"]
-        self.assertTrue(any("funding gap" in warning for warning in warnings))
-        self.assertTrue(any("loan balance grows" in warning for warning in warnings))
+class NarrativeTests(unittest.TestCase):
+    def test_starting_point_and_monthly_text_use_the_calculated_numbers(self):
+        nodes = timeline(1)
+        self.assertEqual(node_narrative({"node": nodes[0]})["narrative"],
+                         "The projection starts with CHF 20,000 in cash and CHF 30,000 in net worth.")
+        text = node_narrative({"node": nodes[1]})["narrative"]
+        self.assertIn("income is CHF 1,500 and expenses are CHF 2,000", text)
+        self.assertIn(f"to CHF {nodes[1]['state']['cash_chf']:,.0f}", text)
 
-    def test_every_sample_applies_and_keeps_cash_reconciled(self):
-        parent = parent_node(cash=150000)
-        for kind in SAMPLES:
-            with self.subTest(kind=kind):
-                plan = sample_proposal(parent, kind)
-                nodes = branch(parent, plan, 36)
-                previous = parent
-                for node in nodes:
-                    flow = node["state"]["cash_flow"]["net_cash_flow_chf"]
-                    self.assertAlmostEqual(previous["state"]["cash_chf"] + flow, node["state"]["cash_chf"], places=6)
-                    previous = node
+    def test_invalid_nodes_are_rejected(self):
+        node = timeline(1)[1]
+        broken = deepcopy(node)
+        broken["state"]["cash_chf"] = math.nan
+        missing = deepcopy(node)
+        del missing["state"]["net_worth_chf"]
+        for bad in ({}, {"node": "x"}, {"node": {"state": None}}, {"node": broken}, {"node": missing}):
+            with self.subTest(bad=str(bad)[:40]), self.assertRaises(ValueError):
+                node_narrative(bad)
 
-    def test_property_purchase_creates_no_free_equity(self):
-        parent = parent_node(cash=150000, investments=0)
-        plan = sample_proposal(parent, "buy_property")
-        home = plan["assets"][0]
-        self.assertEqual(home["price_chf"], home["loan_chf"] + home["down_payment_chf"])
-        first = branch(parent, plan, 1)[0]
-        base = branch(parent, proposal(), 1)[0]
-        interest = home["loan_chf"] * home["annual_interest_rate"] / 12
-        growth = home["price_chf"] * ((1 + home["annual_value_change"]) ** (1 / 12) - 1)
-        maintenance = plan["changes"][0]["amount_chf"]
-        expected = -home["transaction_costs_chf"] - interest + growth - maintenance
-        self.assertAlmostEqual(first["state"]["net_worth_chf"] - base["state"]["net_worth_chf"], expected, places=6)
 
-    def test_invalid_blocks_are_rejected(self):
-        bad = [
-            proposal(changes=[change("bonus", 100)]),
-            proposal(changes=[change("income", 100, 1.5)]),
-            proposal(changes=[change("income", 100)] * 9),
-            proposal(investment_multiplier=-1),
-            proposal(assets=[{"label": "X", "price_chf": -5}]),
-        ]
-        for plan in bad:
-            with self.subTest(plan=plan), self.assertRaises(ValueError):
-                normalize_proposal(plan)
+class ExtractValidationTests(unittest.TestCase):
+    def test_bad_input_is_rejected_before_calling_the_ai(self):
+        with patch("financial_twin.server.urlopen") as network:
+            for statement, years, key in (("", 5, "k"), ("   ", 5, "k"), ("x" * 12001, 5, "k"), (None, 5, "k"),
+                                          ("I earn CHF 5000.", 21, "k"), ("I earn CHF 5000.", 5, "")):
+                with self.subTest(statement=str(statement)[:20], years=years, key=key), self.assertRaises(ValueError):
+                    extract(statement, years, key)
+            network.assert_not_called()
 
-    def test_presets_and_text_are_filled_by_the_ai_and_apply_never_calls_it(self):
-        parent = parent_node()
-        ai = proposal(title="Master's at ETH", summary="Two years of study.",
-                      changes=[change("expenses", 120, 0, 24), change("income", -3200, 0, 24)])
-        ai["source_urls"] = ["https://ethz.ch/fees", "not a url", "https://ethz.ch/fees"]
-        with patch("financial_twin.server.gemini_json", return_value=ai) as gemini:
-            result = propose_branch({"parent": parent, "preset": "education", "event": "Master's at ETH Zurich"}, "key")
-        prompt = gemini.call_args.args[0]
-        self.assertTrue(gemini.call_args.kwargs.get("web_search"))
-        self.assertIn(PRESETS["education"]["guidance"], prompt)
-        self.assertIn("Master's at ETH Zurich", prompt)
-        self.assertEqual(result["origin"], "ai")
-        self.assertEqual(result["proposal"]["source_urls"], ["https://ethz.ch/fees"])
-        with patch("financial_twin.server.gemini_json", return_value=ai) as gemini:
-            propose_branch({"parent": parent, "preset": "market_shock"}, "key")
-        self.assertIn("No details given", gemini.call_args.args[0])
-        with patch("financial_twin.server.gemini_json") as gemini:
-            applied = apply_branch({"parent": parent, "event": "Study", "months": 30, "proposal": result["proposal"]})
-        gemini.assert_not_called()
-        self.assertEqual(applied["nodes"][24]["state"]["cash_flow"]["income_chf"], 4000)
+    def test_scenario_without_a_starting_phase_is_rejected(self):
+        reply = {"summary": "s", "assumptions": "a", "opening_cash_chf": 1000, "annual_inflation": 0,
+                 "phases": [{"name": "Later", "start_month": 5, "monthly_income_chf": 1, "monthly_expenses_chf": 1}],
+                 "one_off_costs": [], "assets": [], "debts": [],
+                 "preferences": {"savings_rate": 0, "risk_tolerance": 0, "safety_priority": 0, "emergency_months": 0,
+                                 "investment_annual_return": 0, "investment_annual_volatility": 0},
+                 "variable_ids": ["opening_cash_chf", "savings_rate", "risk_tolerance"]}
+        with patch("financial_twin.server.gemini_json", return_value=reply), self.assertRaises(ValueError):
+            extract("I earn CHF 5000.", 5, "key")
 
-    def test_falls_back_without_web_search_when_search_fails(self):
-        ai = proposal(title="Repair", one_offs=[{"label": "Repair", "amount_chf": 900, "offset_months": 0, "source": "ai_estimate"}])
-        with patch("financial_twin.server.gemini_json", side_effect=[ValueError("search rejected"), ai]) as gemini:
-            result = propose_branch({"parent": parent_node(), "preset": "unexpected_expense"}, "key")
-        self.assertEqual([call.kwargs.get("web_search", False) for call in gemini.call_args_list], [True, False])
-        self.assertEqual(result["proposal"]["one_offs"][0]["amount_chf"], 900)
 
-    def test_propose_needs_a_known_type_or_a_description(self):
-        for body in ({}, {"event": "   "}, {"preset": "lottery"}):
-            with self.subTest(body=body), self.assertRaises(ValueError):
-                propose_branch({"parent": parent_node(), **body}, "key")
+class EnvFileTests(unittest.TestCase):
+    def test_env_file_is_read_without_overriding_the_real_environment(self):
+        with tempfile.TemporaryDirectory() as folder:
+            Path(folder, ".env").write_text(
+                "# comment\n\nAI_BASE_URL = 'https://example.invalid/v1'\nAI_API_KEY=\"from-file\"\nPORT=9999\nnot a setting\n",
+                encoding="utf-8")
+            with patch.object(server, "ROOT", Path(folder)), patch.dict(os.environ, {"PORT": "8000"}, clear=True):
+                load_env()
+                self.assertEqual(os.environ["AI_BASE_URL"], "https://example.invalid/v1")
+                self.assertEqual(os.environ["AI_API_KEY"], "from-file")
+                self.assertEqual(os.environ["PORT"], "8000")
+                self.assertNotIn("not a setting", os.environ)
 
-    def test_invalid_ai_output_gives_a_readable_error(self):
-        with patch("financial_twin.server.gemini_json", return_value={"changes": "nope"}):
-            with self.assertRaisesRegex(ValueError, "rephrase"):
-                propose_branch({"parent": parent_node(), "event": "Something"}, "key")
-
-    def test_random_test_scenarios_reconcile(self):
-        for seed in range(20):
-            nodes = {node["id"]: node for node in random_test({"years": 10}, random.Random(seed))["nodes"]}
-            for node in nodes.values():
-                parent = nodes.get(node["parent_id"])
-                if parent:
-                    flow = node["state"]["cash_flow"]["net_cash_flow_chf"]
-                    self.assertAlmostEqual(parent["state"]["cash_chf"] + flow, node["state"]["cash_chf"], places=6)
+    def test_missing_env_file_is_fine(self):
+        with tempfile.TemporaryDirectory() as folder, patch.object(server, "ROOT", Path(folder)):
+            load_env()
 
 
 if __name__ == "__main__":

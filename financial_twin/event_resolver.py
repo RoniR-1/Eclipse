@@ -72,10 +72,10 @@ def _resolve_event(event_type, description, api_key=None):
                         'source_urls': row['source_urls'],
                         'note': row.get('note') or row['display_name']}
             key = row['normalized_key']
-    api_key = api_key or os.environ.get('AI_API_KEY') or os.environ.get('GEMINI_API_KEY')
-    if not api_key:
+    from . import server
+    if not (api_key or server.configured_api_keys()):  # any key from .env, including AI_API_KEY_1, _2, ...
         return None
-    result = web_lookup(event_type, description, api_key)
+    result = web_lookup(event_type, description, api_key or None)
     if not isinstance(result, dict) or not isinstance(result.get('params'), dict):
         return None
     if not isinstance(result.get('source_urls'), list):
