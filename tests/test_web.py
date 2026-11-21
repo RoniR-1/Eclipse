@@ -6,7 +6,7 @@ from unittest.mock import patch
 from urllib.error import HTTPError, URLError
 
 from financial_twin import create_root, simulate
-from financial_twin.server import extract, node_narrative, run_branch, run_simulation, run_projection, random_test, years_value
+from financial_twin.server import apply_branch_change, edit_nodes, extract, node_narrative, run_branch, run_simulation, run_projection, random_test, years_value
 
 
 class WebFlowTests(unittest.TestCase):
@@ -14,6 +14,24 @@ class WebFlowTests(unittest.TestCase):
         self.cooldowns = patch.dict("financial_twin.server.MODEL_COOLDOWNS", {}, clear=True)
         self.cooldowns.start()
         self.addCleanup(self.cooldowns.stop)
+
+    def test_edit_propagates_through_fork_and_preserves_event(self):
+        scenario = {"start_date": "2025-01-01", "opening_cash_chf": 10000, "annual_inflation": 0,
+                    "phases": [{"start_month": 0, "end_month": None, "monthly_income_chf": 5000, "monthly_expenses_chf": 2000}],
+                    "one_off_costs": [], "assets": [], "debts": [], "preferences": {}}
+        root = create_root(scenario)
+        main = simulate(root, 3)
+        change = {"monthly_income_delta_chf": 1000, "monthly_expenses_delta_chf": 0, "one_off_cost_chf": 1000,
+                  "investment_multiplier": 1, "new_asset_chf": 20000, "new_debt_chf": 0,
+                  "new_debt_annual_interest_rate": 0, "new_debt_monthly_payment_chf": 0}
+        branch = apply_branch_change(main[0], "New job", 2, {}, change)["nodes"]
+        nodes = [root, *main, *branch]
+        changed = edit_nodes({"nodes": nodes, "node_id": root["id"], "edits": {"cash_chf": 12000, "monthly_income_chf": 6000}})["nodes"]
+        revised = {node["id"]: node for node in changed}
+        self.assertEqual(revised[main[-1]["id"]]["state"]["cash_chf"], 24000)
+        self.assertEqual(revised[branch[-1]["id"]]["state"]["cash_chf"], 25000)
+        self.assertEqual(revised[branch[-1]["id"]]["state"]["assets"][0]["value_chf"], 20000)
+        self.assertEqual(revised[branch[-1]["id"]]["scenario"]["opening_cash_chf"], 12000)
 
     def test_projection_resolves_description_and_preserves_user_amounts(self):
         data = {"profile": {"age": 30, "cash_chf": 10000, "monthly_net_income_chf": 5000, "monthly_rent_chf": 1500},

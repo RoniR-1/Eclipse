@@ -1901,6 +1901,79 @@ function renderInspector(node, { focusBranchInput = false } = {}) {
   appendDetails(breakdown, node.state);
   acctSec.append(breakdown);
 
+  const editForm = document.createElement('form');
+  editForm.className = 'branch-form node-edit-form';
+  const editMonth = Math.max(0, node.month - 1);
+  const editPhase = node.scenario.phases.find(phase => phase.start_month <= editMonth && (phase.end_month === null || editMonth < phase.end_month));
+  const editCost = node.scenario.one_off_costs.filter(cost => cost.month === editMonth).reduce((sum, cost) => sum + cost.amount_chf, 0);
+  const fields = [
+    ...(node.month === 0 ? [{ name: 'cash_chf', label: 'Starting cash (CHF)', value: s.cash_chf }] : []),
+    { name: 'monthly_income_chf', label: 'Monthly income (CHF)', value: editPhase.monthly_income_chf },
+    { name: 'monthly_expenses_chf', label: 'Monthly expenses before inflation (CHF)', value: editPhase.monthly_expenses_chf },
+    { name: 'yearly_expenses_chf', label: 'Yearly expenses before inflation (CHF)', value: editPhase.monthly_expenses_chf * 12 },
+    { name: 'one_off_cost_chf', label: 'One-time cost (CHF)', value: editCost },
+    { name: 'date', label: 'Date', value: node.date, type: 'date' },
+  ];
+  const editTitle = document.createElement('h3');
+  editTitle.textContent = 'Edit this point';
+  editForm.append(editTitle);
+  for (const field of fields) {
+    const label = document.createElement('label');
+    label.textContent = field.label;
+    const input = document.createElement('input');
+    input.type = field.type || 'number';
+    input.name = field.name;
+    input.value = field.value;
+    input.required = true;
+    if (input.type === 'number') {
+      input.step = 'any';
+      if (field.name !== 'cash_chf') input.min = '0';
+    }
+    label.append(input);
+    editForm.append(label);
+  }
+  const monthlyExpenses = editForm.elements.monthly_expenses_chf;
+  const yearlyExpenses = editForm.elements.yearly_expenses_chf;
+  monthlyExpenses.addEventListener('input', () => { yearlyExpenses.value = Number(monthlyExpenses.value) * 12; });
+  yearlyExpenses.addEventListener('input', () => { monthlyExpenses.value = Number(yearlyExpenses.value) / 12; });
+  const editError = document.createElement('p');
+  editError.className = 'form-error';
+  editError.setAttribute('role', 'alert');
+  const editButton = document.createElement('button');
+  editButton.type = 'submit';
+  editButton.className = 'primary-button wide';
+  editButton.textContent = 'Save changes';
+  editForm.append(editError, editButton);
+  editForm.addEventListener('submit', async event => {
+    event.preventDefault();
+    const edits = {};
+    for (const field of fields) {
+      if (field.name === 'yearly_expenses_chf') continue;
+      const input = editForm.elements[field.name];
+      const value = input.type === 'number' ? Number(input.value) : input.value;
+      if (value !== field.value) edits[field.name] = value;
+    }
+    if (!Object.keys(edits).length) return;
+    editError.textContent = '';
+    editButton.disabled = true;
+    const revision = state.revision;
+    try {
+      const result = await request('/api/edit-nodes', { nodes: [...state.nodes.values()], node_id: node.id, edits });
+      if (revision !== state.revision) return;
+      state.revision += 1;
+      state.narratives.clear();
+      for (const updated of result.nodes) state.nodes.set(updated.id, updated);
+      if (state.resultsView === 'tree') renderTreeGraph({ focusId: node.id });
+      else renderTimelineView();
+      selectNode(node.id);
+      showToast('Changes saved');
+    } catch (error) {
+      editError.textContent = error.message;
+    } finally {
+      editButton.disabled = false;
+    }
+  });
+
   const form = document.createElement('form');
   form.id = 'branch-form';
   form.className = 'branch-form';
@@ -1929,7 +2002,7 @@ function renderInspector(node, { focusBranchInput = false } = {}) {
     </button>
   `;
 
-  panel.append(header, narrativeSec, acctSec, form);
+  panel.append(header, editForm, narrativeSec, acctSec, form);
 
   const remaining = state.years * 12 - node.month;
   const monthSelect = form.querySelector('#branch-months');
