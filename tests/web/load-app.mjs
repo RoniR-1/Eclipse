@@ -9,6 +9,7 @@ const EXPORTS = [
   'formatVariable', 'milestoneTitle', 'money', 'moneySigned', 'compactChf', 'escapeHtml',
   'variableToDisplay', 'parseVariableInput', 'renderTuning',
   'setCurrency', 'localizeAmounts', 'currencyRateText', 'conversionText', 'chfToDisplay', 'displayToChf',
+  'setTheme', 'getBranchPalette',
 ];
 
 // An object that accepts any property access, assignment or call, standing in for DOM elements.
@@ -35,6 +36,7 @@ export function loadApp({ document: customDocument } = {}) {
       querySelectorAll: () => [],
       createElement: () => stub(),
       addEventListener() {},
+      documentElement: { dataset: {} },
       body: stub(),
       hidden: false,
     },
