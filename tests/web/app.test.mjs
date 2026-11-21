@@ -303,6 +303,31 @@ describe('run file', () => {
   });
 });
 
+describe('custom comparison graphs', () => {
+  test('leaf paths match tree leaves with unified codes, colors and lineages', () => {
+    const index = app.buildTreeIndex();
+    const leaves = app.getLeafPaths(index);
+    assert.deepEqual(plain(leaves.map(l => l.id)), ['main', 'A', 'B', 'C']);
+    assert.deepEqual(plain(leaves.map(l => l.code)), ['P0', 'P1', 'P1.1', 'P2']);
+    assert.equal(leaves[0].label, 'Original path');
+    assert.equal(leaves[0].leafNodeId, 'm6');
+    for (const leaf of leaves) {
+      assert.equal(leaf.color, index.branchMeta.get(leaf.id).color, 'graph color matches canonical branch color');
+    }
+    const nested = leaves.find(l => l.id === 'B');
+    assert.equal(nested.leafNodeId, 'b6');
+    assert.match(nested.trail, /Start a master's → Part-time job/);
+    assert.deepEqual(plain(nested.chain.map(n => n.id)), ['root', 'm1', 'm2', 'a3', 'a4', 'b5', 'b6']);
+  });
+
+  test('niceTicks produces clean ordered ticks spanning the data range', () => {
+    const { min, max, ticks } = app.niceTicks(-1200, 94500, 5);
+    assert.ok(min <= -1200 && max >= 94500);
+    assert.ok(ticks.length >= 3);
+    assert.ok(ticks.includes(0));
+  });
+});
+
 describe('display currency', () => {
   const EUR = { code: 'EUR', name: 'Euro', symbol: '€', per_chf: 1.25, date: '2026-11-20', source: 'European Central Bank reference rate' };
   const SEK = { code: 'SEK', name: 'Swedish krona', symbol: 'SEK', per_chf: 12, date: '2026-11-20', source: 'ECB' };
