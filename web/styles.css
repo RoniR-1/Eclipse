@@ -527,8 +527,8 @@ dialog p {
 }
 
 .summary-card {
-  background: rgba(53, 30, 18, 0.9);
-  border-color: #4a2a18;
+  background: rgba(62, 38, 26, 0.9);
+  border-color: var(--border-strong);
 }
 
 .summary-card > p {
@@ -2216,33 +2216,51 @@ code {
 .slider-entry {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  background: #4a2614;
-  border: 1px solid transparent;
-  border-radius: 20px;
-  padding: 3px 11px;
-  color: #ffb27a;
-  font-size: 14px;
-  font-weight: 700;
+  gap: 5px;
+  background: rgba(255, 168, 102, 0.12);
+  border: 1px solid rgba(255, 178, 118, 0.36);
+  border-radius: 10px;
+  padding: 6px 12px;
+  color: var(--text-strong);
+  font-size: 14.5px;
+  font-weight: 600;
   white-space: nowrap;
-  transition: border-color 0.15s;
+  transition: border-color 0.18s ease, background 0.18s ease, box-shadow 0.18s ease;
 }
-.slider-entry:focus-within { border-color: var(--accent-bright); }
-.slider-number {
-  width: 9ch;
+.slider-entry:hover {
+  border-color: rgba(255, 188, 132, 0.58);
+  background: rgba(255, 168, 102, 0.18);
+}
+.slider-entry:focus-within {
+  border-color: var(--accent-bright);
+  background: rgba(255, 168, 102, 0.22);
+  box-shadow: 0 0 0 3px rgba(255, 138, 61, 0.2);
+}
+input[type="text"].slider-number {
+  width: 6.8ch;
   min-width: 0;
   height: auto;
-  padding: 3px 0;
+  padding: 0;
   border: 0;
+  border-radius: 0;
   background: transparent;
   color: var(--text-strong);
   font: inherit;
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
-.slider-number:focus { outline: none; }
-.slider-number.is-invalid { color: var(--danger); }
-.slider-entry:has(.is-invalid) { border-color: var(--danger); }
-.slider-unit { color: #ffb27a; font-size: 13px; }
+input[type="text"].slider-number:focus { outline: none; }
+input[type="text"].slider-number.is-invalid { color: var(--danger); }
+.slider-entry:has(.is-invalid) {
+  border-color: var(--danger);
+  box-shadow: 0 0 0 3px rgba(255, 127, 112, 0.16);
+}
+.slider-unit {
+  color: var(--accent-bright);
+  font-size: 12.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  user-select: none;
+}
 .slider-hint { margin: 6px 0 0; font-size: 12px; color: var(--danger); min-height: 0; }
 .slider-hint:empty { display: none; }
