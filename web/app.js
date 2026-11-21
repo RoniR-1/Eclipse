@@ -139,6 +139,35 @@ function renderGraph(fit = false) {
       layout: { improvedLayout: false },
     });
     state.network.on('click', params => { if (params.nodes.length) selectNode(params.nodes[0]); });
+    let drag = null;
+    state.network.on('dragStart', params => {
+      if (!params.nodes.length) { drag = null; return; }
+      const children = new Map();
+      for (const edge of state.graphEdges.get()) {
+        if (!children.has(edge.from)) children.set(edge.from, []);
+        children.get(edge.from).push(edge.to);
+      }
+      const dragged = new Set(params.nodes);
+      const followers = new Set();
+      const stack = [...params.nodes];
+      while (stack.length) {
+        for (const child of children.get(stack.pop()) || []) {
+          if (dragged.has(child) || followers.has(child)) continue;
+          followers.add(child);
+          stack.push(child);
+        }
+      }
+      const anchor = params.nodes[0];
+      drag = { anchor, origin: state.network.getPosition(anchor), followers: state.network.getPositions([...followers]) };
+    });
+    state.network.on('dragging', () => {
+      if (!drag) return;
+      const current = state.network.getPosition(drag.anchor);
+      const dx = current.x - drag.origin.x;
+      const dy = current.y - drag.origin.y;
+      for (const [id, start] of Object.entries(drag.followers)) state.network.moveNode(id, start.x + dx, start.y + dy);
+    });
+    state.network.on('dragEnd', () => { drag = null; });
   } else {
     state.graphNodes.clear();
     state.graphEdges.clear();
