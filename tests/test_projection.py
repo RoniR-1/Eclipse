@@ -11,7 +11,8 @@ from financial_twin.projection import BASELINE, project, run_arrays, schema
 ROOT = Path(__file__).resolve().parents[1]
 DATA_DIRS = [ROOT / "ai-financial-twin-lauzhack-2026-main" / "Data",
              ROOT / "ai-financial-twin-lauzhack-2026" / "Data",
-             ROOT.parent / "ai-financial-twin-lauzhack-2026-main" / "Data"]
+             ROOT.parent / "ai-financial-twin-lauzhack-2026-main" / "Data",
+             ROOT / "fixtures" / "demo" / "Data"]
 DATA = next((path for path in DATA_DIRS if (path / "synthetic-cash-balances.csv").exists()), None)
 LEDGER = DATA and DATA / "synthetic-transactions" / "synthetic-transactions.csv"
 
@@ -350,12 +351,14 @@ class ProjectionTests(unittest.TestCase):
         self.assertEqual(described["events"]["housing_change"]["params"]["deposit_months"]["min"], 0)
 
 
-@unittest.skipUnless(DATA and LEDGER.exists(), "challenge data not available")
 class LedgerReplayTests(unittest.TestCase):
-    """The recurrence must reproduce the organisers' monthly cash reconciliation exactly."""
+    """The recurrence must reproduce each retained monthly cash balance."""
 
     def test_run_arrays_matches_cash_balances(self):
-        wanted = {f"P{index:05d}" for index in range(1, 51)}
+        self.assertIsNotNone(DATA)
+        self.assertTrue(LEDGER.is_file())
+        bundled = DATA == ROOT / "fixtures" / "demo" / "Data"
+        wanted = {"P00001", "P00013"} if bundled else {f"P{index:05d}" for index in range(1, 51)}
         income, expenses = defaultdict(float), defaultdict(float)
         with LEDGER.open(newline="", encoding="utf-8") as source:
             for row in csv.DictReader(source):
@@ -371,11 +374,17 @@ class LedgerReplayTests(unittest.TestCase):
             for row in csv.DictReader(source):
                 if row["profile_id"] in wanted:
                     balances[row["profile_id"]].append(row)
+        self.assertEqual(set(balances), wanted)
         for profile_id, rows in balances.items():
+            rows.sort(key=lambda row: row["month"])
             months = [row["month"] for row in rows]
+            self.assertEqual(len(months), len(set(months)))
+            self.assertEqual(len(months), 2 if bundled else 24)
+            self.assertTrue(all((profile_id, month) in income or (profile_id, month) in expenses for month in months))
             timeline = run_arrays(float(rows[0]["opening_cash_chf"]),
                                   [income[(profile_id, m)] for m in months],
                                   [expenses[(profile_id, m)] for m in months])
+            self.assertEqual(len(timeline), len(rows) + 1)
             for point, expected in zip(timeline[1:], rows):
                 self.assertAlmostEqual(point["cash_chf"], float(expected["closing_cash_chf"]), places=1,
                                        msg=f"{profile_id} {expected['month']}")

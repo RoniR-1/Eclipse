@@ -7,7 +7,7 @@ const EXPORTS = [
   'state', 'branchNodeIds', 'originalPathRemovals', 'isOriginalBranch', 'deleteBranch', 'buildRunFile',
   'buildTreeIndex', 'getPathMilestones', 'getAllGraphMilestones', 'setHideRecaps', 'getLeafPaths', 'niceTicks', 'GRAPH_METRICS', 'nodeHealth',
   'formatVariable', 'milestoneTitle', 'money', 'moneySigned', 'compactChf', 'escapeHtml',
-  'variableToDisplay', 'parseVariableInput', 'renderTuning',
+  'variableToDisplay', 'parseVariableInput', 'renderTuning', 'renderStructuredComparison', 'inputSource',
   'setCurrency', 'localizeAmounts', 'currencyRateText', 'conversionText', 'chfToDisplay', 'displayToChf',
   'setTheme', 'getBranchPalette',
 ];
@@ -26,7 +26,7 @@ function stub() {
   });
 }
 
-export function loadApp({ document: customDocument } = {}) {
+export function loadApp({ document: customDocument, fetch: customFetch } = {}) {
   const source = readFileSync(new URL('../../web/app.js', import.meta.url), 'utf8');
   const context = {
     console, Intl, URL, Blob, structuredClone, setTimeout, clearTimeout, Math, Date, JSON,
@@ -42,7 +42,7 @@ export function loadApp({ document: customDocument } = {}) {
     },
     window: { addEventListener() {}, scrollTo() {}, innerWidth: 1280, innerHeight: 800, devicePixelRatio: 1 },
     sessionStorage: { getItem: () => null, setItem() {}, removeItem() {} },
-    fetch: async () => ({ ok: true, json: async () => ({}) }),
+    fetch: customFetch || (async () => ({ ok: true, json: async () => ({}) })),
     requestAnimationFrame: () => 0,
     cancelAnimationFrame() {},
     performance: { now: () => 0 },

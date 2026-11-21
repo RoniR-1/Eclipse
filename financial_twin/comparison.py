@@ -6,10 +6,11 @@ from statistics import median
 from .engine import create_root, simulate
 from .loaders import _record, _rows, load_starter_scenario
 from .report import build_comparison_bundle
+from .projection import _compare
 
 
 ROOT = Path(__file__).resolve().parent.parent
-CHALLENGE = ROOT / "ai-financial-twin-lauzhack-2026"
+CHALLENGE = ROOT / "fixtures" / "demo"
 START = "2025-01-01"
 HORIZON = 120
 PATHS = ("Start working", "Master's degree", "Move abroad")
@@ -90,7 +91,8 @@ def alexia_comparison():
                 "frequency": "once", "transformation": "illustrative goal assumption"}
         paths[name] = _run(scenario)
     baseline = paths["Start working"]["metrics"]
-    comparisons = {name: {"terminal_cash_difference_chf": round(path["metrics"]["terminal_cash_chf"] - baseline["terminal_cash_chf"], 2),
+    comparisons = {name: {**_compare(paths["Start working"]["timeline"], path["timeline"]),
+                          "terminal_cash_difference_chf": round(path["metrics"]["terminal_cash_chf"] - baseline["terminal_cash_chf"], 2),
                           "minimum_liquidity_difference_chf": round(path["metrics"]["minimum_liquidity_chf"] - baseline["minimum_liquidity_chf"], 2)}
                    for name, path in paths.items() if name != "Start working"}
     master = paths["Master's degree"]

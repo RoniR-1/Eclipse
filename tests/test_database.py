@@ -14,6 +14,35 @@ from psycopg.conninfo import make_conninfo
 from financial_twin.database import ROOT, TABLES, initialize_database
 
 
+class FixtureTests(unittest.TestCase):
+    def test_ledger_balances_and_unique_assumptions(self):
+        from collections import defaultdict
+        from decimal import Decimal
+
+        def rows(path):
+            with (ROOT / path).open(encoding="utf-8", newline="") as source:
+                return list(csv.DictReader(source))
+
+        transactions = defaultdict(Decimal)
+        for item in rows("Data/synthetic-transactions/synthetic-transactions.csv"):
+            transactions[(item["profile_id"], item["account_id"], item["date"][:7])] += Decimal(item["amount_chf"])
+        previous = {}
+        for item in sorted(rows("Data/synthetic-cash-balances.csv"), key=lambda row: (row["account_id"], row["month"])):
+            key = (item["profile_id"], item["account_id"], item["month"])
+            opening = Decimal(item["opening_cash_chf"])
+            net = Decimal(item["net_transactions_chf"])
+            closing = Decimal(item["closing_cash_chf"])
+            self.assertEqual(transactions.pop(key), net)
+            self.assertEqual(opening + net, closing)
+            if item["account_id"] in previous:
+                self.assertEqual(opening, previous[item["account_id"]])
+            previous[item["account_id"]] = closing
+        self.assertFalse(transactions)
+        assumptions = rows("Data/scenario-assumptions.csv")
+        keys = [(item["profile_id"], item["scenario_id"], item["parameter"]) for item in assumptions]
+        self.assertEqual(len(keys), len(set(keys)))
+
+
 @unittest.skipUnless(os.environ.get("TEST_DATABASE_URL"), "set TEST_DATABASE_URL to run PostgreSQL integration tests")
 class DatabaseTests(unittest.TestCase):
     @classmethod

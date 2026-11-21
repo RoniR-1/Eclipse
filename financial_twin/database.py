@@ -7,7 +7,7 @@ import psycopg
 from psycopg import sql
 
 
-ROOT = Path(__file__).resolve().parents[1] / "ai-financial-twin-lauzhack-2026"
+ROOT = Path(__file__).resolve().parents[1] / "fixtures" / "demo"
 TABLES = (
     ("profiles", "Data/synthetic-profiles.csv", "profile_id text PRIMARY KEY, display_name text, age_at_start integer, city text, canton text, country text, currency text, employment_status text, household_type text, opening_cash_chf numeric, reference_monthly_net_income_chf numeric, reference_monthly_rent_chf numeric, as_of_date date, synthetic boolean"),
     ("scenario_catalog", "Data/scenario-catalog.csv", "id text PRIMARY KEY, category text, scenario text, baseline text, intervention text, example_metrics text"),
@@ -146,4 +146,5 @@ def initialize_from_environment():
     database_url = os.environ.get("DATABASE_URL")
     if not database_url:
         raise RuntimeError("DATABASE_URL must be set to a PostgreSQL connection URL")
-    return initialize_database(database_url)
+    data_root = Path(os.environ.get("FINANCIAL_TWIN_DATA_ROOT", "").strip() or ROOT)
+    return initialize_database(database_url, data_root)

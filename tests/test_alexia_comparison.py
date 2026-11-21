@@ -1,13 +1,44 @@
 import json
+from pathlib import Path
 import unittest
 from unittest.mock import Mock
 
 from financial_twin.comparison import alexia_comparison
 from financial_twin.engine import create_root, simulate
-from financial_twin.server import Handler
+from financial_twin.server import Handler, alexia_demo
+from financial_twin.reproduce import build_run, verify
 
 
 class AlexiaComparisonTests(unittest.TestCase):
+    def test_homepage_demo_numbers_and_replay(self):
+        evidence = json.loads((Path(__file__).resolve().parents[1] / "fixtures/demo/homepage-evidence.json").read_text())
+        demo = alexia_demo()
+        scenario = demo["run"]["scenario"]
+        proposal = demo["run"]["branches"][0]["proposal"]
+        self.assertEqual(scenario["start_date"], evidence["start_date"])
+        self.assertEqual(scenario["opening_cash_chf"], evidence["opening_cash_chf"])
+        self.assertEqual(scenario["annual_inflation"], evidence["annual_inflation"])
+        self.assertEqual(scenario["phases"][0]["monthly_income_chf"], evidence["work_monthly_income_chf"])
+        self.assertEqual(scenario["phases"][0]["monthly_expenses_chf"], evidence["monthly_expenses_chf"])
+        self.assertEqual([item["amount_chf"] for item in proposal["one_offs"]], [evidence["tuition_chf"]] * 2)
+        self.assertEqual([item["offset_months"] for item in proposal["one_offs"]], evidence["tuition_months"])
+        self.assertEqual(proposal["changes"][0]["duration_months"], evidence["study_months"])
+        self.assertEqual(evidence["work_monthly_income_chf"] + proposal["changes"][0]["amount_chf"], evidence["study_monthly_income_chf"])
+        self.assertEqual(evidence["work_monthly_income_chf"] + proposal["changes"][1]["amount_chf"], evidence["graduate_monthly_income_chf"])
+        self.assertEqual(demo["years"] * 12, evidence["horizon_months"])
+        baseline, alternative = demo["nodes"][60], demo["nodes"][-1]
+        self.assertEqual(baseline["state"]["cash_chf"], evidence["expected_work_terminal_cash_chf"])
+        self.assertEqual(alternative["state"]["cash_chf"], evidence["expected_master_terminal_cash_chf"])
+        funding = alternative["state"]["funding_feasibility"]
+        self.assertEqual(funding["minimum_cash_chf"], evidence["expected_master_minimum_cash_chf"])
+        self.assertEqual(funding["minimum_cash_date"], evidence["expected_master_minimum_cash_date"])
+        self.assertEqual(funding["first_funding_gap_period_start"], evidence["expected_first_funding_gap_period_start"])
+        data = demo["run"]
+        run = build_run(source=data["source"], years=data["years"], scenario=data["scenario"],
+                        variables=data["variables"], branches=data["branches"], nodes=demo["nodes"])
+        run["operations"] = data["operations"]
+        self.assertTrue(verify(run)["ok"])
+
     def test_comparison_replays_starter_paths_and_sensitivity(self):
         comparison = alexia_comparison()
         self.assertEqual(comparison["start_date"], "2025-01-01")
@@ -21,6 +52,12 @@ class AlexiaComparisonTests(unittest.TestCase):
         self.assertEqual(metrics["maximum_funding_need_chf"], 18600)
         self.assertEqual(metrics["first_funding_gap_month"], 7)
         self.assertEqual(metrics["first_funding_gap_period_start"], "2025-07-01")
+        delta = comparison["comparisons"]["Master's degree"]
+        self.assertEqual(delta["cash_difference_at_end_chf"], -7400)
+        self.assertEqual(delta["largest_cash_gap_chf"], -55400)
+        self.assertEqual(delta["largest_cash_gap_date"], "2027-01-01")
+        self.assertIsNone(delta["break_even_date"])
+        self.assertEqual(comparison["comparison_bundle"]["comparisons"]["Master's degree"], delta)
         self.assertFalse(metrics["goals"][0]["met"])
         self.assertEqual(metrics["goals"][0]["deadline_gap_chf"], 28600)
         tuition = comparison["assumptions"]["tuition_sources"]

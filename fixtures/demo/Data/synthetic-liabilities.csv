@@ -1,0 +1,2 @@
+liability_id,profile_id,as_of_date,liability_type,opening_principal_chf,annual_interest_rate,monthly_payment_chf,currency,notes
+L-P00013-01,P00013,2025-01-01,personal_loan,35407.71,0.0593,0,CHF,illustrative

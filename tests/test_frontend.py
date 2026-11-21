@@ -9,7 +9,7 @@ import tempfile
 import unittest
 
 from financial_twin.reproduce import verify
-from financial_twin.server import apply_branch_change, random_test
+from financial_twin.server import alexia_demo, apply_branch_change, edit_nodes, random_test
 
 ROOT = Path(__file__).resolve().parents[1]
 NODE = shutil.which("node")
@@ -53,6 +53,31 @@ class FrontendTests(unittest.TestCase):
         self.assertTrue(report["ok"], report["mismatches"][:3] or report["missing_nodes"][:3])
         self.assertLess(report["checked_nodes"], len(state["nodes"]))
         self.assertNotIn(first_branch, {item["branch_id"] for item in run["expected"]})
+
+    def test_browser_export_replays_interleaved_edits_branches_and_deletion(self):
+        demo = alexia_demo()
+        nodes = demo["nodes"]
+        edit = {"cash_chf": 11000}
+        updated = edit_nodes({"nodes": nodes, "node_id": nodes[0]["id"], "edits": edit})["nodes"]
+        by_id = {node["id"]: node for node in nodes}
+        by_id.update({node["id"]: node for node in updated})
+        demo["run"]["operations"].append({"type": "edit", "node_id": nodes[0]["id"], "edits": edit})
+        change = {"monthly_income_delta_chf": 500, "monthly_expenses_delta_chf": 0, "one_off_cost_chf": 1000,
+                  "investment_multiplier": 1, "new_asset_chf": 0, "new_debt_chf": 0,
+                  "new_debt_annual_interest_rate": 0, "new_debt_monthly_payment_chf": 0}
+        added = apply_branch_change(by_id[nodes[12]["id"]], "New role", 24, {}, change, 1)
+        demo["run"]["branches"].append(added["branch"])
+        demo["run"]["operations"].append({"type": "branch", "branch": added["branch"]})
+        by_id.update({node["id"]: node for node in added["nodes"]})
+        deleted = demo["nodes"][-1]["branch_id"]
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder, "state.json")
+            path.write_text(json.dumps({"run": demo["run"], "nodes": list(by_id.values())}), encoding="utf-8")
+            result = subprocess.run([NODE, "tests/web/export-run.mjs", str(path), deleted], cwd=ROOT,
+                                    capture_output=True, text=True, timeout=60)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        report = verify(json.loads(result.stdout))
+        self.assertTrue(report["ok"], report)
 
 
 if __name__ == "__main__":

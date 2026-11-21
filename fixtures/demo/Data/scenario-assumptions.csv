@@ -1,0 +1,3 @@
+assumption_id,scenario_id,profile_id,parameter,value,unit,frequency,source_type,notes
+AS-P00001-02,S001,P00001,annual_tuition_chf,8000,CHF,annual,fictional,illustrative
+AS-P00013-01,S001,P00013,annual_tuition_chf,1600,CHF,annual,fictional,illustrative

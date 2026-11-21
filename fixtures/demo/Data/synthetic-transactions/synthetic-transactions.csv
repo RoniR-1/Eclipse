@@ -1,0 +1,9 @@
+transaction_id,profile_id,date,transaction_type,category,amount_chf,currency,account_id,description,synthetic
+P00001-2025-01-income,P00001,2025-01-01,income,income,1200,CHF,A-P00001,Fictional monthly entry,true
+P00001-2025-01-expense,P00001,2025-01-01,expense,expense,-2100,CHF,A-P00001,Fictional monthly entry,true
+P00001-2025-02-income,P00001,2025-02-01,income,income,1200,CHF,A-P00001,Fictional monthly entry,true
+P00001-2025-02-expense,P00001,2025-02-01,expense,expense,-2100,CHF,A-P00001,Fictional monthly entry,true
+P00013-2025-01-income,P00013,2025-01-01,income,income,5000,CHF,A-P00013,Fictional monthly entry,true
+P00013-2025-01-expense,P00013,2025-01-01,expense,expense,-3000,CHF,A-P00013,Fictional monthly entry,true
+P00013-2025-02-income,P00013,2025-02-01,income,income,5000,CHF,A-P00013,Fictional monthly entry,true
+P00013-2025-02-expense,P00013,2025-02-01,expense,expense,-3000,CHF,A-P00013,Fictional monthly entry,true

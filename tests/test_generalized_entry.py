@@ -9,7 +9,7 @@ from financial_twin.loaders import load_synthetic_profile
 from financial_twin.server import apply_branch_change, extract, run_projection, run_simulation
 
 
-DATA = Path(__file__).resolve().parent.parent / "ai-financial-twin-lauzhack-2026" / "Data"
+DATA = Path(__file__).resolve().parent.parent / "fixtures" / "demo" / "Data"
 
 
 class GeneralizedEntryTests(unittest.TestCase):

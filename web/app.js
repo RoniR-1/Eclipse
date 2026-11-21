@@ -7,6 +7,7 @@ const state = {
   stage: 'intake',
   resultsView: 'timeline', // 'timeline' | 'tree'
   drawerOpen: false,
+  drawerReturnFocus: null,
   chartMetric: 'net_worth_chf',
   extraction: null,
   years: 5,
@@ -1039,12 +1040,23 @@ function setPathsPanelOpen(open) {
 }
 
 function setDrawerOpen(open) {
+  const wasOpen = state.drawerOpen;
+  if (open && !wasOpen) state.drawerReturnFocus = document.activeElement;
   state.drawerOpen = open;
   const inResults = state.stage === 'results';
   const active = open && inResults;
   document.body.classList.toggle('drawer-open', active);
+  const inspector = byId('inspector-panel');
+  inspector.inert = !active;
+  inspector.setAttribute('aria-hidden', String(!active));
   // Backdrop dims only in Timeline mode (in Full Tree mode, you can keep panning/clicking nodes directly!)
   byId('drawer-backdrop').hidden = !(active && state.resultsView === 'timeline');
+  if (active && !wasOpen) byId('close-drawer').focus();
+  if (!active && wasOpen) {
+    const target = state.drawerReturnFocus?.isConnected ? state.drawerReturnFocus : document.querySelector('.vnode.is-selected .vnode-dot-btn');
+    target?.focus();
+    state.drawerReturnFocus = null;
+  }
   if (active && state.resultsView === 'tree') {
     const panel = byId('tree-controls-panel');
     const btn = byId('toggle-paths-panel');
@@ -1118,6 +1130,8 @@ function showStage(id) {
     stopSpineAnimation();
   }
   window.scrollTo({ top: 0, behavior: 'smooth' });
+  const heading = byId(id).querySelector('h1');
+  if (heading) { heading.setAttribute('tabindex', '-1'); heading.focus({ preventScroll: true }); }
 }
 
 /* ==========================================================================
@@ -1464,15 +1478,21 @@ function formatVariable(variable, value) {
   return `${Number(number.toFixed(2))}${variable.unit ? ` ${variable.unit}` : ''}`;
 }
 
-function addBaseline(label, text) {
+function inputSource(record) {
+  if (record?.source === 'assumption' && record.transformation === 'model interpretation of story') return 'ai_estimate';
+  return record?.source || 'assumption';
+}
+
+function addBaseline(label, text, source = 'assumption') {
   const row = document.createElement('div');
   row.className = 'baseline-row';
   const name = document.createElement('span');
   name.textContent = label;
   const amount = document.createElement('strong');
   amount.textContent = text;
-  row.append(name, amount);
+  row.append(name, amount, setBadge(document.createElement('span'), source));
   byId('baseline').append(row);
+  return { amount, badge: row.lastElementChild };
 }
 
 function renderTuning(data) {
@@ -1484,10 +1504,88 @@ function renderTuning(data) {
   byId('baseline').replaceChildren();
 
   const scenario = data.scenario;
-  addBaseline('Starting cash', money(scenario.opening_cash_chf));
+  const sources = byId('input-provenance');
+  sources.replaceChildren();
+  const provenanceRows = new Map();
+  for (const [path, record] of Object.entries(scenario.provenance || {})) {
+    const row = document.createElement('div');
+    row.className = 'provenance-row';
+    const name = document.createElement('span');
+    name.textContent = path.replaceAll('_', ' ');
+    const value = document.createElement('span');
+    value.textContent = `${record.value ?? '—'} ${record.unit || ''}`.trim();
+    const badge = document.createElement('span');
+    setBadge(badge, inputSource(record));
+    row.append(name, value, badge);
+    sources.append(row);
+    provenanceRows.set(path, { value, badge });
+  }
+  const goals = byId('goal-editor');
+  goals.replaceChildren();
+  if (scenario.goals?.length) {
+    goals.append(el('h3', { text: 'Goals' }));
+    const preview = el('div', { class: 'summary-note', 'aria-live': 'polite' });
+    let goalRevision = 0;
+    const updatePreview = async () => {
+      const revision = ++goalRevision;
+      const variables = Object.fromEntries(data.variables.map(variable => {
+        const input = byId(`slider-${variable.id}`);
+        return [variable.id, Number(input.value)];
+      }));
+      preview.textContent = 'Recalculating goal outcomes…';
+      try {
+        const result = await request('/api/simulate', { scenario, years: state.years, variables });
+        if (revision !== goalRevision) return;
+        preview.replaceChildren(...(result.goals || []).map(goal => el('p', {
+          text: `${goal.name}: ${goal.met === null ? 'deadline beyond the horizon' : goal.met ? 'met at deadline' : 'not met at deadline'}${goal.deadline_gap_chf == null ? '' : `, gap ${money(goal.deadline_gap_chf)}`}.`,
+        })));
+      } catch (error) {
+        if (revision === goalRevision) preview.textContent = `Could not recalculate goals: ${error.message}`;
+      }
+    };
+    scenario.goals.forEach((goal, index) => {
+      const target = el('input', { type: 'number', min: 0, step: 'any', value: chfToDisplay(goal.target_chf) });
+      const deadline = el('input', { type: 'number', min: 0, step: 1, value: goal.target_month ?? goal.in_months ?? 0 });
+      const priority = el('select', {}, ...['high', 'medium', 'low'].map(value => el('option', { value, text: value })));
+      priority.value = goal.priority || 'medium';
+      const update = (key, value) => {
+        if ((key === 'target_chf' || key === 'target_month') && (!Number.isFinite(value) || value < 0 || (key === 'target_month' && !Number.isInteger(value)))) {
+          preview.textContent = 'Enter a nonnegative target and a whole-number deadline.';
+          goalRevision += 1;
+          return;
+        }
+        goal[key] = value;
+        if (key === 'target_month') {
+          delete goal.target_date;
+          delete goal.date;
+          delete goal.in_months;
+          for (const obsolete of ['target_date', 'date', 'in_months']) {
+            const path = `goals[${index}].${obsolete}`;
+            delete scenario.provenance?.[path];
+            provenanceRows.get(path)?.value.parentElement?.remove();
+          }
+        }
+        const record = scenario.provenance?.[`goals[${index}].${key}`];
+        if (record) { record.value = value; record.source = 'user'; }
+        const source = provenanceRows.get(`goals[${index}].${key}`);
+        if (source) { source.value.textContent = String(value); setBadge(source.badge, 'user'); }
+        updatePreview();
+      };
+      target.addEventListener('change', () => update('target_chf', target.value === '' ? NaN : displayToChf(target.value)));
+      deadline.addEventListener('change', () => update('target_month', deadline.value === '' ? NaN : Number(deadline.value)));
+      priority.addEventListener('change', () => update('priority', priority.value));
+      goals.append(el('fieldset', { class: 'goal-edit' }, el('legend', { text: goal.name }),
+        el('label', {}, el('span', { text: `Target (${state.currency.code})` }), target),
+        el('label', {}, el('span', { text: 'Deadline (months from start)' }), deadline),
+        el('label', {}, el('span', { text: 'Priority' }), priority)));
+    });
+    goals.append(preview);
+  }
+  const baselineFields = {};
+  baselineFields.opening_cash_chf = addBaseline('Starting cash', money(scenario.opening_cash_chf), inputSource(scenario.provenance?.opening_cash_chf));
   if (scenario.phases?.length) {
-    addBaseline('Monthly income', money(scenario.phases[0].monthly_income_chf));
-    addBaseline('Monthly expenses', money(scenario.phases[0].monthly_expenses_chf));
+    baselineFields.monthly_income_chf = addBaseline('Monthly income', money(scenario.phases[0].monthly_income_chf), inputSource(scenario.provenance?.['phases[0].monthly_income_chf']));
+    baselineFields.monthly_expenses_chf = addBaseline('Monthly expenses', money(scenario.phases[0].monthly_expenses_chf), inputSource(scenario.provenance?.['phases[0].monthly_expenses_chf']));
   }
   const totalAssets = (scenario.assets || []).reduce((sum, a) => sum + Number(a.value_chf || 0), 0);
   if (totalAssets > 0) addBaseline('Existing assets', money(totalAssets));
@@ -1526,6 +1624,18 @@ function renderTuning(data) {
       else valueBox.append(unit);
     }
     heading.append(label, valueBox);
+    const sourcePath = ['monthly_income_chf', 'monthly_expenses_chf'].includes(variable.id) ? `phases[0].${variable.id}` : variable.id === 'opening_cash_chf' || variable.id === 'annual_inflation' ? variable.id : `preferences.${variable.id}`;
+    const sourceBadge = setBadge(document.createElement('span'), inputSource(scenario.provenance?.[sourcePath]));
+    heading.append(sourceBadge);
+    const markEdited = value => {
+      setBadge(sourceBadge, 'user');
+      const record = scenario.provenance?.[sourcePath];
+      if (record) { record.value = Number(value); record.source = 'user'; }
+      const source = provenanceRows.get(sourcePath);
+      if (source) { source.value.textContent = String(Number(value)); setBadge(source.badge, 'user'); }
+      const baseline = baselineFields[variable.id];
+      if (baseline) { baseline.amount.textContent = money(Number(value)); if (baseline.badge) setBadge(baseline.badge, 'user'); }
+    };
 
     const description = document.createElement('p');
     description.className = 'slider-description';
@@ -1559,6 +1669,7 @@ function renderTuning(data) {
     hint.setAttribute('role', 'alert');
 
     input.addEventListener('input', () => {
+      markEdited(input.value);
       field.value = variableToDisplay(variable, input.value);
       field.classList.remove('is-invalid');
       field.removeAttribute('aria-invalid');
@@ -1592,6 +1703,7 @@ function renderTuning(data) {
       const offStep = Math.abs((applied - Number(input.min)) / Number(variable.step) % 1) > 1e-8;
       if (offStep) input.step = 'any';
       input.value = applied;
+      markEdited(applied);
       if (final) field.value = variableToDisplay(variable, applied);
     };
     field.addEventListener('input', () => applyTyped({ final: false }));
@@ -1744,7 +1856,7 @@ function renderTimelineView() {
   const activeCode = activeMeta.code || 'P0';
   byId('active-path-kicker').textContent = isAlternate
     ? `${activeCode} · ${activeMeta.label.toUpperCase()}`
-    : `${activeCode} · ORIGINAL PATH`;
+    : `${activeCode} · ${state.run?.demo === 'alexia' ? 'START WORKING' : 'ORIGINAL PATH'}`;
   const dotEl = byId('active-path-dot');
   if (dotEl) {
     if (isLightTheme()) {
@@ -2331,6 +2443,7 @@ function renderTreeMinimap(index) {
 function renderEndSummary(activeMeta, index) {
   const container = byId('path-kpis');
   container.replaceChildren();
+  renderPathComparison(index);
 
   const chain = activeMeta.chain;
   const tip = activeMeta.tipNode;
@@ -2416,6 +2529,62 @@ function renderEndSummary(activeMeta, index) {
   }
   if (state.sensitivityOpen) {
     loadAndRenderSensitivityReport(activeMeta);
+  }
+}
+
+function renderPathComparison(index) {
+  const container = byId('path-comparison');
+  container.replaceChildren();
+  const baseline = index.branchMeta.get('main') || index.branchMeta.get('root');
+  if (!baseline) return;
+  const baselineLabel = state.run?.demo === 'alexia' ? 'Start working' : 'Original path';
+  container.append(el('h3', { text: 'Compare your paths' }));
+  const alternatives = [...index.branchMeta.values()].filter(meta => meta.id !== baseline.id && meta.id !== 'root');
+  if (!alternatives.length) {
+    container.append(el('p', { text: 'Create an alternative at any timeline point to compare it with the original path.' }));
+    return;
+  }
+  for (const path of alternatives) {
+    const common = path.chain.filter(node => node.month >= path.forkMonth && baseline.byMonth.get(node.month)?.date === node.date);
+    const alternative = common.at(-1);
+    const horizon = alternative?.month;
+    const original = baseline.byMonth.get(horizon);
+    if (!original || !alternative) {
+      container.append(el('p', { text: `${path.label} has no shared date with the original after its fork.` }));
+      continue;
+    }
+    const pairs = path.chain.filter(node => node.month <= horizon && node.month >= path.forkMonth)
+      .map(node => [node, baseline.byMonth.get(node.month)]).filter(([node, base]) => base?.date === node.date);
+    const gap = pairs.reduce((largest, [node, base]) => {
+      const delta = node.state.cash_chf - base.state.cash_chf;
+      return !largest || delta < largest.delta ? { delta, date: node.date } : largest;
+    }, null);
+    const largestGap = pairs.reduce((largest, [node, base]) => {
+      const delta = node.state.cash_chf - base.state.cash_chf;
+      return !largest || Math.abs(delta) > Math.abs(largest.delta) ? { delta, date: node.date } : largest;
+    }, null);
+    const breakEven = pairs.findIndex(([node, base], i) => node.state.net_worth_chf >= base.state.net_worth_chf && pairs.slice(i).every(([later, reference]) => later.state.net_worth_chf >= reference.state.net_worth_chf));
+    const minimum = chain => Math.min(...chain.filter(node => node.month <= horizon).map(node => node.state.funding_feasibility?.low_point_chf ?? node.state.cash_chf));
+    const baseMin = minimum(baseline.chain);
+    const altMin = minimum(path.chain);
+    const cashDelta = alternative.state.cash_chf - original.state.cash_chf;
+    const worthDelta = alternative.state.net_worth_chf - original.state.net_worth_chf;
+    const flowFields = [['income_chf', 'income'], ['expenses_chf', 'living costs'], ['one_off_costs_chf', 'one-off costs'], ['debt_payments_chf', 'debt payments'], ['investment_contribution_chf', 'investment contributions']];
+    const drivers = flowFields.map(([field, label]) => ({ label, delta: pairs.reduce((sum, [node, base]) => sum + (node.state.cash_flow?.[field] || 0) - (base.state.cash_flow?.[field] || 0), 0) }))
+      .filter(driver => Math.abs(driver.delta) >= 1).sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta)).slice(0, 3);
+    const table = el('table', {}, el('thead', {}, el('tr', {}, ...['Measure', baselineLabel, path.label].map(text => el('th', { text })))));
+    const rows = [
+      ['Cash at horizon', money(original.state.cash_chf), money(alternative.state.cash_chf)],
+      ['Net worth at horizon', money(original.state.net_worth_chf), money(alternative.state.net_worth_chf)],
+      ['Minimum liquidity through horizon', money(baseMin), money(altMin)],
+    ];
+    table.append(el('tbody', {}, ...rows.map(row => el('tr', {}, ...row.map(text => el('td', { text }))))));
+    const insight = `At ${alternative.date}, this alternative has ${moneySigned(cashDelta)} cash and ${moneySigned(worthDelta)} net worth compared with the original. Its minimum liquidity is ${money(altMin)}${altMin < 0 ? ', so funding is needed to cover the gap' : ', which remains nonnegative'}.`;
+    container.append(el('article', { class: 'comparison-card' }, el('h4', { text: `${path.code} · ${path.label}` }),
+      el('p', { text: `Equal horizon at month ${horizon} (${alternative.date}).` }),
+      el('div', { class: 'comparison-table' }, table), el('p', { text: insight }),
+      el('p', { text: `Largest cash difference ${largestGap ? `${moneySigned(largestGap.delta)} on ${largestGap.date}` : 'unavailable'}. Largest cash shortfall versus original ${gap ? `${moneySigned(gap.delta)} on ${gap.date}` : 'unavailable'}. Sustained net-worth break-even ${breakEven < 0 ? 'not reached by this horizon' : pairs[breakEven][0].date}.` }),
+      el('p', { text: drivers.length ? `Largest cumulative differences from the fork: ${drivers.map(driver => `${driver.label} ${moneySigned(driver.delta)}`).join(', ')}.` : 'No cash-flow differences were recorded after the fork.' })));
   }
 }
 
@@ -2608,6 +2777,8 @@ function renderTrajectoryChart(activeMeta, index) {
   const svg = document.createElementNS(svgNs, 'svg');
   svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
   svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+  svg.setAttribute('role', 'img');
+  svg.setAttribute('aria-label', `${metric === 'cash_chf' ? 'Cash' : 'Net worth'} for ${activeMeta.label} from ${activeChain[0].date} to ${activeChain.at(-1).date}, starting at ${money(activeChain[0].state[metric])} and ending at ${money(activeChain.at(-1).state[metric])}${isBranch ? `, compared with ${parentMeta.label}` : ''}.`);
 
   const light = isLightTheme();
   const gridStroke = light ? 'rgba(20, 20, 18, 0.09)' : '#3c2417';
@@ -3583,6 +3754,7 @@ function renderInspector(node, { focusBranchInput = false } = {}) {
       try {
         const result = await request('/api/edit-nodes', { nodes: [...state.nodes.values()], node_id: node.id, edits });
         if (revision !== state.revision) return;
+        if (state.run) (state.run.operations ||= []).push({ type: 'edit', node_id: node.id, edits: structuredClone(edits) });
         state.revision += 1;
         state.narratives.clear();
         state.pathReports.clear();
@@ -3620,7 +3792,7 @@ function renderInspector(node, { focusBranchInput = false } = {}) {
 
 // ── Branching: preset or free text → editable building blocks → simulated branch ──
 
-const SOURCE_LABELS = { user: 'You', dataset: 'Dataset', assumption: 'Assumption', ai_estimate: 'AI estimate' };
+const SOURCE_LABELS = { user: 'User confirmed', dataset: 'Dataset default', assumption: 'Assumption', ai_estimate: 'Model estimate' };
 const BLOCK_FIELDS = {
   changes: [['label', 'text', 'Name'], ['kind', 'select', 'Type', [['income', 'Income'], ['expenses', 'Expenses']]],
     ['amount_chf', 'number', 'Change per month (CHF, − to reduce)'], ['start_offset_months', 'int', 'Starts after (months)'],
@@ -3705,9 +3877,10 @@ function showComposer(section, node, text = '', presetId = null) {
   const chips = el('div', { class: 'preset-chips', role: 'group', 'aria-label': 'Event type' });
   const defaultHint = 'For example: I take a six-month sabbatical, or my parents give me CHF 20,000';
   const textarea = el('textarea', { id: 'branch-event', maxlength: 2000 });
-  textarea.value = text;
+  textarea.value = text || state.branchDraft || '';
   const label = el('label', { for: 'branch-event' });
   const submit = actionButton('Get the numbers', 'submit');
+  const offline = el('button', { type: 'button', class: 'text-button', text: 'Explore the fictional demo without AI', hidden: true, onclick: () => { state.branchDraft = textarea.value; byId('offline-demo').click(); } });
   const refresh = () => {
     const kind = state.presets.find(preset => preset.id === selected);
     for (const chip of chips.children) chip.setAttribute('aria-pressed', String(chip.dataset.id === selected));
@@ -3735,6 +3908,7 @@ function showComposer(section, node, text = '', presetId = null) {
       if (revision === state.revision && state.selectedId === node.id) renderReview(section, node, result.proposal, details, selected);
     } catch (problem) {
       error.textContent = problem.message;
+      offline.hidden = false;
     } finally {
       buttons.forEach(button => { button.disabled = false; });
       setButtonLoading(submit, false, 'Researching the numbers…', 'Get the numbers');
@@ -3742,7 +3916,7 @@ function showComposer(section, node, text = '', presetId = null) {
   });
   section.append(el('h3', { text: 'What if something changed?' }),
     el('p', { class: 'composer-hint', text: 'Pick an event type, describe your own, or both. The AI sets the numbers; you review every one before the branch is created.' }),
-    state.presets.length ? chips : null, form);
+    state.presets.length ? chips : null, form, offline);
 }
 
 function sourceLinks(urls) {
@@ -3844,7 +4018,9 @@ function renderReview(section, node, proposal, text, presetId = null) {
   title.value = plan.title;
   section.append(el('span', { class: 'card-kicker', text: 'REVIEW BEFORE BRANCHING' }), el('h3', { text: 'Check the numbers' }),
     el('label', { for: 'branch-title', text: 'Event name' }), title);
-  if (plan.summary) section.append(el('p', { class: 'proposal-summary', text: localizeAmounts(plan.summary) }));
+  const summary = el('div', { class: 'proposal-summary' });
+  const updateSummary = () => { summary.replaceChildren(...describeBlocks(plan).map(([description]) => el('p', { text: description }))); };
+  section.append(summary);
   if (plan.assumptions) section.append(el('p', { class: 'proposal-assumptions', text: localizeAmounts(plan.assumptions) }));
   if (plan.warnings?.length) section.append(el('ul', { class: 'proposal-warnings' }, ...plan.warnings.map(item => el('li', { text: localizeAmounts(item) }))));
   const sources = sourceLinks(plan.source_urls);
@@ -3852,12 +4028,14 @@ function renderReview(section, node, proposal, text, presetId = null) {
   const lists = { changes: el('div'), one_offs: el('div'), assets: el('div') };
   const redraw = () => {
     for (const key of Object.keys(lists)) lists[key].replaceChildren(...plan[key].map((item, index) => blockEditor(key, item, () => { plan[key].splice(index, 1); redraw(); })));
+    updateSummary();
   };
   redraw();
   const addButton = (key, label) => el('button', { type: 'button', class: 'add-block', text: `+ ${label}`, onclick: () => { plan[key].push(NEW_BLOCKS[key]()); redraw(); } });
   const shock = el('input', { type: 'number', step: 'any', id: 'branch-shock' });
   shock.value = Number(((plan.investment_multiplier - 1) * 100).toFixed(2));
-  shock.addEventListener('input', () => { plan.investment_multiplier = 1 + Number(shock.value) / 100; });
+  shock.addEventListener('input', () => { plan.investment_multiplier = 1 + Number(shock.value) / 100; updateSummary(); });
+  Object.values(lists).forEach(list => list.addEventListener('input', updateSummary));
   const options = branchOptions(node);
   const error = el('p', { class: 'form-error', role: 'alert' });
   const create = actionButton('Create branch');
@@ -3871,6 +4049,7 @@ function renderReview(section, node, proposal, text, presetId = null) {
       const result = await request('/api/branch/apply', { sequence, parent: node, event: name, months: options.months(), variables: options.variables(), proposal: { ...plan, title: name } });
       if (revision === state.revision && state.nodes.has(node.id) && state.run && result.branch) {
         state.run.branches.push(result.branch);
+        (state.run.operations ||= []).push({ type: 'branch', branch: structuredClone(result.branch) });
         state.run.next_sequence = Math.max(state.run.next_sequence, (result.branch.sequence ?? 0) + 1);
       }
       if (revision === state.revision && state.nodes.has(node.id) && result.nodes.length && result.comparison_bundle) {
@@ -4107,6 +4286,7 @@ for (const btn of document.querySelectorAll('.metric-btn')) {
     state.chartMetric = btn.dataset.metric;
     for (const b of document.querySelectorAll('.metric-btn')) {
       b.classList.toggle('is-active', b === btn);
+      b.setAttribute('aria-pressed', String(b === btn));
     }
     if (state.nodes.size) {
       const index = buildTreeIndex();
@@ -4256,6 +4436,11 @@ loadCurrencies();
 
 byId('intake-form').addEventListener('submit', async event => {
   event.preventDefault();
+  const alexia = document.querySelector('.preset-chip[data-story^="I\'m Alexia"]');
+  if (alexia && byId('statement').value.trim() === alexia.dataset.story && Number(byId('years').value) === 5) {
+    await loadAlexiaDemo();
+    return;
+  }
   const button = byId('extract-button');
   byId('intake-error').textContent = '';
   setButtonLoading(button, true, 'Reading your story…', 'Explore my scenario');
@@ -4274,6 +4459,7 @@ byId('intake-form').addEventListener('submit', async event => {
     showStage('tuning');
   } catch (error) {
     byId('intake-error').textContent = error.message;
+    byId('offline-demo').focus();
   } finally {
     setButtonLoading(button, false, 'Reading your story…', 'Explore my scenario');
   }
@@ -4299,7 +4485,7 @@ byId('simulate-form').addEventListener('submit', async event => {
     });
     state.run = {
       source: 'simulate', seed: null, start_date: result.scenario.start_date, years: state.years,
-      scenario: structuredClone(state.extraction.scenario), variables, branches: [], next_sequence: 0,
+      scenario: structuredClone(state.extraction.scenario), variables, branches: [], operations: [], next_sequence: 0,
       environment: result.environment,
     };
     renderResults(result.nodes, result.comparison_bundle);
@@ -4321,7 +4507,7 @@ byId('test-data').addEventListener('click', async () => {
     state.extraction = result.extraction;
     state.run = {
       source: 'test', seed: result.seed, start_date: result.start_date, years: result.years,
-      scenario: null, variables: {}, branches: [], next_sequence: result.next_sequence,
+      scenario: null, variables: {}, branches: [], operations: [], next_sequence: result.next_sequence,
       environment: result.environment,
     };
     renderTuning(state.extraction);
@@ -4331,6 +4517,176 @@ byId('test-data').addEventListener('click', async () => {
     showToast(`Could not generate test data: ${error.message}`, { error: true });
   } finally {
     button.disabled = false;
+  }
+});
+
+async function loadAlexiaDemo() {
+  const button = byId('offline-demo');
+  button.disabled = true;
+  try {
+    const response = await fetch('/api/demo/alexia');
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || 'Could not load the demo.');
+    state.years = result.years;
+    state.extraction = result.extraction;
+    state.run = result.run;
+    state.run.demo = 'alexia';
+    renderTuning(state.extraction);
+    renderResults(result.nodes);
+    showToast('Fictional Alexia demo loaded without AI. Your story remains in the intake form.');
+  } catch (error) {
+    byId('intake-error').textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+}
+byId('offline-demo').addEventListener('click', loadAlexiaDemo);
+
+function renderStructuredComparison(container, result) {
+  container.replaceChildren();
+  const bundle = result.comparison_bundle;
+  const baselineName = bundle.baseline_path;
+  const baseline = bundle.paths[baselineName]?.metrics || {};
+  const cash = metrics => metrics.closing_cash_chf ?? metrics.terminal_cash_chf;
+  const worth = metrics => metrics.closing_net_worth_chf ?? metrics.terminal_net_worth_chf;
+  const liquidity = metrics => metrics.min_cash_chf ?? metrics.minimum_liquidity_chf;
+  const horizon = result.horizon_months ?? result.paths?.[baselineName]?.timeline?.at(-1)?.month;
+  const horizonLabel = horizon == null ? 'unavailable' : `${horizon} months`;
+  container.append(el('p', { text: `Baseline: ${baselineName}. Horizon: ${horizonLabel}.` }));
+  for (const [name, path] of Object.entries(bundle.paths)) {
+    const metrics = path.metrics;
+    const minDate = metrics.min_cash_date || metrics.minimum_liquidity_date;
+    let text = `${name}: cash ${money(cash(metrics))}, net worth ${money(worth(metrics))}, `;
+    text += `minimum liquidity ${money(liquidity(metrics))}${minDate ? ` on ${minDate}` : ''}`;
+    if (name !== baselineName) {
+      text += `, cash difference ${moneySigned(cash(metrics) - cash(baseline))}`;
+      text += `, net-worth difference ${moneySigned(worth(metrics) - worth(baseline))}`;
+    }
+    text += '.';
+    container.append(el('p', { text }));
+    if (name !== baselineName) {
+      const originalRows = new Map((result.paths?.[baselineName]?.timeline || []).map(row => [row.date, row]));
+      const pairs = (result.paths?.[name]?.timeline || [])
+        .map(row => [row, originalRows.get(row.date)])
+        .filter(([, original]) => original);
+      const comparison = bundle.comparisons?.[name] || result.comparisons?.[name] || {};
+      const largestGap = pairs.reduce((largest, [row, original]) => {
+        const delta = row.cash_chf - original.cash_chf;
+        return !largest || Math.abs(delta) > Math.abs(largest.delta) ? { delta, date: row.date } : largest;
+      }, null);
+      const shortfall = comparison.largest_cash_gap_chf == null ? 'unavailable'
+        : `${moneySigned(comparison.largest_cash_gap_chf)} on ${comparison.largest_cash_gap_date || 'date unavailable'}`;
+      const breakEven = comparison.break_even_date || 'not reached in the shared horizon';
+      const drivers = (path.sensitivity_summary?.drivers || [])
+        .filter(driver => Number.isFinite(driver.terminal_cash_delta_chf))
+        .sort((a, b) => Math.abs(b.terminal_cash_delta_chf) - Math.abs(a.terminal_cash_delta_chf))
+        .slice(0, 3);
+      const gapText = largestGap ? `${moneySigned(largestGap.delta)} on ${largestGap.date}` : 'unavailable';
+      container.append(el('p', { text: `Largest cash difference ${gapText}. Largest cash shortfall versus baseline ${shortfall}. Sustained net-worth break-even ${breakEven}.` }));
+      const flowFields = [
+        ['income_chf', 'income'], ['expenses_chf', 'living costs'],
+        ['one_off_costs_chf', 'one-off costs'], ['one_off_chf', 'one-off costs'],
+        ['debt_payments_chf', 'debt payments'], ['debt_payment_chf', 'debt payments'],
+      ];
+      const actualDrivers = flowFields.map(([field, label]) => ({
+        label,
+        delta: pairs.reduce((sum, [row, original]) => sum + (row[field] || 0) - (original[field] || 0), 0),
+      })).filter(item => Math.abs(item.delta) >= 1).sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta)).slice(0, 3);
+      container.append(el('p', { text: actualDrivers.length
+        ? `Cumulative path differences: ${actualDrivers.map(item => `${item.label} ${moneySigned(item.delta)}`).join(', ')}.`
+        : 'No cumulative income, expense, one-off or debt payment differences were recorded.' }));
+      const driverText = drivers.map(driver => {
+        const label = driver.label || driver.parameter || driver.field;
+        const tested = driver.base_value == null || driver.perturbed_value == null
+          ? 'input change unavailable'
+          : `${driver.base_value} to ${driver.perturbed_value} ${driver.unit || ''}`.trim();
+        return `${label} (${tested}) changes terminal cash by ${moneySigned(driver.terminal_cash_delta_chf)}`;
+      });
+      container.append(el('p', { text: drivers.length
+        ? `One-at-a-time sensitivity tests: ${driverText.join('; ')}.`
+        : 'Sensitivity drivers unavailable.' }));
+    }
+    const detail = el('details', { class: 'privacy-details' }, el('summary', { text: `${name} assumptions, goals and checks` }));
+    const checks = path.sanity_checks || [];
+    for (const check of checks) {
+      const resultText = check.passed === null ? 'unavailable' : check.passed ? 'passed' : 'needs review';
+      const residual = check.maximum_error_chf == null ? 'residual unavailable' : `maximum residual ${money(check.maximum_error_chf)}`;
+      detail.append(el('p', { text: `${check.name.replaceAll('_', ' ')}: ${resultText}, ${residual}.` }));
+    }
+    for (const goal of metrics.goals || []) {
+      detail.append(el('p', { text: `${goal.name}: ${goal.met === null ? 'beyond horizon' : goal.met ? 'met' : 'not met'} by ${goal.target_date || 'deadline'}, target ${money(goal.target_chf)}.` }));
+    }
+    const sources = [];
+    const collectSources = (value, label = '') => {
+      if (!value || typeof value !== 'object' || sources.length >= 12) return;
+      if (value.source && Object.hasOwn(value, 'value')) {
+        sources.push(`${value.label || label}: ${value.value ?? 'unavailable'} ${value.unit || ''}, ${value.source}${value.as_of_date ? `, ${value.as_of_date}` : ''}`);
+        return;
+      }
+      for (const [key, item] of Object.entries(value)) collectSources(item, key);
+    };
+    collectSources(path.provenance);
+    if (sources.length) detail.append(el('ul', {}, ...sources.map(text => el('li', { text }))));
+    else detail.append(el('p', { text: 'Detailed input sources unavailable.' }));
+    container.append(detail);
+  }
+  for (const limitation of bundle.limitations || []) container.append(el('p', { text: limitation }));
+}
+
+byId('starter-comparison').addEventListener('click', async () => {
+  const container = byId('starter-result');
+  try {
+    const response = await fetch('/api/comparisons/alexia');
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || 'Could not load the comparison.');
+    renderStructuredComparison(container, result);
+  } catch (error) {
+    container.textContent = error.message;
+  }
+});
+
+byId('run-project').addEventListener('click', async () => {
+  const container = byId('project-result');
+  try {
+    const result = await request('/api/project', JSON.parse(byId('project-input').value));
+    renderStructuredComparison(container, result);
+  } catch (error) {
+    container.textContent = error.message;
+  }
+});
+
+const projectControls = [
+  ['project-cash', 'cash_chf'],
+  ['project-income', 'monthly_net_income_chf'],
+  ['project-rent', 'monthly_rent_chf'],
+  ['project-month', 'start_month'],
+];
+for (const [id, field] of projectControls) {
+  byId(id).addEventListener('change', event => {
+    try {
+      const input = byId('project-input');
+      const data = JSON.parse(input.value);
+      if (field === 'start_month') {
+        for (const item of Object.values(data.scenarios).flat()) item.start_month = Number(event.target.value);
+      } else {
+        data.profile[field] = Number(event.target.value);
+      }
+      input.value = JSON.stringify(data, null, 2);
+    } catch {
+      byId('project-result').textContent = 'Correct the JSON inputs before changing these values.';
+    }
+  });
+}
+byId('project-input').addEventListener('change', event => {
+  try {
+    const data = JSON.parse(event.target.value);
+    byId('project-cash').value = data.profile.cash_chf ?? '';
+    byId('project-income').value = data.profile.monthly_net_income_chf ?? '';
+    byId('project-rent').value = data.profile.monthly_rent_chf ?? '';
+    const months = Object.values(data.scenarios).flat().map(item => item.start_month);
+    byId('project-month').value = months.every(month => month === months[0]) ? months[0] : '';
+  } catch {
+    byId('project-result').textContent = 'Correct the JSON inputs before running the comparison.';
   }
 });
 
@@ -4379,6 +4735,7 @@ function buildRunFile() {
     scenario: run.scenario,
     variables: run.variables,
     branches: run.branches,
+    ...(run.operations ? { operations: run.operations } : {}),
     kept_node_ids: nodes.map(node => node.id).sort(),
     expected: nodes.map(node => ({
       id: node.id,
@@ -4602,9 +4959,14 @@ function buildCustomGraphStage(config, leaves) {
   const svg = document.createElementNS(svgNs, 'svg');
   svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
   svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+  svg.setAttribute('role', 'img');
+  svg.setAttribute('aria-label', `${metric.label} chart${series.length ? ` for ${series.map(item => item.trail).join(', ')}` : ', no paths selected'}.`);
 
   const stage = document.createElement('div');
   stage.className = 'custom-graph-stage';
+  stage.setAttribute('role', 'region');
+  stage.setAttribute('aria-label', 'Scrollable comparison chart');
+  stage.tabIndex = 0;
 
   const light = isLightTheme();
   const surfaceBg = light ? '#ffffff' : '#261710';

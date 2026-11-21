@@ -1,0 +1,29 @@
+# Verification record
+
+Verified on 22 November 2026 with Python 3.12.3, NumPy 2.5.5, PostgreSQL 16.15, Node 24.22.3 and headless Google Chrome. Browser testing used fictional inputs. The configured provider handled an actual story extraction and branch proposal. Subsequent repetitions could use the local AI response cache.
+
+## Clean start
+
+A submission snapshot made from `git ls-files -co --exclude-standard` excluded `.env`, `.local` and the ignored challenge directory. With a dedicated empty PostgreSQL database, `./start.sh` created a fresh Python environment, installed NumPy 2.5.5 and Psycopg 3.3.9, created `.env`, seeded data and served the application. `/api/config` reported no key. The database held 32 event presets, two fictional profiles, eight transactions and four cash-balance rows. `/api/test`, both synthetic profile IDs on `/api/project`, the five-year demo and all three ten-year comparisons responded successfully. The five-year study path ended at CHF 118,000. The ten-year work, study and relocation paths ended at CHF 152,000, CHF 144,600 and CHF 97,500 respectively. PostgreSQL ran locally because the Docker daemon socket was unavailable, so the Compose startup route was not exercised.
+
+## Automated suites
+
+With `TEST_DATABASE_URL` pointing to a disposable PostgreSQL database, `.local/venv/bin/python -m unittest discover -s tests` passed 228 tests with no skips or failures. `node --test tests/web/app.test.mjs` passed. A second run from the clean submission snapshot, using its newly created blank-key `.env`, bundled ledger and PostgreSQL, also passed 228 tests with no skips in 47.595 seconds. The PostgreSQL integration tests create disposable schemas. Run the same commands after starting PostgreSQL and installing the project requirements.
+
+## Browser walkthrough
+
+`evaluation/verify-browser.cjs` runs the fictional story through the configured provider and checks review, an edited goal target, simulation, an opening-cash edit, branch proposal and application, comparison, sensitivity, download and responsive width. It uses Playwright and Chrome installed separately from the application. For example, with the server running on port 8000, set `PLAYWRIGHT_MODULE` to the installed Playwright module path and `CHROME_PATH` to the Chrome executable, then run `node evaluation/verify-browser.cjs`. `APP_URL` and `RUN_OUTPUT` optionally select the server and output file. This check sends the fictional story and branch description to the configured provider and may use the response cache.
+
+The observed five-year run began with CHF 8,000, CHF 4,800 net monthly income and CHF 2,400 monthly expenses. The goal target was changed from CHF 10,000 to CHF 12,000 and opening cash to CHF 8,100. A live proposal added CHF 500 monthly net income. The comparison showed CHF 142,562 versus CHF 170,575 horizon cash, CHF 159,423 versus CHF 190,948 net worth and CHF 8,100 minimum liquidity on each path. It displayed the CHF 28,013 largest cash difference and model checks passed. The [downloaded fictional run](../examples/verified-story-run.json) replayed with `.local/venv/bin/python scripts/reproduce.py examples/verified-story-run.json`, matching all 1,089 recorded values across 121 nodes. Values depend on the extracted assumptions, date and provider response.
+
+A separate 390 × 844 Chrome pass loaded the ten-year starter and structured comparisons, checked the three starter closing balances, opened the five-year Alexia preset, and verified CHF 152,000 working cash, CHF 118,000 study cash and CHF 29,600 maximum funding need. Keyboard Enter opened a timeline inspector. The walkthrough checked horizontal overflow at 1280 and 375 pixels and observed no JavaScript page errors. This is targeted keyboard and layout verification, not a complete screen-reader or accessibility certification.
+
+## Credential failures
+
+`evaluation/verify-credentials.cjs` exercised the real application handler and homepage in Chrome at 390 × 844. It covered missing configuration and a local provider returning 401 or 429, each through intake and branch proposal. All six cases displayed recovery controls, preserved the original story and branch draft after keyboard activation of the offline fallback, and produced no page errors or horizontal overflow. The provider received zero, three and three requests in the respective missing, rejected and rate-limited configurations. App routes were not intercepted. Set `PLAYWRIGHT_MODULE` and `CHROME_PATH` as above to rerun the harness.
+
+## Accessibility and edited proposal
+
+`evaluation/verify-accessibility.cjs` inspected Chrome's accessibility tree at 390 × 844 for intake, goal review, results, branch review and an injected credential-error response. It checked visible controls for accessible names, the goal target and priority controls, named chart regions, the error alert, and the selected chart metric. It opened the inspector using Enter, confirmed focus moved to its close button, and confirmed Escape returned focus to the invoking control. Closed inspector content is excluded from the accessibility tree. The trajectory and comparison charts keep their text at their full drawing width and scroll within keyboard-focusable regions on small screens. The page itself had no horizontal overflow. This automated inspection does not replace testing with a human screen-reader user.
+
+The same browser pass edited a live branch proposal from an increase of CHF 500 to CHF 900 per month. The displayed proposal summary updated to CHF 900, the application request and retained branch record contained CHF 900, and the simulated branch phase showed CHF 5,700 monthly income from the CHF 4,800 baseline. The error response in this accessibility pass was injected for the alert check. The separate credential matrix above exercises the actual server and provider failure responses.

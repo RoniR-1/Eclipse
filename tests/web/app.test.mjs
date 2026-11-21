@@ -310,6 +310,13 @@ describe('assumption sliders with text boxes', () => {
 });
 
 describe('run file', () => {
+  test('preserves ordered edits and branches for replay', () => {
+    const operations = [{ type: 'edit', node_id: 'root', edits: { cash_chf: 12000 } },
+      { type: 'branch', branch: { sequence: 0, parent_id: 'root' } }];
+    app.state.run = { source: 'simulate', seed: null, start_date: '2026-01-01', years: 5,
+      scenario: {}, variables: {}, branches: [operations[1].branch], operations, environment: {} };
+    assert.deepEqual(plain(app.buildRunFile().operations), operations);
+  });
   test('records inputs, units and the values on screen, without deleted nodes', async () => {
     app.state.run = { source: 'test', seed: 42, start_date: '2026-01-01', years: 5, scenario: null, variables: {},
                       branches: [{ sequence: 4 }], next_sequence: 5, environment: { python: '3', numpy: '2' } };
@@ -324,6 +331,74 @@ describe('run file', () => {
     assert.deepEqual(plain(a5), { id: 'a5', branch_id: 'A', month: 5, date: '2026-06-01', cash_chf: -200, net_worth_chf: -200,
                            total_assets_chf: -200, total_debt_chf: 0, net_cash_flow_chf: 2000 });
   });
+});
+
+test('editing a goal updates its amount, deadline and priority for the next simulation', () => {
+  const document = fakeDocument();
+  const { app: tuningApp } = loadApp({ document });
+  const goal = { name: 'Reserve', target_chf: 10000, target_month: 12, target_date: '2027-01-01', priority: 'medium' };
+  tuningApp.renderTuning({ summary: '', assumptions: '', scenario: { opening_cash_chf: 100, phases: [], goals: [goal] }, variables: [] });
+  const editor = document.getElementById('goal-editor');
+  const inputs = [...editor.walk()].filter(item => item.tagName === 'INPUT');
+  const priority = editor.find(item => item.tagName === 'SELECT');
+  inputs[0].value = '15000'; inputs[0].dispatch('change');
+  inputs[1].value = '24'; inputs[1].dispatch('change');
+  priority.value = 'high'; priority.dispatch('change');
+  assert.equal(goal.target_chf, 15000);
+  assert.equal(goal.target_month, 24);
+  assert.equal(goal.target_date, undefined);
+  assert.equal(goal.priority, 'high');
+});
+
+test('input sources distinguish AI interpretation from ordinary assumptions', () => {
+  assert.equal(app.inputSource({ source: 'assumption', transformation: 'model interpretation of story' }), 'ai_estimate');
+  assert.equal(app.inputSource({ source: 'assumption', transformation: 'illustrative goal assumption' }), 'assumption');
+  assert.equal(app.inputSource({ source: 'dataset' }), 'dataset');
+  assert.equal(app.inputSource({ source: 'user' }), 'user');
+});
+
+test('goal edits recalculate and display the resulting outcome', async () => {
+  const document = fakeDocument();
+  const fetch = async path => ({ ok: true, json: async () => path === '/api/simulate'
+    ? { goals: [{ name: 'Reserve', met: false, deadline_gap_chf: 500 }] } : {} });
+  const { app: tuningApp } = loadApp({ document, fetch });
+  const goal = { name: 'Reserve', target_chf: 10000, target_month: 12, priority: 'medium' };
+  tuningApp.renderTuning({ summary: '', assumptions: '', scenario: { opening_cash_chf: 100, phases: [], goals: [goal] }, variables: [] });
+  const editor = document.getElementById('goal-editor');
+  const target = [...editor.walk()].find(item => item.tagName === 'INPUT');
+  target.value = '15000';
+  target.dispatch('change');
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.ok([...editor.walk()].some(item => /not met at deadline, gap CHF\s500/.test(item.textContent || '')));
+});
+
+test('structured comparison labels its baseline and reports signed cash differences', () => {
+  const document = fakeDocument();
+  const { app: comparisonApp } = loadApp({ document });
+  const container = document.getElementById('project-result');
+  comparisonApp.renderStructuredComparison(container, { horizon_months: 60, comparison_bundle: {
+    baseline_path: 'Work', paths: { Work: { metrics: { closing_cash_chf: 100, closing_net_worth_chf: 120, min_cash_chf: 10 } },
+      Study: { metrics: { closing_cash_chf: 80, closing_net_worth_chf: 90, min_cash_chf: -5 } } }, limitations: [] } });
+  assert.match(container.children[0].textContent, /Baseline: Work/);
+  assert.match(container.children[3].textContent, /cash difference −CHF\s20/);
+});
+
+test('comparison presents dated shortfall, sustained break-even and sensitivity drivers', () => {
+  const document = fakeDocument();
+  const { app: comparisonApp } = loadApp({ document });
+  const container = document.getElementById('project-result');
+  const rows = values => values.map(([date, cash_chf, net_worth_chf]) => ({ date, cash_chf, net_worth_chf }));
+  comparisonApp.renderStructuredComparison(container, { horizon_months: 3,
+    paths: { Work: { timeline: rows([['2026-01', 100, 100], ['2026-02', 120, 120], ['2026-03', 140, 140], ['2026-04', 160, 160]]) },
+      Study: { timeline: rows([['2026-01', 100, 100], ['2026-02', 80, 80], ['2026-03', 130, 145], ['2026-04', 170, 175]]) } },
+    comparison_bundle: { baseline_path: 'Work', comparisons: { Study: { largest_cash_gap_chf: -40,
+      largest_cash_gap_date: '2026-02', break_even_date: '2026-03' } }, paths: {
+      Work: { metrics: { closing_cash_chf: 160, closing_net_worth_chf: 160, min_cash_chf: 100 } },
+      Study: { metrics: { closing_cash_chf: 170, closing_net_worth_chf: 175, min_cash_chf: 80 },
+        sensitivity_summary: { drivers: [{ label: 'Tuition', unit: 'CHF', terminal_cash_delta_chf: -15 }] } } }, limitations: [] } });
+  assert.match(container.children[4].textContent, /−CHF\s40 on 2026-02/);
+  assert.match(container.children[4].textContent, /break-even 2026-03/);
+  assert.match(container.children[6].textContent, /Tuition \(input change unavailable\) changes terminal cash by −CHF\s15/);
 });
 
 describe('custom comparison graphs', () => {

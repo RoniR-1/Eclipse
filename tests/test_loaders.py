@@ -1,5 +1,4 @@
 import unittest
-import importlib.util
 import json
 from pathlib import Path
 
@@ -7,7 +6,7 @@ from financial_twin.engine import create_root, simulate
 from financial_twin.loaders import load_starter_scenario, load_synthetic_profile
 
 
-CHALLENGE = Path(__file__).resolve().parents[1] / "ai-financial-twin-lauzhack-2026"
+CHALLENGE = Path(__file__).resolve().parents[1] / "fixtures" / "demo"
 
 
 class LoaderTests(unittest.TestCase):
@@ -47,13 +46,7 @@ class LoaderTests(unittest.TestCase):
             )
 
     def test_all_starter_months_match_reference(self):
-        import sys
-
         starter = CHALLENGE / "starter-kit"
-        spec = importlib.util.spec_from_file_location("starter_financial_twin", starter / "financial_twin.py")
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[spec.name] = module
-        spec.loader.exec_module(module)
         with (starter / "sample_profile.json").open(encoding="utf-8") as source:
             profile = json.load(source)
         with (starter / "scenario_config.json").open(encoding="utf-8") as source:
@@ -64,7 +57,13 @@ class LoaderTests(unittest.TestCase):
                     starter / "sample_profile.json", starter / "scenario_config.json",
                     original["name"], start_date="2025-01-01",
                 )
-                expected = module.simulate(profile, original).cash_by_month_chf
+                cash = profile["opening_cash_chf"]
+                expected = []
+                for month in range(profile["horizon_months"]):
+                    phase = next(item for item in original["phases"] if item["start_month"] <= month < item["end_month"])
+                    cash += phase["monthly_income_chf"] - phase["monthly_expenses_chf"]
+                    cash -= sum(item["amount_chf"] for item in original["one_off_costs"] if item["month"] == month)
+                    expected.append(cash)
                 nodes = simulate(create_root(scenario), profile["horizon_months"])
                 self.assertEqual(len(nodes), len(expected))
                 for node, balance in zip(nodes, expected):
