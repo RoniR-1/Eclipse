@@ -327,3 +327,62 @@ describe('custom comparison graphs', () => {
     assert.ok(ticks.includes(0));
   });
 });
+
+describe('display currency', () => {
+  const EUR = { code: 'EUR', name: 'Euro', symbol: '€', per_chf: 1.25, date: '2026-11-20', source: 'European Central Bank reference rate' };
+  const SEK = { code: 'SEK', name: 'Swedish krona', symbol: 'SEK', per_chf: 12, date: '2026-11-20', source: 'ECB' };
+  const chf = { unit: 'CHF', min: 0, max: 50000, step: 100 };
+  beforeEach(() => { app.setCurrency('EUR', [EUR, SEK]); });
+  const same = (actual, expected) => assert.equal(actual, expected);
+
+  test('amounts are shown converted from CHF', () => {
+    app.setCurrency('CHF');
+    assert.match(app.money(5000), /^CHF\s5,000$/, 'comma thousands separators, not apostrophes');
+    app.setCurrency('EUR', [EUR, SEK]);
+    same(app.money(8000), '€10,000');
+    same(app.money(-800), '-€1,000');
+    same(app.moneySigned(800), '+€1,000');
+    same(app.moneySigned(0.2), '€0');
+    same(app.compactChf(2_000_000), '€2.5M');
+    same(app.formatVariable(chf, 4000), '€5,000');
+    app.setCurrency('SEK', [EUR, SEK]);
+    same(app.compactChf(1000), 'SEK 12k', 'letter codes get a space');
+  });
+
+  test('typed amounts are read in the chosen currency and stored in CHF', () => {
+    assert.equal(app.parseVariableInput(chf, '€5,000'), 4000);
+    assert.equal(app.parseVariableInput(chf, '5000 EUR'), 4000);
+    assert.equal(app.variableToDisplay(chf, 4000), '5000');
+    assert.equal(app.parseVariableInput({ unit: '%', max: 1 }, '40%'), 0.4, 'percentages are not converted');
+  });
+
+  test('amounts quoted in server text are shown in the chosen currency', () => {
+    same(app.localizeAmounts('Cash changes by CHF -800 to CHF 8,000.'), 'Cash changes by -€1,000 to €10,000.');
+    same(app.localizeAmounts('You have CHF 12,000.00 (written as €15,000) saved.'), 'You have €15,000 saved.');
+    app.setCurrency('CHF');
+    same(app.localizeAmounts('You have CHF 12,000.00 (written as €15,000).'), 'You have CHF 12,000.00 (written as €15,000).');
+  });
+
+  test('the rate and the converted story amounts are stated', () => {
+    assert.equal(app.currencyRateText(EUR),
+      '1 EUR = 0.80 CHF · European Central Bank reference rate of 2026-11-20. Calculations stay in CHF.');
+    assert.equal(app.currencyRateText({ code: 'JPY', per_chf: 189.04, source: 'ECB', date: '2026-11-20' }),
+      '100 JPY = 0.53 CHF · ECB of 2026-11-20. Calculations stay in CHF.', 'small units are quoted per 100');
+    assert.equal(app.currencyRateText({ code: 'CHF' }), 'Calculations are in Swiss francs.');
+    same(app.conversionText({ currency: EUR, conversions: [{ written: '€15,000', chf: 12000 }] }),
+      'Converted from your story (European Central Bank reference rate of 2026-11-20): €15,000 = CHF 12,000.00. '
+      + 'Amounts in your story without a currency were read as EUR.');
+    same(app.conversionText({ conversions: [] }), '');
+    same(app.conversionText({ currency: EUR, conversions: [] }), 'Amounts in your story without a currency were read as EUR.');
+    same(app.conversionText({ currency: { code: 'CHF' }, conversions: [] }), '');
+  });
+
+  test('the run file keeps CHF numbers and records the display currency', () => {
+    app.state.run = { source: 'test', seed: 1, start_date: '2026-01-01', years: 5, scenario: null, variables: {},
+                      branches: [], next_sequence: 0, environment: {} };
+    const run = app.buildRunFile();
+    assert.equal(run.units.currency, 'CHF');
+    assert.deepEqual(plain(run.display_currency), { code: 'EUR', per_chf: 1.25, date: '2026-11-20', source: EUR.source });
+    app.setCurrency('CHF');
+  });
+});

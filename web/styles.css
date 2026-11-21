@@ -25,15 +25,6 @@
   font-synthesis: none;
 }
 
-.comparison-link {
-  display: inline-block;
-  color: #ffb476;
-  font-weight: 700;
-  margin-top: 1rem;
-  text-decoration-thickness: 1px;
-  text-underline-offset: 4px;
-}
-
 * {
   box-sizing: border-box;
 }
@@ -1416,12 +1407,6 @@ body.world-mode #inspector-panel .panel-toggle {
   overflow-wrap: anywhere;
 }
 
-.summary-comparison-link a,
-.comparison-link a {
-  color: #ffc89a;
-  font-weight: 700;
-}
-
 .goal-result,
 .provenance-row {
   display: grid;
@@ -2697,4 +2682,131 @@ input[type="text"].slider-number.is-invalid { color: var(--danger); }
   .graph-controls {
     grid-template-columns: 1fr;
   }
+}
+
+/* Uncertainty range */
+.range-toggle, .range-inline-toggle {
+  background: none; border: 1px solid var(--border-strong); color: var(--accent-bright); border-radius: 999px;
+  padding: 4px 11px; font: 600 12px var(--font-sans); cursor: pointer; width: auto;
+}
+.range-toggle[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); }
+.range-toggle.is-loading { opacity: .6; cursor: progress; }
+.range-inline-toggle { margin-top: 12px; }
+.legend-swatch.is-range { background: rgba(255, 161, 89, 0.3); border: 1px solid rgba(255, 161, 89, 0.6); }
+.vnode-edge-range {
+  display: inline-block; margin: 0 0 6px; padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 700;
+  color: var(--accent-bright); background: var(--accent-soft); border: 1px dashed rgba(255, 161, 89, 0.5);
+}
+.vnode-range { font-size: 12px; color: var(--text-muted); margin: 2px 0 6px; font-variant-numeric: tabular-nums; }
+.inspector-range h3 { font-size: 14px; margin: 16px 0 8px; }
+.inspector-range h4 { font-size: 12px; margin: 14px 0 6px; color: var(--accent-bright); }
+.range-table { width: 100%; border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; }
+.range-table th, .range-table td { padding: 4px 6px; text-align: right; }
+.range-table th:first-child, .range-table td:first-child { text-align: left; }
+.range-table thead th { color: var(--text-muted); font-weight: 600; border-bottom: 1px solid var(--border); }
+.range-table .range-group th { text-align: left; color: var(--text-secondary); padding-top: 10px; }
+.range-table .is-central td { color: var(--text-strong); font-weight: 700; }
+.range-table .is-neg { color: var(--danger); }
+.range-warning { font-size: 12px; color: #f2d38a; margin: 8px 0 0; }
+.range-drivers { list-style: none; padding: 0; margin: 0; font-size: 12px; }
+.range-drivers li { display: flex; justify-content: space-between; gap: 10px; padding: 4px 0; border-top: 1px solid var(--border); color: var(--text-secondary); }
+.range-drivers strong { color: var(--text-strong); font-variant-numeric: tabular-nums; }
+.range-note, .range-pending { font-size: 11px; color: var(--text-muted); line-height: 1.5; margin: 10px 0 0; }
+
+/* Notes on the assumptions page, e.g. converted story amounts */
+.source-note {
+  margin: 10px 0 0;
+  padding: 10px 12px;
+  border-left: 3px solid var(--accent);
+  background: var(--accent-soft);
+  border-radius: 0 8px 8px 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+/* Currency choice on the assumptions page */
+.tuning-currency {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin: 16px 0 20px;
+}
+
+.tuning-currency label {
+  margin: 0;
+}
+
+.tuning-currency .select-wrap {
+  width: 210px;
+}
+
+.currency-rate {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+
+@media (max-width: 560px) {
+  .tuning-currency .select-wrap {
+    width: 100%;
+  }
+}
+
+/* Currency pill on the results page (timeline and full tree) */
+.currency-pill {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  margin: 0;
+  border: 1px solid rgba(185, 119, 63, 0.45);
+  background: rgba(52, 32, 22, 0.72);
+  border-radius: 999px;
+}
+
+.currency-pill::after {
+  content: '▾';
+  position: absolute;
+  right: 12px;
+  color: #f3d6bc;
+  font-size: 11px;
+  pointer-events: none;
+}
+
+.currency-pill select {
+  appearance: none;
+  width: auto;
+  height: auto;
+  border-radius: 999px;
+  border: 0;
+  background: transparent;
+  color: #f3d6bc;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 8px 30px 8px 16px;
+  cursor: pointer;
+}
+
+.currency-pill select:focus-visible {
+  outline: 2px solid rgba(255, 161, 89, 0.7);
+  outline-offset: 2px;
+  border-radius: 999px;
+}
+
+.currency-pill option {
+  background: #2e1c13;
+  color: #f3d6bc;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
 }

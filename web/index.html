@@ -22,7 +22,6 @@
       </a>
 
       <div class="topbar-actions">
-        <a class="settings-button" href="/compare.html">Compare decisions</a>
         <button class="settings-button" id="test-data" type="button" title="Generate a sample multi-branch timeline without using AI">
           <span aria-hidden="true">⚄</span>
           <span class="settings-label">Test</span>
@@ -39,7 +38,6 @@
           <p class="hero-description">
             Big decisions deserve a clearer picture. Tell your AI Financial Twin where you are and where you want to go, then explore how your finances could evolve over time.
           </p>
-          <a class="comparison-link" href="/compare.html">Build a comparison without AI</a>
         </div>
 
         <div class="intake-card">
@@ -63,6 +61,8 @@
                 <div class="select-wrap">
                   <select id="years" name="years">
                     <option value="5" selected>5 years</option>
+                    <option value="10">10 years</option>
+                    <option value="20">20 years</option>
                   </select>
                 </div>
               </div>
@@ -94,6 +94,7 @@
             <div class="card-kicker">THE PICTURE SO FAR</div>
             <h2>Your starting point</h2>
             <p id="scenario-summary"></p>
+            <p id="currency-note" class="source-note" hidden></p>
             <div id="baseline" class="baseline"></div>
             <div id="assumptions" class="assumptions"></div>
             <p class="summary-note">Review these inferred figures before exploring your future.</p>
@@ -103,6 +104,16 @@
             <div class="card-top"><span class="card-kicker">FINE-TUNE YOUR FUTURE</span></div>
             <h2>Adjust your assumptions</h2>
             <p>Move the controls to reflect what feels right for you.</p>
+            <!-- Outside the form: the simulation only takes the slider values -->
+            <div class="tuning-currency">
+              <label for="currency">Currency</label>
+              <div class="select-wrap">
+                <select id="currency" class="currency-select" aria-describedby="currency-rate">
+                  <option value="CHF" selected>CHF · Swiss franc</option>
+                </select>
+              </div>
+              <p class="currency-rate" id="currency-rate">Calculations are in Swiss francs.</p>
+            </div>
             <form id="simulate-form">
               <div id="sliders"></div>
               <p class="form-error" id="simulate-error" role="alert"></p>
@@ -129,6 +140,12 @@
               <button class="text-button" id="return-to-original" type="button" hidden><span aria-hidden="true">←</span> Original path</button>
               <button class="ghost-button" id="jump-to-summary" type="button">Summary <span aria-hidden="true">↓</span></button>
               <button class="ghost-button" id="switch-to-tree" type="button">Full tree <span aria-hidden="true">⑂</span></button>
+              <label class="currency-pill" title="Currency for every amount shown. Calculations stay in CHF.">
+                <span class="visually-hidden">Currency</span>
+                <select id="currency-results" class="currency-select" aria-label="Currency">
+                  <option value="CHF" selected>CHF</option>
+                </select>
+              </label>
               <button class="text-button" id="adjust-scenario" type="button"><span aria-hidden="true">←</span> Adjust assumptions</button>
             </div>
           </div>
@@ -162,6 +179,7 @@
                     <button type="button" class="metric-btn is-active" data-metric="net_worth_chf">Net worth</button>
                     <button type="button" class="metric-btn" data-metric="cash_chf">Cash</button>
                   </div>
+                  <button type="button" class="range-toggle" id="range-toggle" aria-pressed="false" title="Show how far the selected path could move if its estimates are off">Show range</button>
                 </div>
                 <div class="trajectory-chart-wrap" id="trajectory-chart"></div>
                 <div class="trajectory-legend" id="trajectory-legend"></div>
@@ -219,6 +237,12 @@
               <button class="ghost-button" id="back-to-timeline" type="button">← Back to timeline</button>
               <button class="ghost-button" id="toggle-paths-panel" type="button" aria-expanded="false">Your paths</button>
               <button class="ghost-button" id="fit-graph" type="button">Fit</button>
+              <label class="currency-pill" title="Currency for every amount shown. Calculations stay in CHF.">
+                <span class="visually-hidden">Currency</span>
+                <select id="currency-tree" class="currency-select" aria-label="Currency">
+                  <option value="CHF" selected>CHF</option>
+                </select>
+              </label>
               <button class="text-button tree-adjust-link" id="tree-adjust-scenario" type="button">Adjust assumptions</button>
             </div>
             <div class="tree-top-meta">

@@ -5,6 +5,8 @@ import unittest
 from urllib.error import HTTPError
 from unittest.mock import patch
 
+import psycopg
+
 from financial_twin import event_resolver, server
 
 
@@ -90,6 +92,23 @@ class EventResolverTests(unittest.TestCase):
         conn = FakeConnection([])
         with patch.dict(os.environ, {'DATABASE_URL': 'postgres://test', 'AI_API_KEY': 'key'}), patch.object(event_resolver.psycopg, 'connect', return_value=conn), patch.object(event_resolver, 'web_lookup', return_value={'params': [], 'source_urls': []}):
             self.assertIsNone(event_resolver.resolve_event('education', 'Example'))
+
+    def test_database_failures_preserve_valid_research(self):
+        response = {'params': {'duration_months': 36}, 'source_urls': ['https://example.org'], 'note': 'Estimate'}
+        for connections in ([psycopg.OperationalError('offline'), psycopg.OperationalError('offline')], [FakeConnection([]), psycopg.OperationalError('offline')]):
+            with self.subTest(connections=connections), patch.dict(os.environ, {'DATABASE_URL': 'postgres://test', 'AI_API_KEY': 'key'}), patch.object(event_resolver.psycopg, 'connect', side_effect=connections), patch.object(event_resolver, 'web_lookup', return_value=response):
+                result = event_resolver.resolve_event('education', 'Example')
+                self.assertEqual(result['params'], response['params'])
+                self.assertEqual(result['source'], 'web_search')
+
+    def test_unavailable_preset_database_returns_empty_list(self):
+        with patch.dict(os.environ, {'DATABASE_URL': 'postgres://test'}), patch.object(event_resolver.psycopg, 'connect', side_effect=psycopg.OperationalError('offline')):
+            self.assertEqual(event_resolver.list_presets(), [])
+
+    def test_unconfigured_database_skips_research(self):
+        with patch.dict(os.environ, {'DATABASE_URL': '', 'AI_API_KEY': 'key'}), patch.object(event_resolver, 'web_lookup') as lookup:
+            self.assertIsNone(event_resolver.resolve_event('education', 'Example'))
+            lookup.assert_not_called()
 
 
 if __name__ == '__main__':

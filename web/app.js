@@ -21,6 +21,10 @@ const state = {
   revision: 0,
   openDetails: new Set(['branch-info']),
   presets: [],
+  showRange: false,
+  range: null,
+  rangeKey: '',
+  rangeLoading: '',
   spineRaf: null,
   spineLastMs: 0,
   spineNodesMeta: [],
@@ -48,22 +52,77 @@ const BRANCH_PALETTE = [
   '#a6d48a', // P7 — sage
 ];
 
-const money = value =>
-  new Intl.NumberFormat('en-CH', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0 }).format(value);
+/* ==========================================================================
+   CURRENCY
+   The engine calculates in CHF. Other currencies are a view: amounts are converted for display, and typed
+   amounts are converted back to CHF before they are sent. Rates come from /api/currencies.
+   ========================================================================== */
+
+const CHF = { code: 'CHF', name: 'Swiss franc', symbol: 'CHF', per_chf: 1, date: null, source: null };
+state.currency = CHF;
+state.currencies = [CHF];
+
+// Prefix for amounts: "€2,000", "$2,000", but "SEK 2,000" and "CHF 2,000" (letters get a space).
+const currencyPrefix = () => {
+  const symbol = state.currency.symbol || state.currency.code;
+  return /[A-Za-z]$/.test(symbol) ? `${symbol} ` : symbol;
+};
+// The unit shown next to money inputs.
+const currencyUnit = () => state.currency.code === 'CHF' ? 'CHF' : (state.currency.symbol || state.currency.code);
+const chfToDisplay = chf => Number(chf) * state.currency.per_chf;
+const displayToChf = amount => Number(amount) / state.currency.per_chf;
+
+function setCurrency(code, list = state.currencies) {
+  const found = list.find(item => item.code === code);
+  state.currency = found ? { ...found } : CHF;
+  return state.currency;
+}
+
+// One line saying which rate is used, e.g. "1 EUR = 0.92 CHF · European Central Bank reference rate of 2026-11-20".
+// Small units are quoted per 100 (100 JPY = 0.53 CHF) so two decimals still say something.
+function currencyRateText(currency = state.currency) {
+  if (!currency || currency.code === 'CHF') return 'Calculations are in Swiss francs.';
+  const units = 1 / currency.per_chf < 0.1 ? 100 : 1;
+  return `${units} ${currency.code} = ${(units / currency.per_chf).toFixed(2)} CHF · ${currency.source || 'exchange rate'}${currency.date ? ` of ${currency.date}` : ''}. Calculations stay in CHF.`;
+}
+
+// Numbers shown to people have at most two decimals and comma thousands separators (5,000).
+const twoDecimals = value => new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(value);
+
+const money = value => {
+  if (state.currency.code === 'CHF') {
+    return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0 }).format(value);
+  }
+  const amount = chfToDisplay(value);
+  const digits = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(Math.abs(amount));
+  return `${Math.round(amount) < 0 ? '-' : ''}${currencyPrefix()}${digits}`;
+};
 
 const moneySigned = value => {
-  if (Math.abs(value) < 0.5) return 'CHF 0';
+  if (Math.abs(chfToDisplay(value)) < 0.5) return `${currencyPrefix()}0`;
   return `${value > 0 ? '+' : '−'}${money(Math.abs(value))}`;
 };
 
 const compactChf = value => {
-  const sign = value < 0 ? '−' : '';
-  const abs = Math.abs(value);
-  if (abs >= 1_000_000) return `${sign}CHF ${(abs / 1_000_000).toFixed(1)}M`;
-  if (abs >= 10_000) return `${sign}CHF ${Math.round(abs / 1000)}k`;
-  if (abs >= 1_000) return `${sign}CHF ${(abs / 1_000).toFixed(1)}k`;
-  return `${sign}CHF ${Math.round(abs)}`;
+  const amount = chfToDisplay(value);
+  const sign = amount < 0 ? '−' : '';
+  const abs = Math.abs(amount);
+  const prefix = currencyPrefix();
+  if (abs >= 1_000_000) return `${sign}${prefix}${(abs / 1_000_000).toFixed(1)}M`;
+  if (abs >= 10_000) return `${sign}${prefix}${Math.round(abs / 1000)}k`;
+  if (abs >= 1_000) return `${sign}${prefix}${(abs / 1_000).toFixed(1)}k`;
+  return `${sign}${prefix}${Math.round(abs)}`;
 };
+
+// Server and AI text quotes amounts as "CHF 1,234.50"; show those in the chosen currency too.
+// "(written as €2,000)" notes, added when a story's amounts were converted, are dropped once shown in that currency.
+function localizeAmounts(text) {
+  if (!text || state.currency.code === 'CHF') return text ?? '';
+  return String(text).replace(/CHF\s?(-?\d[\d,'’]*(?:\.\d+)?)(?:\s*\(written as [^)]*\))?/g, (match, number) => {
+    const value = Number(number.replace(/[,'’]/g, ''));
+    return Number.isFinite(value) ? money(value) : match;
+  });
+}
 
 function escapeHtml(str) {
   return String(str)
@@ -1099,19 +1158,36 @@ function getAllGraphMilestones(index) {
    STAGE 2: TUNING RENDERER
    ========================================================================== */
 
-// Assumption values are typed in display units: percentages as percent (42 = 42%), money in CHF, months as months.
+// Assumption values are typed in display units: percentages as percent (42 = 42%), money in the chosen currency
+// (converted to and from CHF, which the engine uses), months as months.
 const isFractionPercent = variable => (variable.unit === '%' || variable.unit === 'percent') && Number(variable.max) <= 1;
 
 function variableToDisplay(variable, value) {
-  const number = Number(value) * (isFractionPercent(variable) ? 100 : 1);
+  const number = variable.unit === 'CHF' ? chfToDisplay(value) : Number(value) * (isFractionPercent(variable) ? 100 : 1);
   return String(Number(number.toFixed(2)));
 }
 
-// Reads a typed value ("5'000", "CHF 5,000", "42%", "3 months") into the variable's own units; null if not a number.
+// Reads a typed value ("5'000", "CHF 5,000", "€5,000", "42%", "3 months") into the variable's own units
+// (money in CHF); null if not a number.
 function parseVariableInput(variable, text) {
-  const cleaned = String(text).replace(/chf|%|months?|[\s'’_]/gi, '').replace(/,(?=\d{3}(\D|$))/g, '').replace(',', '.');
+  const cleaned = String(text)
+    .replace(/chf|eur|usd|gbp|jpy|cny|cad|aud|sek|nok|dkk|pln|inr|zł|[a-z]{0,2}[€$£¥₹]|%|months?|[\s'’_]/gi, '')
+    .replace(/,(?=\d{3}(\D|$))/g, '').replace(',', '.');
   if (!/^-?(\d+\.?\d*|\.\d+)$/.test(cleaned)) return null;
+  if (variable.unit === 'CHF') return displayToChf(Number(cleaned));
   return Number(cleaned) / (isFractionPercent(variable) ? 100 : 1);
+}
+
+// Lists amounts in the story that were written in another currency and converted to CHF exactly.
+function conversionText(data) {
+  const items = data?.conversions || [];
+  const readAs = data?.currency?.code && data.currency.code !== 'CHF'
+    ? `Amounts in your story without a currency were read as ${data.currency.code}.` : '';
+  if (!items.length) return readAs;
+  const rate = data.currency?.date ? ` (${data.currency.source} of ${data.currency.date})` : '';
+  const shown = items.slice(0, 4).map(item => `${item.written} = CHF ${item.chf.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
+  return [`Converted from your story${rate}: ${shown.join(', ')}${items.length > 4 ? `, and ${items.length - 4} more` : ''}.`, readAs]
+    .filter(Boolean).join(' ');
 }
 
 function formatVariable(variable, value) {
@@ -1135,8 +1211,11 @@ function addBaseline(label, text) {
 }
 
 function renderTuning(data) {
-  byId('scenario-summary').textContent = data.summary;
-  byId('assumptions').textContent = data.assumptions ? `Assumptions: ${data.assumptions}` : '';
+  byId('scenario-summary').textContent = localizeAmounts(data.summary);
+  const currencyNote = byId('currency-note');
+  currencyNote.textContent = conversionText(data);
+  currencyNote.hidden = !currencyNote.textContent;
+  byId('assumptions').textContent = data.assumptions ? `Assumptions: ${localizeAmounts(data.assumptions)}` : '';
   byId('baseline').replaceChildren();
 
   const scenario = data.scenario;
@@ -1177,7 +1256,7 @@ function renderTuning(data) {
     if (unitText) {
       const unit = document.createElement('span');
       unit.className = 'slider-unit';
-      unit.textContent = unitText;
+      unit.textContent = unitText === 'CHF' ? currencyUnit() : unitText;
       if (unitText === 'CHF') valueBox.prepend(unit);
       else valueBox.append(unit);
     }
@@ -1268,6 +1347,114 @@ function renderTuning(data) {
    STAGE 3A: OPEN ASTRAL TIMELINE + CORNER MINIMAP + END SUMMARY
    ========================================================================== */
 
+// ── Uncertainty range: how far a path could move if its estimates are off (POST /api/uncertainty) ──
+
+function nodesKey() {
+  return [...state.nodes.values()].map(n => `${n.id}:${Math.round(n.state.net_worth_chf)}:${Math.round(n.state.cash_chf)}`).sort().join('|');
+}
+
+// The range data if it is switched on and still matches the nodes on screen, otherwise null.
+function currentRange() {
+  if (!state.showRange || !state.range || state.rangeKey !== nodesKey()) return null;
+  return state.range;
+}
+
+function rerenderForRange() {
+  if (!state.nodes.size) return;
+  if (state.resultsView === 'tree') renderTreeGraph();
+  else renderTimelineView();
+  const node = state.nodes.get(state.selectedId);
+  const section = byId('inspector-range');
+  if (node && section) fillRangeSection(section, node);
+}
+
+async function ensureRange() {
+  if (!state.showRange || !state.nodes.size) return;
+  const key = nodesKey();
+  if ((state.range && state.rangeKey === key) || state.rangeLoading === key) return;
+  state.rangeLoading = key;
+  byId('range-toggle')?.classList.add('is-loading');
+  try {
+    const result = await request('/api/uncertainty', { nodes: [...state.nodes.values()] });
+    if (state.rangeLoading !== key) return;
+    state.range = result;
+    state.rangeKey = key;
+    rerenderForRange();
+  } catch (error) {
+    showToast(`Could not calculate the range: ${error.message}`, { error: true });
+    setRangeVisible(false);
+  } finally {
+    if (state.rangeLoading === key) state.rangeLoading = '';
+    byId('range-toggle')?.classList.remove('is-loading');
+  }
+}
+
+function setRangeVisible(on) {
+  state.showRange = on;
+  const toggle = byId('range-toggle');
+  if (toggle) {
+    toggle.setAttribute('aria-pressed', String(on));
+    toggle.textContent = on ? 'Hide range' : 'Show range';
+  }
+  rerenderForRange();
+  if (on) ensureRange();
+}
+
+const rangeOf = (range, node) => range?.nodes?.[node.id] || null;
+
+// Compact ±label for an edge or card: % of the central value, or CHF when a % would mislead.
+function rangeBadge(range, node, field = 'net_worth') {
+  const span = rangeOf(range, node)?.[field];
+  if (!span) return null;
+  const centre = node.state[`${field}_chf`];
+  const half = (span[1] - span[0]) / 2;
+  if (half < 0.5) return null;
+  const share = half / Math.abs(centre || 1);
+  return Math.abs(centre) >= 5000 && share <= 1 ? `±${Math.round(share * 100)}%` : `±${compactChf(half)}`;
+}
+
+function rangeDelta(value, centre) {
+  const delta = value - centre;
+  const percent = Math.abs(centre) >= 1000 ? ` (${delta >= 0 ? '+' : '−'}${Math.abs(delta / centre * 100).toFixed(1)}%)` : '';
+  return `${moneySigned(delta)}${percent}`;
+}
+
+function fillRangeSection(section, node) {
+  section.replaceChildren();
+  const range = currentRange();
+  if (!state.showRange) {
+    section.append(el('button', { type: 'button', class: 'range-inline-toggle', text: 'Show how far this could move',
+      onclick: () => setRangeVisible(true) }));
+    return;
+  }
+  if (!range) { section.append(el('p', { class: 'range-pending', text: 'Calculating the range…' })); return; }
+  const span = rangeOf(range, node);
+  if (!span) return;
+  const table = el('table', { class: 'range-table' },
+    el('thead', {}, el('tr', {}, el('th', { text: '' }), el('th', { text: 'Value' }), el('th', { text: 'vs. central' }))));
+  const body = el('tbody');
+  for (const [field, title] of [['net_worth', 'Net worth'], ['cash', 'Cash']]) {
+    const centre = node.state[`${field}_chf`];
+    const [low, high] = span[field];
+    body.append(el('tr', { class: 'range-group' }, el('th', { colspan: 3, text: title })));
+    body.append(el('tr', {}, el('td', { text: 'Pessimistic' }), el('td', { class: low < 0 ? 'is-neg' : '', text: money(low) }), el('td', { text: rangeDelta(low, centre) })));
+    body.append(el('tr', { class: 'is-central' }, el('td', { text: 'Central' }), el('td', { text: money(centre) }), el('td', { text: '—' })));
+    body.append(el('tr', {}, el('td', { text: 'Optimistic' }), el('td', { text: money(high) }), el('td', { text: rangeDelta(high, centre) })));
+  }
+  table.append(body);
+  section.append(el('h3', { text: 'How far this could move' }), table);
+  if (span.cash[0] < 0 && node.state.cash_chf >= 0) section.append(el('p', { class: 'range-warning', text: '⚠ Cash would be negative here in the pessimistic case.' }));
+  const shortfall = range.first_shortfall?.[node.branch_id];
+  if (shortfall) section.append(el('p', { class: 'range-warning', text: `In the pessimistic case this path first runs out of cash in ${shortfall.date}.` }));
+  const drivers = (range.drivers?.[node.branch_id] || []).filter(item => Math.abs(item.high - item.low) >= 1).slice(0, 4);
+  if (drivers.length) {
+    section.append(el('h4', { text: 'What matters most (end of this path)' }),
+      el('ul', { class: 'range-drivers' }, ...drivers.map(item => el('li', {}, el('span', { text: item.label }),
+        el('strong', { text: `${moneySigned(item.low)} / ${moneySigned(item.high)}` })))));
+  }
+  section.append(el('p', { class: 'range-note', text: range.note }));
+}
+
 function renderTimelineView() {
   if (!state.nodes.size) return;
   const index = buildTreeIndex();
@@ -1311,6 +1498,7 @@ function renderTimelineView() {
   renderTrajectoryChart(activeMeta, index);
   renderGraphStudio(index);
   startSpineAnimation();
+  ensureRange();
 }
 
 function renderVerticalTimeline(milestones, activeMeta, index, layout) {
@@ -1392,7 +1580,20 @@ function renderVerticalTimeline(milestones, activeMeta, index, layout) {
       ${s.total_debt_chf > 0 ? `<span>Debt <strong>${escapeHtml(money(s.total_debt_chf))}</strong></span>` : ''}
     `;
 
-    content.append(eyebrow, heading, prose, figures);
+    const range = currentRange();
+    const badge = prevMilestone ? rangeBadge(range, node) : null;
+    if (badge) {
+      const span = rangeOf(range, node).net_worth;
+      content.append(el('div', { class: 'vnode-edge-range', title: `Net worth by ${node.date}: ${money(span[0])} – ${money(span[1])} if estimates are off`, text: badge }));
+    }
+    content.append(eyebrow, heading);
+    const span = rangeOf(range, node)?.net_worth;
+    if (span && span[1] - span[0] >= 1) {
+      const centre = node.state.net_worth_chf;
+      const pct = value => Math.abs(centre) >= 1000 ? ` (${value >= centre ? '+' : '−'}${Math.abs((value - centre) / centre * 100).toFixed(0)}%)` : '';
+      content.append(el('div', { class: 'vnode-range', text: `Range ${compactChf(span[0])} – ${compactChf(span[1])}${pct(span[0])}${pct(span[1])}` }));
+    }
+    content.append(prose, figures);
 
     const links = document.createElement('div');
     links.className = 'vnode-links';
@@ -1856,7 +2057,7 @@ function renderEndSummary(activeMeta, index) {
       value: money(tip.state.cash_chf),
       danger: minCashNode.state.cash_chf < 0,
       sub: minCashNode.state.cash_chf < 0
-        ? `Lowest point: ${money(minCashNode.state.cash_chf)} (${shortfallMonths} mo below CHF 0)`
+        ? `Lowest point: ${money(minCashNode.state.cash_chf)} (${shortfallMonths} mo below ${currencyPrefix()}0)`
         : cashDelta !== null
           ? `${moneySigned(cashDelta)} vs. ${parentName} · lowest ${money(minCashNode.state.cash_chf)}`
           : `Lowest point: ${money(minCashNode.state.cash_chf)} (${minCashNode.date})`,
@@ -1912,6 +2113,7 @@ function formatSensitivityValue(value, unit) {
   const num = Number(value);
   if (!Number.isFinite(num)) return String(value);
   if (unit === 'CHF') return money(num);
+  if (unit === 'CHF/mo') return `${money(num)}/mo`;
   if (unit === 'share' || unit === '%') {
     const pct = unit === 'share' && Math.abs(num) <= 2 ? num * 100 : num;
     return `${Number(pct.toFixed(2))}%`;
@@ -1987,7 +2189,7 @@ async function loadAndRenderSensitivityReport(activeMeta) {
       <tr>
         <td>
           <div class="path-report-driver">
-            <strong>${escapeHtml(driver.label || driver.field)}</strong>
+            <strong>${escapeHtml(localizeAmounts(driver.label || driver.field))}</strong>
             <span class="source-badge source-${escapeHtml(source)}">${escapeHtml(sourceLabel)}</span>
           </div>
         </td>
@@ -2007,7 +2209,7 @@ async function loadAndRenderSensitivityReport(activeMeta) {
     return `<li><span>${escapeHtml(prettyName)}</span><span class="check-pill ${pillCls}">${pillText}</span></li>`;
   }).join('');
 
-  const limitationsHtml = (bundle.limitations || []).map(item => `<li>${escapeHtml(item)}</li>`).join('');
+  const limitationsHtml = (bundle.limitations || []).map(item => `<li>${escapeHtml(localizeAmounts(item))}</li>`).join('');
 
   renderShell(`
     <div class="path-report-section-title">One-at-a-time sensitivity</div>
@@ -2051,7 +2253,11 @@ function renderTrajectoryChart(activeMeta, index) {
   const baseChain = parentMeta?.chain || [];
   const isBranch = Boolean(parentMeta && baseChain.length > 0);
 
+  const range = currentRange();
+  const field = metric === 'cash_chf' ? 'cash' : 'net_worth';
+  const spans = range ? activeChain.map(n => rangeOf(range, n)?.[field]).filter(Boolean) : [];
   const allValues = activeChain.map(n => n.state[metric]);
+  for (const span of spans) allValues.push(span[0], span[1]);
   if (isBranch) allValues.push(...baseChain.map(n => n.state[metric]));
   let minVal = Math.min(0, ...allValues);
   let maxVal = Math.max(...allValues, 1000);
@@ -2081,6 +2287,10 @@ function renderTrajectoryChart(activeMeta, index) {
   const activePathD = toPath(activeChain);
   const areaD = `${activePathD} L${xOf(activeChain[activeChain.length - 1].month).toFixed(1)},${yOf(minVal).toFixed(1)} L${xOf(activeChain[0].month).toFixed(1)},${yOf(minVal).toFixed(1)} Z`;
   const basePathD = isBranch ? toPath(baseChain) : '';
+  const banded = spans.length === activeChain.length ? activeChain : [];
+  const bandD = banded.length ? [
+    ...banded.map((n, i) => `${i === 0 ? 'M' : 'L'}${xOf(n.month).toFixed(1)},${yOf(rangeOf(range, n)[field][1]).toFixed(1)}`),
+    ...[...banded].reverse().map(n => `L${xOf(n.month).toFixed(1)},${yOf(rangeOf(range, n)[field][0]).toFixed(1)}`), 'Z'].join(' ') : '';
   const zeroY = yOf(0);
 
   const svgNs = 'http://www.w3.org/2000/svg';
@@ -2105,6 +2315,7 @@ function renderTrajectoryChart(activeMeta, index) {
 
   const activeColor = activeMeta.color || BRANCH_PALETTE[0];
   const parentColor = parentMeta?.color || '#a88770';
+  const [ar, ag, ab] = hexToRgb(activeColor);
   svg.innerHTML = `
     <defs>
       <linearGradient id="trajGrad" x1="0" y1="0" x2="0" y2="1">
@@ -2115,6 +2326,7 @@ function renderTrajectoryChart(activeMeta, index) {
     ${gridLines}
     ${zeroLine}
     <path d="${areaD}" fill="url(#trajGrad)" />
+    ${bandD ? `<path d="${bandD}" fill="rgba(${ar},${ag},${ab},0.18)" stroke="rgba(${ar},${ag},${ab},0.48)" stroke-width="0.9" />` : ''}
     ${isBranch ? `<path d="${basePathD}" fill="none" stroke="${parentColor}" stroke-width="1.8" stroke-dasharray="5 5" opacity="0.72" />` : ''}
     <path d="${activePathD}" fill="none" stroke="${activeColor}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
     ${yearTicks}
@@ -2125,6 +2337,7 @@ function renderTrajectoryChart(activeMeta, index) {
     <div class="legend-items">
       <span class="legend-item"><i class="legend-swatch is-active" style="background:${activeColor}"></i> <strong>${escapeHtml(activeMeta.code || 'P0')}</strong> · ${escapeHtml(activeMeta.label)}</span>
       ${isBranch ? `<span class="legend-item"><i class="legend-swatch is-baseline" style="border-top-color:${parentColor}"></i> <strong>${escapeHtml(parentMeta.code || 'P0')}</strong> · ${escapeHtml(parentMeta.label)}</span>` : ''}
+      ${bandD ? `<span class="legend-item"><i class="legend-swatch is-range" style="background:rgba(${ar},${ag},${ab},0.3);border-color:rgba(${ar},${ag},${ab},0.65)"></i> Range if estimates are off</span>` : ''}
     </div>
     <span>${activeChain[0].date} → ${activeChain[activeChain.length - 1].date}</span>
   `;
@@ -2370,6 +2583,8 @@ function treeNodeTitle(node) {
 }
 
 function renderTreeGraph({ fit = false, focusId = null } = {}) {
+  const treeRange = currentRange();
+  if (state.showRange) setTimeout(ensureRange);
   if (!state.nodes.size) return;
   const index = buildTreeIndex();
   const milestones = getAllGraphMilestones(index);
@@ -2463,6 +2678,7 @@ function renderTreeGraph({ fit = false, focusId = null } = {}) {
     const [gr, gg, gb] = hexToRgb(baseColor);
     const glowColor = `rgba(${gr}, ${gg}, ${gb}, 0.45)`;
     const isActiveEdge = activeSet.has(node.id) && activeSet.has(parentId);
+    const edgeRange = isActiveEdge ? rangeBadge(treeRange, state.nodes.get(node.id)) : null;
 
     edges.push({
       id: `${parentId}>${node.id}`,
@@ -2472,6 +2688,8 @@ function renderTreeGraph({ fit = false, focusId = null } = {}) {
       baseColor,
       glowColor,
       width: isActiveEdge ? 5.8 : 4.6,
+      label: edgeRange || '',
+      font: { color: '#f6e9dc', size: 11, strokeWidth: 3, strokeColor: '#180d07', align: 'middle' },
       color: { color: baseColor, highlight: baseColor, hover: baseColor },
       shadow: { enabled: true, color: glowColor, size: isActiveEdge ? 14 : 10, x: 0, y: 0 },
       smooth: isSameLane
@@ -2692,12 +2910,12 @@ function renderTreeGraph({ fit = false, focusId = null } = {}) {
 
 function detailLabel(key) {
   if (key === '__contributions__') return 'Investment contributions';
-  return key.replace(/_chf$/, ' (CHF)').replace(/_/g, ' ').replace(/^./, letter => letter.toUpperCase());
+  return key.replace(/_chf$/, ` (${state.currency.code})`).replace(/_/g, ' ').replace(/^./, letter => letter.toUpperCase());
 }
 
 function detailValue(key, value) {
   if (typeof value === 'number') {
-    return key.endsWith('_chf') ? money(value) : new Intl.NumberFormat('en-CH', { maximumFractionDigits: 4 }).format(value);
+    return key.endsWith('_chf') ? money(value) : twoDecimals(value);
   }
   if (value === null) return '—';
   return String(value);
@@ -2804,6 +3022,9 @@ function renderInspector(node, { focusBranchInput = false } = {}) {
     compare.textContent = `Vs. ${parentMeta.label}: ${moneySigned(nwDiff)} net worth · ${moneySigned(cashDiff)} cash`;
     header.append(compare);
   }
+  const rangeSection = el('div', { id: 'inspector-range', class: 'inspector-range' });
+  header.append(rangeSection);
+  fillRangeSection(rangeSection, node);
 
   {
     const remove = document.createElement('button');
@@ -2821,12 +3042,12 @@ function renderInspector(node, { focusBranchInput = false } = {}) {
   const narrativeText = document.createElement('p');
   narrativeText.id = 'node-narrative';
   narrativeText.className = 'inspector-narrative';
-  narrativeText.textContent = state.narratives.get(node.id) || node.narrative || buildMilestoneProse(node, null);
+  narrativeText.textContent = localizeAmounts(state.narratives.get(node.id) || node.narrative || buildMilestoneProse(node, null));
   narrativeSec.append(narrativeTitle, narrativeText);
   if (node.event_narrative) {
     const eventText = document.createElement('p');
     eventText.className = 'event-narrative';
-    eventText.textContent = node.event_narrative;
+    eventText.textContent = localizeAmounts(node.event_narrative);
     narrativeSec.append(eventText);
   }
 
@@ -2921,11 +3142,6 @@ function renderInspector(node, { focusBranchInput = false } = {}) {
       <span>${escapeHtml(value)}${detail ? ` · ${escapeHtml(detail)}` : ''}</span>`;
     provenance.append(row);
   }
-  const comparisonLink = document.createElement('p');
-  comparisonLink.className = 'inspector-note comparison-link';
-  comparisonLink.innerHTML = '<a href="/compare.html">Open separate comparison workspace →</a>';
-  provenance.append(comparisonLink);
-
   let editDetails = null;
 
   const editMonth = Math.max(0, node.month - 1);
@@ -2944,15 +3160,15 @@ function renderInspector(node, { focusBranchInput = false } = {}) {
     const terms = s.active_variables?.expense_terms || {};
     const startingExpense = terms.monthly_expenses_chf ?? editPhase.monthly_expenses_chf;
     const fields = [
-      ...(node.month === 0 ? [{ name: 'cash_chf', label: 'Starting cash (CHF)', value: s.cash_chf }] : []),
-      { name: 'monthly_income_chf', label: 'Monthly income (CHF)', value: editPhase.monthly_income_chf },
-      { name: 'monthly_expenses_chf', label: 'Monthly expenses at start of year (CHF)', value: startingExpense },
-      { name: 'yearly_expenses_chf', label: 'Annual expenses at start of year (CHF)', value: startingExpense * 12 },
+      ...(node.month === 0 ? [{ name: 'cash_chf', label: `Starting cash (${state.currency.code})`, value: s.cash_chf, money: true }] : []),
+      { name: 'monthly_income_chf', label: `Monthly income (${state.currency.code})`, value: editPhase.monthly_income_chf, money: true },
+      { name: 'monthly_expenses_chf', label: `Monthly expenses at start of year (${state.currency.code})`, value: startingExpense, money: true },
+      { name: 'yearly_expenses_chf', label: `Annual expenses at start of year (${state.currency.code})`, value: startingExpense * 12, money: true },
       ...(node.month === 0 ? [{ name: 'annual_inflation', label: 'Default annual inflation (%)', value: node.scenario.annual_inflation, percent: true }] : []),
       { name: 'year_inflation', label: `Inflation for ${terms.year ?? node.date.slice(0, 4)} (%)`, value: terms.year_inflation ?? null, percent: true, optional: true, placeholder: 'Use default annual inflation' },
       { name: 'inflation_exempt', label: 'Fixed by contract, unaffected by inflation', value: terms.inflation_exempt ?? false, type: 'checkbox' },
       { name: 'duration_months', label: 'Expense duration (months)', value: terms.duration_months ?? null, optional: true, placeholder: 'Ongoing' },
-      { name: 'one_off_cost_chf', label: 'One-time cost (CHF)', value: editCost },
+      { name: 'one_off_cost_chf', label: `One-time cost (${state.currency.code})`, value: editCost, money: true },
       { name: 'date', label: 'Date', value: node.date, type: 'date' },
     ];
     for (const field of fields) {
@@ -2969,7 +3185,9 @@ function renderInspector(node, { focusBranchInput = false } = {}) {
 
       }
       label.textContent = field.label;
-      input.value = field.value === null ? '' : field.percent ? Number((field.value * 100).toFixed(8)) : field.value;
+      input.value = field.value === null ? ''
+        : field.percent ? Number((field.value * 100).toFixed(2))
+          : field.money ? Number(chfToDisplay(field.value).toFixed(2)) : field.value;
       input.required = !field.optional;
       if (field.placeholder) input.placeholder = field.placeholder;
       if (input.type === 'number') {
@@ -2983,8 +3201,8 @@ function renderInspector(node, { focusBranchInput = false } = {}) {
     }
     const monthlyExpenses = editForm.elements.monthly_expenses_chf;
     const yearlyExpenses = editForm.elements.yearly_expenses_chf;
-    monthlyExpenses.addEventListener('input', () => { yearlyExpenses.value = Number(monthlyExpenses.value) * 12; });
-    yearlyExpenses.addEventListener('input', () => { monthlyExpenses.value = Number(yearlyExpenses.value) / 12; });
+    monthlyExpenses.addEventListener('input', () => { yearlyExpenses.value = Number((Number(monthlyExpenses.value) * 12).toFixed(2)); });
+    yearlyExpenses.addEventListener('input', () => { monthlyExpenses.value = Number((Number(yearlyExpenses.value) / 12).toFixed(2)); });
     const editError = document.createElement('p');
     editError.className = 'form-error';
     editError.setAttribute('role', 'alert');
@@ -3001,9 +3219,13 @@ function renderInspector(node, { focusBranchInput = false } = {}) {
         const input = editForm.elements[field.name];
         let value;
         if (input.type === 'checkbox') value = input.checked;
-        else if (input.type === 'number') value = input.value === '' ? null : Number(input.value) / (field.percent ? 100 : 1);
-        else value = input.value;
-        if (value !== field.value && !(field.percent && value !== null && field.value !== null && Math.abs(value - field.value) < 1e-10)) edits[field.name] = value;
+        else if (input.type === 'number') {
+          value = input.value === '' ? null : field.money ? displayToChf(input.value) : Number(input.value) / (field.percent ? 100 : 1);
+        } else value = input.value;
+        // Shown values are rounded (and converted for other currencies), so an untouched field is not an edit.
+        const tolerance = field.money ? 0.006 / state.currency.per_chf : field.percent ? 0.000051 : 1e-10;
+        const unchanged = value !== null && field.value !== null && typeof value === 'number' && Math.abs(value - field.value) < tolerance;
+        if (value !== field.value && !((field.percent || field.money) && unchanged)) edits[field.name] = value;
       }
       if (!Object.keys(edits).length) return;
       editError.textContent = '';
@@ -3120,8 +3342,8 @@ function renderBranchInfo(node) {
   const list = el('ul');
   for (const [text, source] of describeBlocks(plan)) list.append(el('li', {}, el('span', { text }), setBadge(el('span'), source)));
   box.append(list);
-  if (plan.assumptions) box.append(el('p', { class: 'proposal-assumptions', text: plan.assumptions }));
-  if (plan.warnings?.length) box.append(el('ul', { class: 'proposal-warnings' }, ...plan.warnings.map(text => el('li', { text }))));
+  if (plan.assumptions) box.append(el('p', { class: 'proposal-assumptions', text: localizeAmounts(plan.assumptions) }));
+  if (plan.warnings?.length) box.append(el('ul', { class: 'proposal-warnings' }, ...plan.warnings.map(text => el('li', { text: localizeAmounts(text) }))));
   const sources = sourceLinks(plan.source_urls);
   if (sources) box.append(sources);
   return box;
@@ -3160,7 +3382,7 @@ function showComposer(section, node, text = '', presetId = null) {
     setButtonLoading(submit, true, 'Researching the numbers…', 'Get the numbers');
     const revision = state.revision;
     try {
-      const result = await request('/api/branch/propose', { parent: node, preset: selected || undefined, event: details || undefined });
+      const result = await request('/api/branch/propose', { parent: node, preset: selected || undefined, event: details || undefined, currency: state.currency.code });
       if (revision === state.revision && state.selectedId === node.id) renderReview(section, node, result.proposal, details, selected);
     } catch (problem) {
       error.textContent = problem.message;
@@ -3191,7 +3413,10 @@ function blockEditor(key, item, onRemove) {
   const grid = el('div', { class: 'block-grid' });
   let down = null;
   const refreshDown = () => { if (down) { item.down_payment_chf = item.price_chf - item.loan_chf; down.textContent = money(item.down_payment_chf); } };
-  for (const [field, type, label, options] of BLOCK_FIELDS[key]) {
+  for (const [field, type, fieldLabel, options] of BLOCK_FIELDS[key]) {
+    // Amounts are stored in CHF and shown in the chosen currency.
+    const isMoney = type === 'number' && field.endsWith('_chf');
+    const label = fieldLabel.replace('CHF', state.currency.code);
     let input;
     if (type === 'select') {
       input = el('select', {}, ...options.map(([value, optionText]) => el('option', { value, text: optionText })));
@@ -3200,11 +3425,13 @@ function blockEditor(key, item, onRemove) {
       input = down = el('output', { class: 'readonly-value' });
     } else {
       input = el('input', { type: type === 'text' ? 'text' : 'number', step: type === 'int' ? 1 : 'any', min: type === 'int' ? 0 : null });
-      input.value = type === 'percent' ? Number((item[field] * 100).toFixed(3)) : item[field];
+      input.value = type === 'percent' ? Number((item[field] * 100).toFixed(2))
+        : isMoney ? Number(chfToDisplay(item[field]).toFixed(2)) : item[field];
     }
     if (type !== 'readonly') input.addEventListener('input', () => {
       const raw = input.value;
-      item[field] = type === 'text' || type === 'select' ? raw : type === 'percent' ? Number(raw) / 100 : type === 'int' ? Math.round(Number(raw)) : Number(raw);
+      item[field] = type === 'text' || type === 'select' ? raw : type === 'percent' ? Number(raw) / 100
+        : type === 'int' ? Math.round(Number(raw)) : isMoney ? displayToChf(raw) : Number(raw);
       item.source = 'user';
       setBadge(badge, 'user');
       refreshDown();
@@ -3268,9 +3495,9 @@ function renderReview(section, node, proposal, text, presetId = null) {
   title.value = plan.title;
   section.append(el('span', { class: 'card-kicker', text: 'REVIEW BEFORE BRANCHING' }), el('h3', { text: 'Check the numbers' }),
     el('label', { for: 'branch-title', text: 'Event name' }), title);
-  if (plan.summary) section.append(el('p', { class: 'proposal-summary', text: plan.summary }));
-  if (plan.assumptions) section.append(el('p', { class: 'proposal-assumptions', text: plan.assumptions }));
-  if (plan.warnings?.length) section.append(el('ul', { class: 'proposal-warnings' }, ...plan.warnings.map(item => el('li', { text: item }))));
+  if (plan.summary) section.append(el('p', { class: 'proposal-summary', text: localizeAmounts(plan.summary) }));
+  if (plan.assumptions) section.append(el('p', { class: 'proposal-assumptions', text: localizeAmounts(plan.assumptions) }));
+  if (plan.warnings?.length) section.append(el('ul', { class: 'proposal-warnings' }, ...plan.warnings.map(item => el('li', { text: localizeAmounts(item) }))));
   const sources = sourceLinks(plan.source_urls);
   if (sources) section.append(sources);
   const lists = { changes: el('div'), one_offs: el('div'), assets: el('div') };
@@ -3486,7 +3713,7 @@ async function selectNode(id, { openDrawer = false, focusBranchInput = false, sk
     state.narratives.set(id, result.narrative);
     if (state.selectedId === id) {
       const el = byId('node-narrative');
-      if (el) el.textContent = result.narrative;
+      if (el) el.textContent = localizeAmounts(result.narrative);
     }
   } catch {
     // Keep instant prose fallback
@@ -3602,6 +3829,82 @@ byId('tree-adjust-scenario').addEventListener('click', () => {
   showStage('tuning');
 });
 
+/* ==========================================================================
+   CURRENCY CHOICE (assumptions page)
+   ========================================================================== */
+
+const CURRENCY_STORAGE_KEY = 'financial_twin_currency';
+
+// Re-renders text that depends on the chosen currency.
+function refreshCurrencyText() {
+  const rate = byId('currency-rate');
+  if (rate) rate.textContent = currencyRateText();
+}
+
+function chooseCurrency(code) {
+  setCurrency(code);
+  try { localStorage.setItem(CURRENCY_STORAGE_KEY, state.currency.code); } catch { /* storage unavailable */ }
+  for (const select of document.querySelectorAll('.currency-select')) {
+    if (select.value !== state.currency.code) select.value = state.currency.code;
+  }
+  refreshCurrencyText();
+}
+
+async function loadCurrencies() {
+  let saved = 'CHF';
+  try { saved = localStorage.getItem(CURRENCY_STORAGE_KEY) || 'CHF'; } catch { /* storage unavailable */ }
+  try {
+    const response = await fetch('/api/currencies');
+    if (!response.ok) throw new Error('unavailable');
+    const data = await response.json();
+    state.currencies = data.currencies.map(item => ({ ...item, date: data.date, source: data.source, live: data.live }));
+    // The assumptions page shows names; the compact menus on the results page show codes, with names on hover.
+    for (const menu of document.querySelectorAll('.currency-select')) {
+      const compact = menu.id !== 'currency';
+      menu.replaceChildren(...state.currencies.map(item => {
+        const option = document.createElement('option');
+        option.value = item.code;
+        option.textContent = compact ? item.code : `${item.code} · ${item.name}`;
+        option.title = item.name;
+        return option;
+      }));
+    }
+  } catch {
+    // Without rates only CHF can be shown; the select keeps its single CHF option.
+    state.currencies = [CHF];
+  }
+  chooseCurrency(saved);
+}
+
+// Switching currency redraws whatever is on screen in the new currency, keeping the values set so far.
+function redrawInCurrency() {
+  if (state.extraction?.variables && byId('sliders')) {
+    for (const variable of state.extraction.variables) {
+      const slider = byId(`slider-${variable.id}`);
+      if (slider?.value !== undefined && slider.value !== '' && Number.isFinite(Number(slider.value))) {
+        variable.value = Number(slider.value);
+        variable.min = Math.min(Number(variable.min), Number(slider.min));
+        variable.max = Math.max(Number(variable.max), Number(slider.max));
+      }
+    }
+    renderTuning(state.extraction);
+  }
+  if (state.nodes.size && state.stage === 'results') {
+    if (state.resultsView === 'tree') renderTreeGraph();
+    else renderTimelineView();
+    const selected = state.nodes.get(state.selectedId);
+    if (selected && (state.drawerOpen || state.resultsView === 'tree')) renderInspector(selected);
+  }
+}
+
+for (const menu of document.querySelectorAll('.currency-select')) {
+  menu.addEventListener('change', event => {
+    chooseCurrency(event.target.value);
+    redrawInCurrency();
+  });
+}
+loadCurrencies();
+
 byId('intake-form').addEventListener('submit', async event => {
   event.preventDefault();
   const button = byId('extract-button');
@@ -3612,7 +3915,12 @@ byId('intake-form').addEventListener('submit', async event => {
     state.extraction = await request('/api/extract', {
       statement: byId('statement').value.trim(),
       years: state.years,
+      currency: state.currency.code,
     });
+    // Show results with the exact rate the server used to convert the story.
+    if (state.extraction.currency?.code === state.currency.code && state.extraction.currency.per_chf) {
+      state.currency = { ...state.currency, ...state.extraction.currency };
+    }
     renderTuning(state.extraction);
     showStage('tuning');
   } catch (error) {
@@ -3692,6 +4000,7 @@ document.addEventListener('visibilitychange', () => {
   }
 });
 
+byId('range-toggle')?.addEventListener('click', () => setRangeVisible(!state.showRange));
 fetch('/api/branch/presets').then(response => response.json()).then(data => { state.presets = data.presets || []; }).catch(() => {});
 startAstralBackdrop();
 
@@ -3711,6 +4020,8 @@ function buildRunFile() {
     start_date: run.start_date,
     years: run.years,
     units: { currency: 'CHF', time_step: 'month', horizon_years: run.years },
+    // Shown to the user in this currency; every number in this file is CHF.
+    display_currency: { code: state.currency.code, per_chf: state.currency.per_chf, date: state.currency.date, source: state.currency.source },
     scenario: run.scenario,
     variables: run.variables,
     branches: run.branches,
@@ -3871,9 +4182,14 @@ function niceTicks(minVal, maxVal, targetCount = 5) {
   return { min, max, ticks };
 }
 
+const metricDisplayUnit = metric => metric.unit.replace('CHF', state.currency.code);
+
 function populateGraphMetricSelect() {
   const select = byId('graph-y-metric');
-  if (!select || select.options.length > 0) return;
+  if (!select) return;
+  if (select.options.length > 0 && select.dataset.currencyCode === state.currency.code) return;
+  const currentValue = select.value || state.graphBuilder.metricId;
+  select.replaceChildren();
   const groups = new Map();
   for (const metric of GRAPH_METRICS) {
     if (!groups.has(metric.group)) {
@@ -3884,17 +4200,21 @@ function populateGraphMetricSelect() {
     }
     const opt = document.createElement('option');
     opt.value = metric.id;
-    opt.textContent = `${metric.label} (${metric.unit})`;
+    opt.textContent = `${metric.label} (${metricDisplayUnit(metric)})`;
     groups.get(metric.group).append(opt);
   }
+  select.dataset.currencyCode = state.currency.code;
+  if (currentValue) select.value = currentValue;
 }
 
 function formatGraphAxisTick(metric, val, step) {
   if (metric.formatAxis === compactChf) {
-    if (step < 1000) return money(val);
-    if (step < 5000 && Math.abs(val) >= 10_000 && Math.abs(val % 1000) > 1) {
-      const sign = val < 0 ? '−' : '';
-      return `${sign}CHF ${(Math.abs(val) / 1000).toFixed(1)}k`;
+    const dispStep = Math.abs(chfToDisplay(step));
+    const dispVal = chfToDisplay(val);
+    if (dispStep < 1000) return money(val);
+    if (dispStep < 5000 && Math.abs(dispVal) >= 10_000 && Math.abs(dispVal % 1000) > 1) {
+      const sign = dispVal < 0 ? '−' : '';
+      return `${sign}${currencyPrefix()}${(Math.abs(dispVal) / 1000).toFixed(1)}k`;
     }
   }
   return metric.formatAxis(val);
@@ -3958,7 +4278,7 @@ function buildCustomGraphStage(config, leaves) {
       ${gridLines}
       <line x1="${padL}" y1="${padT}" x2="${padL}" y2="${H - padB}" stroke="rgba(176, 118, 78, 0.42)" stroke-width="1.1" />
       <line x1="${padL}" y1="${H - padB}" x2="${W - padR}" y2="${H - padB}" stroke="rgba(176, 118, 78, 0.5)" stroke-width="1.2" />
-      <text x="${padL - 12}" y="${padT + 10}" text-anchor="end" fill="#a88e7c" font-size="11" font-family="DM Sans, sans-serif">${escapeHtml(metric.unit)}</text>
+      <text x="${padL - 12}" y="${padT + 10}" text-anchor="end" fill="#a88e7c" font-size="11" font-family="DM Sans, sans-serif">${escapeHtml(metricDisplayUnit(metric))}</text>
       ${xTicksHtml}
       <text x="${(padL + innerW / 2).toFixed(1)}" y="${(padT + innerH / 2 + 4).toFixed(1)}" text-anchor="middle" fill="#bfa490" font-size="13.5" font-family="DM Sans, sans-serif">Choose a branch above to plot ${escapeHtml(metric.label.toLowerCase())}</text>
     `;

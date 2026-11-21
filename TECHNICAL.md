@@ -124,6 +124,23 @@ The event types in `financial_twin/branching.py` (Study, Career change, Relocate
 
 A branch continues the situation at the selected node and does not inherit phases or one-off costs that the original path planned after that node, so each branch explores one event at a time.
 
+## Uncertainty range
+
+**Show range** in the results view adds, for the selected path only, a band to the trajectory chart, a ±% badge on each timeline edge and tree edge, the range on each timeline card, and a table in the node details (pessimistic, central and optimistic net worth and cash, in CHF and as % of the central value). The badge falls back to ±CHF when the central value is below CHF 5,000 or the range exceeds 100%, because percentages near zero mislead. The range is off by default and is not a branch: it adds no nodes and cannot be branched from.
+
+`POST /api/uncertainty` takes the nodes on screen and re-simulates the whole tree month by month, the way `/api/edit-nodes` does, with adjusted inputs (`financial_twin/uncertainty.py`). Every monthly amount is split into today's situation (the first phase of the starting point) and the change since (later phases and events):
+
+| Input | Pessimistic / optimistic |
+| --- | --- |
+| Today's income | held fixed |
+| Today's living costs | +5% / −5% |
+| Event effects | each change since today 15% less / more favourable |
+| One-off costs | +15% / −15% |
+| Investment returns | − / + volatility ÷ √(horizon in years), the uncertainty of an average return |
+| Inflation | ±1 percentage point; the side that lowers final net worth counts as pessimistic |
+
+The pessimistic run moves every input to its unfavourable side at once and the optimistic run to its favourable side, so the band is an outer bound, not a probability. Ranges are centred on the values shown: low = shown + (pessimistic − unadjusted re-simulation), so the band never drifts from the timeline. The response also lists, per branch, the first month cash turns negative in the pessimistic case and the inputs ranked by their effect on the branch's final net worth (each moved on its own). The start screen does not yet tag which values the user stated, so today's living costs vary even when typed in. `tests/test_uncertainty.py` checks that the unadjusted re-simulation reproduces every node exactly, hand-calculated driver effects, widening over time and input validation.
+
 ## Check the implementation
 
 Run `.local/venv/bin/python -m unittest discover -s tests -v` from the workspace root with the challenge checkout present. This also runs the browser-logic tests when Node.js is installed; run them on their own with `node --test tests/web/app.test.mjs`. The starter's original tests can also be run from `ai-financial-twin-lauzhack-2026/starter-kit` with `python3 -m unittest -v`.
@@ -137,12 +154,27 @@ Run `.local/venv/bin/python -m unittest discover -s tests -v` from the workspace
 | `test_web.py` | AI request format, model fallback and cooldown, slider handling and nested branches. |
 | `test_reproducibility.py` | Identical results from identical inputs, seeds, deterministic branch IDs and exact replay of run files. |
 | `test_ai_cache.py` | Same input, same numbers: with a fake AI that answers differently every time, the same story or branch event still gives identical numbers, also through the HTTP API, after a restart and under concurrent requests; invalid answers are not cached. |
+| `test_currency.py` | Currencies: amounts written in other currencies (symbols, codes, words, `k`/`million`, Swiss and European separators) are converted to CHF exactly, CHF amounts and bare numbers are left alone, live rates are reused, offline falls back to saved and then built-in rates, the AI gets the story, branch events and branch proposals in CHF, and unsupported currencies are rejected. No test uses the network. |
 | `test_api_keys.py` | Taking turns across `AI_API_KEY_1`, `AI_API_KEY_2`, …, failover on rate limits and rejected keys, rest periods, and `scripts/check_keys.py`. |
 | `test_event_resolver.py`, `test_event_cache_postgres.py` | Reference figures for named institutions and places: cache hits and refreshes, aliases, grounded citations and failed lookups (the PostgreSQL test needs `TEST_DATABASE_URL`). |
 | `test_frontend.py`, `web/app.test.mjs` | Browser logic: branch and Original-path deletion, the confirmation flow, the tree index, timeline milestones, health flags, number formatting, HTML escaping, and that a run file written by the browser replays exactly in Python. |
 | `test_projection.py`, `test_loaders.py`, `test_database.py` | The projection engine, the challenge data loaders and the PostgreSQL seed (needs `TEST_DATABASE_URL`). |
 
 `tests/test_projection.py` runs without the challenge data, except for one ledger replay. That test feeds the monthly income and spending of profiles P00001–P00050 from `synthetic-transactions.csv` through the projection recurrence and requires every month to match `closing_cash_chf` in `synthetic-cash-balances.csv`. It looks for the data in `ai-financial-twin-lauzhack-2026-main/Data` or `ai-financial-twin-lauzhack-2026/Data` inside the repository, or in `../ai-financial-twin-lauzhack-2026-main/Data`, and is skipped when none exists.
+
+## Currencies
+
+The assumptions page has a **Currency** menu with CHF, EUR, USD, GBP, JPY, CNY, CAD, AUD, SEK, NOK, DKK, PLN and INR, and the timeline and full-tree views have a compact one next to their buttons. All menus stay in sync. Switching redraws what is on screen in the new currency and keeps the values set so far. The choice is remembered in the browser, and the next story is read with it: amounts written without a currency count as that currency, which the assumptions page states.
+
+The engine always calculates in CHF, because the Swiss reference data is in CHF. Another currency is a view on the same numbers:
+
+- **Shown amounts** are converted from CHF: the timeline, charts, summaries, the inspector, path reports, branch proposals and server-written text that quotes CHF amounts.
+- **Typed amounts** are read in the chosen currency and converted to CHF before they are sent: assumption text boxes, node edits and the building blocks of a branch proposal.
+- **The story and branch events** are converted on the server before the AI sees them. An amount written with a currency (`€15,000`, `4'200 EUR`, `50k euros`, `£1.5m`, `USD 20,000`) is rewritten as CHF in code, for example `CHF 13,835.09 (written as €15,000)`, so the AI does no arithmetic on it. For amounts without a currency, the prompt states the chosen currency and the exact rate. `$`, `¥` and `kr` mean the chosen currency when it uses that symbol; otherwise `$` is USD, `¥` is JPY, and `kr` is left to the AI. The assumptions page lists every conversion it made.
+
+Rates are the European Central Bank reference rates from the free Frankfurter service (`https://api.frankfurter.dev`, no key; only the base currency is sent). They are kept for 6 hours and saved in `.local/exchange-rates.json`. If the service cannot be reached, the saved rates are used, and failing that, built-in rates of 2026-11-20 in `financial_twin/currency.py`; offline, the service is tried again after 5 minutes. The assumptions page states the rate, its date and its source, and `GET /api/currencies` returns them.
+
+Run files keep every number in CHF and record the display currency and its rate under `display_currency`, so replays are unaffected. The AI cache key includes the converted text and the rate: the same story in the same currency gives the same numbers for as long as the rate is unchanged. The comparison workspace (`compare.html`) still shows CHF.
 
 ## Same input, same numbers
 
