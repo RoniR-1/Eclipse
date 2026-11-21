@@ -247,6 +247,19 @@
 
   <div id="toast-region" class="toast-region" aria-live="polite" aria-atomic="true"></div>
 
+  <dialog id="confirm-dialog" class="confirm-dialog" aria-labelledby="confirm-title" aria-describedby="confirm-message">
+    <form method="dialog">
+      <div class="confirm-icon" aria-hidden="true">!</div>
+      <span class="card-kicker" id="confirm-kicker">DELETE BRANCH</span>
+      <h2 id="confirm-title"></h2>
+      <p id="confirm-message"></p>
+      <div class="confirm-actions">
+        <button class="confirm-cancel" value="cancel" autofocus>Cancel</button>
+        <button class="confirm-danger" value="confirm" id="confirm-ok">Delete</button>
+      </div>
+    </form>
+  </dialog>
+
   <dialog id="settings-dialog">
     <form method="dialog" id="settings-form">
       <div class="dialog-top">

@@ -1894,6 +1894,15 @@ function renderInspector(node, { focusBranchInput = false } = {}) {
     header.append(compare);
   }
 
+  {
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'delete-branch';
+    remove.textContent = 'Delete this path';
+    remove.addEventListener('click', () => deleteBranch(node.branch_id));
+    header.append(remove);
+  }
+
   const narrativeSec = document.createElement('div');
   narrativeSec.className = 'inspector-section';
   const narrativeTitle = document.createElement('h3');
@@ -2015,7 +2024,7 @@ function renderInspector(node, { focusBranchInput = false } = {}) {
         variables,
         api_key: state.apiKey || undefined,
       });
-      if (revision !== state.revision) return;
+      if (revision !== state.revision || !state.nodes.has(node.id)) return;
       for (const child of result.nodes) state.nodes.set(child.id, child);
       if (result.nodes.length) {
         const first = result.nodes[0];
@@ -2063,6 +2072,134 @@ function updateFollowPathButton(node) {
   const bLabel = index.branchMeta.get(bid)?.label || 'Original path';
   const shortLabel = bLabel.length > 22 ? `${bLabel.slice(0, 20).trim()}…` : bLabel;
   label.textContent = `Follow "${shortLabel}"`;
+}
+
+/* ==========================================================================
+   BRANCH DELETION
+   ========================================================================== */
+
+// Every node in the branch, plus every node of the branches that split off from it.
+function branchNodeIds(branchId) {
+  const removed = new Set();
+  const ordered = [...state.nodes.values()].sort((a, b) => a.month - b.month);
+  for (const node of ordered) {
+    if (node.branch_id === branchId || removed.has(node.parent_id)) removed.add(node.id);
+  }
+  return removed;
+}
+
+// Opens the styled confirmation pop-up; resolves true only when the confirm button is pressed.
+function confirmDialog({ kicker, title, message, confirmLabel }) {
+  const dialog = byId('confirm-dialog');
+  byId('confirm-kicker').textContent = kicker;
+  byId('confirm-title').textContent = title;
+  byId('confirm-message').textContent = message;
+  byId('confirm-ok').textContent = confirmLabel;
+  dialog.returnValue = '';
+  dialog.showModal();
+  return new Promise(resolve => {
+    dialog.addEventListener('close', () => resolve(dialog.returnValue === 'confirm'), { once: true });
+  });
+}
+
+const isOriginalBranch = branchId => branchId === 'main' || branchId === 'root';
+
+// Original-path nodes that no other branch grew out of. The shared history other branches depend on stays.
+function originalPathRemovals() {
+  const keep = new Set();
+  for (const node of state.nodes.values()) {
+    if (isOriginalBranch(node.branch_id)) continue;
+    let cur = state.nodes.get(node.parent_id);
+    while (cur && isOriginalBranch(cur.branch_id) && !keep.has(cur.id)) {
+      keep.add(cur.id);
+      cur = state.nodes.get(cur.parent_id);
+    }
+  }
+  return new Set([...state.nodes.values()]
+    .filter(node => isOriginalBranch(node.branch_id) && !keep.has(node.id))
+    .map(node => node.id));
+}
+
+async function deleteOriginalPath() {
+  const others = buildTreeIndex().branchIds.filter(id => !isOriginalBranch(id));
+  const confirmed = await confirmDialog({
+    kicker: 'DELETE ORIGINAL PATH',
+    title: 'Original path',
+    message: others.length
+      ? `This removes the Original path's projection. Your ${others.length} other branch${others.length === 1 ? '' : 'es'} stay, along with the shared history they grew out of. This can't be undone.`
+      : "This is your only path, so deleting it clears the whole projection and takes you back to your assumptions. This can't be undone.",
+    confirmLabel: 'Delete this path',
+  });
+  if (!confirmed) return;
+
+  // Recompute: a branch may have finished loading while the pop-up was open.
+  const removed = originalPathRemovals();
+  for (const id of removed) {
+    state.nodes.delete(id);
+    state.narratives.delete(id);
+  }
+
+  if (!state.nodes.size) {
+    state.revision += 1; // drop any requests still in flight for the cleared projection
+    state.selectedId = null;
+    state.graphNodes?.clear();
+    state.graphEdges?.clear();
+    state.resultsView = 'timeline';
+    showStage(state.extraction ? 'tuning' : 'intake');
+    showToast('Projection cleared');
+    return;
+  }
+
+  const index = buildTreeIndex();
+  const target = index.branchIds.find(id => !isOriginalBranch(id)) || index.branchIds[0];
+  const focusId = index.branchMeta.get(target)?.firstNode?.id;
+  state.activeBranchId = target;
+  state.selectedId = focusId ?? null;
+  if (state.resultsView === 'tree') {
+    renderTreeGraph({ focusId });
+    if (focusId) selectNode(focusId);
+  } else {
+    switchActivePath(target);
+  }
+  showToast('Deleted the Original path');
+}
+
+async function deleteBranch(branchId) {
+  if (isOriginalBranch(branchId)) return deleteOriginalPath();
+  const first = [...state.nodes.values()]
+    .filter(node => node.branch_id === branchId)
+    .sort((a, b) => a.month - b.month)[0];
+  if (!first) return;
+  const before = branchNodeIds(branchId);
+  const nested = new Set([...before].map(id => state.nodes.get(id).branch_id).filter(id => id !== branchId)).size;
+  const label = buildTreeIndex().branchMeta.get(branchId)?.label || milestoneTitle(first);
+
+  const confirmed = await confirmDialog({
+    kicker: 'DELETE BRANCH',
+    title: label,
+    message: `This removes the branch${nested ? ` and the ${nested} branch${nested === 1 ? '' : 'es'} that split off from it` : ''} from your timeline. This can't be undone.`,
+    confirmLabel: 'Delete this path',
+  });
+  if (!confirmed || !state.nodes.has(first.id)) return;
+
+  // Recompute: a branch may have finished loading while the pop-up was open.
+  for (const id of branchNodeIds(branchId)) {
+    state.nodes.delete(id);
+    state.narratives.delete(id);
+  }
+
+  // Return to the moment the branch split off from.
+  const forkId = state.nodes.has(first.parent_id) ? first.parent_id : buildTreeIndex().root?.id;
+  const forkBranch = state.nodes.get(forkId)?.branch_id;
+  state.activeBranchId = !forkBranch || forkBranch === 'root' ? 'main' : forkBranch;
+  state.selectedId = forkId ?? null;
+  if (state.resultsView === 'tree') {
+    renderTreeGraph({ focusId: forkId });
+    if (forkId) selectNode(forkId);
+  } else {
+    switchActivePath(state.activeBranchId, { focusNodeId: forkId });
+  }
+  showToast(`Deleted branch: ${label}`);
 }
 
 async function selectNode(id, { openDrawer = false, focusBranchInput = false } = {}) {
