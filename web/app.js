@@ -1,9 +1,10 @@
 const byId = id => document.getElementById(id);
-const state = { apiKey: '', extraction: null, years: 10, nodes: new Map(), narratives: new Map(), selectedId: null, network: null, graphNodes: null, graphEdges: null, revision: 0 };
+const state = { apiKey: '', extraction: null, years: 10, nodes: new Map(), narratives: new Map(), selectedId: null, network: null, graphNodes: null, graphEdges: null, revision: 0, openDetails: new Set(['breakdown']) };
 const money = value => new Intl.NumberFormat('en-CH', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0 }).format(value);
 
 function showStage(id) {
   for (const stage of ['intake', 'tuning', 'results']) byId(stage).hidden = stage !== id;
+  document.body.classList.toggle('world-mode', id === 'results');
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
@@ -93,10 +94,10 @@ function milestoneTitle(node) {
 }
 
 function health(node) {
-  if (node.state.cash_chf < 0 || node.state.net_worth_chf < 0) return { label: 'Needs attention', color: '#b46c56' };
+  if (node.state.cash_chf < 0 || node.state.net_worth_chf < 0) return { label: 'Needs attention', color: '#ff6b5b' };
   const expenses = node.state.cash_flow.expenses_chf;
-  if (expenses > 0 && node.state.cash_chf < expenses * 3) return { label: 'Building resilience', color: '#bc9857' };
-  return { label: 'On track', color: '#6e9870' };
+  if (expenses > 0 && node.state.cash_chf < expenses * 3) return { label: 'Building resilience', color: '#f2c14e' };
+  return { label: 'On track', color: '#7fc48a' };
 }
 
 function milestoneNodes() {
@@ -118,8 +119,8 @@ function renderGraph(fit = false) {
       label: `${node.date} · Year ${(node.month / 12).toFixed(node.month % 12 ? 1 : 0)}\n${milestoneTitle(node)}\n${money(node.state.net_worth_chf)}\n● ${status.label}`,
       x: months.indexOf(node.month) * 260,
       y: lanes.get(node.branch_id) * 190,
-      color: { background: node.id === state.selectedId ? '#e4f0dd' : '#ffffff', border: status.color, highlight: { background: '#e4f0dd', border: status.color } },
-      font: { color: '#263d2d', size: 14, face: 'DM Sans', multi: false },
+      color: { background: node.id === state.selectedId ? '#4a2614' : '#2b1910', border: status.color, highlight: { background: '#4a2614', border: status.color } },
+      font: { color: '#f6e9dc', size: 14, face: 'DM Sans', multi: false },
       borderWidth: node.id === state.selectedId ? 3 : 1.5,
       shape: 'box', margin: 16, widthConstraint: { minimum: 170, maximum: 210 },
     };
@@ -128,7 +129,7 @@ function renderGraph(fit = false) {
   for (const node of milestones) {
     let parentId = node.parent_id;
     while (parentId && !visible.has(parentId)) parentId = state.nodes.get(parentId)?.parent_id;
-    if (parentId) edges.push({ from: parentId, to: node.id, arrows: 'to', color: { color: '#9bb69b', highlight: '#557e59' }, smooth: { type: 'cubicBezier', roundness: 0.4 } });
+    if (parentId) edges.push({ id: `${parentId}>${node.id}`, from: parentId, to: node.id, arrows: 'to', color: { color: '#8a5a3c', highlight: '#ff9a4d' }, smooth: { type: 'cubicBezier', roundness: 0.4 } });
   }
   if (!state.network) {
     state.graphNodes = new vis.DataSet(graphNodes);
@@ -169,10 +170,30 @@ function renderGraph(fit = false) {
     });
     state.network.on('dragEnd', () => { drag = null; });
   } else {
-    state.graphNodes.clear();
-    state.graphEdges.clear();
-    state.graphNodes.add(graphNodes);
-    state.graphEdges.add(edges);
+    // Keep every node that is already on the canvas where it currently is (including nodes the user dragged);
+    // only place new nodes, shifted by however far their nearest existing ancestor has moved from its default spot.
+    const existing = new Set(state.graphNodes.getIds());
+    const positions = state.network.getPositions([...existing]);
+    const defaults = new Map(graphNodes.map(node => [node.id, { x: node.x, y: node.y }]));
+    const parentOf = new Map(edges.map(edge => [edge.to, edge.from]));
+    for (const node of graphNodes) {
+      if (existing.has(node.id)) {
+        node.x = positions[node.id].x;
+        node.y = positions[node.id].y;
+        continue;
+      }
+      let anchor = parentOf.get(node.id);
+      while (anchor && !existing.has(anchor)) anchor = parentOf.get(anchor);
+      if (anchor && defaults.has(anchor)) {
+        node.x += positions[anchor].x - defaults.get(anchor).x;
+        node.y += positions[anchor].y - defaults.get(anchor).y;
+      }
+    }
+    const edgeIds = new Set(edges.map(edge => edge.id));
+    state.graphNodes.remove([...existing].filter(id => !visible.has(id)));
+    state.graphNodes.update(graphNodes);
+    state.graphEdges.remove(state.graphEdges.getIds().filter(id => !edgeIds.has(id)));
+    state.graphEdges.update(edges);
   }
   const select = byId('milestone-select');
   select.replaceChildren();
@@ -185,7 +206,9 @@ function renderGraph(fit = false) {
   select.value = state.selectedId || '';
   if (fit) {
     const selected = graphNodes.find(node => node.id === state.selectedId);
-    state.network.moveTo({ position: { x: selected?.x ?? 0, y: selected?.y ?? 0 }, scale: 0.8 });
+    // Put the focused node about a quarter of the way across the screen, so the future to its right stays in view.
+    const width = byId('timeline-graph').clientWidth;
+    state.network.moveTo({ position: { x: selected?.x ?? 0, y: selected?.y ?? 0 }, scale: 0.8, offset: { x: -width * 0.25, y: 0 } });
   }
 }
 
@@ -199,14 +222,24 @@ function detailValue(key, value) {
   return String(value);
 }
 
-function appendDetails(container, value) {
+function rememberOpen(group, path) {
+  group.open = state.openDetails.has(path);
+  group.addEventListener('toggle', () => {
+    if (group.open) state.openDetails.add(path);
+    else state.openDetails.delete(path);
+  });
+}
+
+function appendDetails(container, value, path = 'breakdown') {
   for (const [key, item] of Object.entries(value)) {
     if (item && typeof item === 'object') {
       const group = document.createElement('details');
+      const groupPath = `${path}.${key}`;
+      rememberOpen(group, groupPath);
       const title = document.createElement('summary');
       title.textContent = `${detailLabel(key)}${Array.isArray(item) ? ` (${item.length})` : ''}`;
       group.append(title);
-      if (Object.keys(item).length) appendDetails(group, item);
+      if (Object.keys(item).length) appendDetails(group, item, groupPath);
       else { const empty = document.createElement('p'); empty.className = 'detail-empty'; empty.textContent = 'None'; group.append(empty); }
       container.append(group);
     } else {
@@ -264,7 +297,7 @@ function renderInspector(node) {
   }
   const breakdown = document.createElement('details');
   breakdown.className = 'breakdown';
-  breakdown.open = true;
+  rememberOpen(breakdown, 'breakdown');
   const breakdownTitle = document.createElement('summary');
   breakdownTitle.textContent = 'Financial breakdown & active parameters';
   breakdown.append(breakdownTitle);
@@ -394,3 +427,62 @@ byId('simulate-form').addEventListener('submit', async event => {
   } catch (error) { byId('simulate-error').textContent = error.message; }
   finally { button.disabled = false; button.textContent = 'Simulate future ✳'; }
 });
+byId('test-data').addEventListener('click', async () => {
+  const button = byId('test-data');
+  button.disabled = true;
+  try {
+    const result = await request('/api/test', { years: state.years });
+    state.years = result.years;
+    state.extraction = result.extraction;
+    renderTuning(state.extraction);
+    showStage('results');
+    renderResults(result.nodes);
+  } catch (error) { alert(`Could not generate test data: ${error.message}`); }
+  finally { button.disabled = false; }
+});
+
+function keepPanelOnScreen(panel) {
+  if (!panel.style.left) return;
+  const box = panel.getBoundingClientRect();
+  const bar = panel.querySelector('.panel-bar').offsetHeight;
+  panel.style.left = `${Math.min(Math.max(parseFloat(panel.style.left), 0), window.innerWidth - box.width)}px`;
+  panel.style.top = `${Math.min(Math.max(parseFloat(panel.style.top), 0), window.innerHeight - bar)}px`;
+  // The details panel scrolls internally, so let it grow only down to the bottom of the window.
+  if (panel.classList.contains('inspector')) panel.style.maxHeight = `${Math.max(window.innerHeight - parseFloat(panel.style.top) - 12, bar)}px`;
+}
+
+for (const panel of document.querySelectorAll('.floating-panel')) {
+  const bar = panel.querySelector('.panel-bar');
+  const toggle = panel.querySelector('.panel-toggle');
+  toggle.addEventListener('click', () => {
+    const minimized = panel.classList.toggle('minimized');
+    toggle.textContent = minimized ? '+' : '–';
+    toggle.setAttribute('aria-expanded', String(!minimized));
+    toggle.setAttribute('aria-label', minimized ? 'Restore panel' : 'Minimize panel');
+  });
+  bar.addEventListener('pointerdown', event => {
+    if (event.button !== 0 || event.target.closest('button')) return;
+    const box = panel.getBoundingClientRect();
+    const offsetX = event.clientX - box.left;
+    const offsetY = event.clientY - box.top;
+    // Switch from the CSS corner anchoring to explicit coordinates so the panel follows the pointer.
+    Object.assign(panel.style, { left: `${box.left}px`, top: `${box.top}px`, right: 'auto', bottom: 'auto', width: `${box.width}px` });
+    bar.setPointerCapture(event.pointerId);
+    bar.classList.add('dragging');
+    const move = moveEvent => {
+      panel.style.left = `${moveEvent.clientX - offsetX}px`;
+      panel.style.top = `${moveEvent.clientY - offsetY}px`;
+      keepPanelOnScreen(panel);
+    };
+    const stop = () => {
+      bar.classList.remove('dragging');
+      bar.removeEventListener('pointermove', move);
+      bar.removeEventListener('pointerup', stop);
+      bar.removeEventListener('pointercancel', stop);
+    };
+    bar.addEventListener('pointermove', move);
+    bar.addEventListener('pointerup', stop);
+    bar.addEventListener('pointercancel', stop);
+  });
+}
+window.addEventListener('resize', () => document.querySelectorAll('.floating-panel').forEach(keepPanelOnScreen));
