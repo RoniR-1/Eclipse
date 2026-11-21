@@ -32,16 +32,20 @@ const state = {
   astralRaf: null,
   treeHoverId: null,
   treeRenderData: null,
+  sensitivityOpen: false,
+  graphBuilder: { metricId: 'net_worth_chf', selectedBranchIds: [], zoom: null },
   run: null, // inputs needed to replay this run exactly (see financial_twin/reproduce.py)
 };
 
 const BRANCH_PALETTE = [
-  '#ffa159', // Original path — warm amber
-  '#f0cb88', // Soft champagne gold
-  '#f08e6e', // Warm terracotta
-  '#dc8ba6', // Dusty rose-copper
-  '#9ec4a3', // Soft sage
-  '#c9a3dc', // Muted warm lavender
+  '#ffa45e', // P0 (Original path) — warm amber
+  '#6fd1a4', // P1 — emerald mint
+  '#73c8e6', // P2 — astral teal
+  '#f5c85b', // P3 — warm gold
+  '#d896ec', // P4 — soft plum
+  '#ff7a6b', // P5 — coral
+  '#f09a78', // P6 — terracotta
+  '#a6d48a', // P7 — sage
 ];
 
 const money = value =>
@@ -915,6 +919,8 @@ function buildTreeIndex() {
 
     branchMeta.set(bid, {
       id: bid,
+      code: bid === 'main' || bid === 'root' ? 'P0' : '',
+      color: BRANCH_PALETTE[0],
       label,
       firstNode: first,
       tipNode: tip,
@@ -934,6 +940,41 @@ function buildTreeIndex() {
     if (resolvedParent && branchMeta.has(resolvedParent)) {
       meta.parentBranchId = resolvedParent;
     }
+  }
+
+  // Assign clean hierarchical path IDs (P0, P1, P2, P1.1...) & one unified color per branch across ALL views
+  const childMetaByParent = new Map();
+  const topLevelBranches = [];
+  for (const meta of branchMeta.values()) {
+    if (meta.id === 'main' || meta.id === 'root') continue;
+    if (meta.parentBranchId && branchMeta.has(meta.parentBranchId)) {
+      if (!childMetaByParent.has(meta.parentBranchId)) childMetaByParent.set(meta.parentBranchId, []);
+      childMetaByParent.get(meta.parentBranchId).push(meta);
+    } else {
+      topLevelBranches.push(meta);
+    }
+  }
+  const sortKids = list => list.sort((a, b) => (a.forkMonth - b.forkMonth) || a.id.localeCompare(b.id));
+  sortKids(topLevelBranches);
+  for (const kids of childMetaByParent.values()) sortKids(kids);
+
+  let nextColorIdx = 1;
+  const assignCodes = (list, prefix) => {
+    list.forEach((meta, idx) => {
+      meta.code = prefix ? `${prefix}.${idx + 1}` : `P${idx + 1}`;
+      meta.color = BRANCH_PALETTE[nextColorIdx % BRANCH_PALETTE.length];
+      nextColorIdx += 1;
+      const kids = childMetaByParent.get(meta.id);
+      if (kids?.length) assignCodes(kids, meta.code);
+    });
+  };
+  const rootMeta = branchMeta.get('main') || branchMeta.get('root');
+  if (rootMeta) {
+    rootMeta.code = 'P0';
+    rootMeta.color = BRANCH_PALETTE[0];
+    assignCodes([...(childMetaByParent.get(rootMeta.id) || []), ...topLevelBranches], '');
+  } else {
+    assignCodes(topLevelBranches, '');
   }
 
   const forkNodeIds = new Set();
@@ -1248,7 +1289,10 @@ function renderTimelineView() {
   const parentLabel = parentBid ? index.branchMeta.get(parentBid === 'root' ? 'main' : parentBid)?.label : 'Original path';
 
   const horizonYears = (activeMeta.tipNode.month / 12).toFixed(activeMeta.tipNode.month % 12 ? 1 : 0);
-  byId('active-path-kicker').textContent = isAlternate ? activeMeta.label.toUpperCase() : 'ORIGINAL PATH';
+  const activeCode = activeMeta.code || 'P0';
+  byId('active-path-kicker').textContent = isAlternate
+    ? `${activeCode} · ${activeMeta.label.toUpperCase()}`
+    : `${activeCode} · ORIGINAL PATH`;
   const dotEl = byId('active-path-dot');
   if (dotEl) {
     dotEl.style.background = activeColor;
@@ -1265,6 +1309,7 @@ function renderTimelineView() {
   renderTreeMinimap(index);
   renderEndSummary(activeMeta, index);
   renderTrajectoryChart(activeMeta, index);
+  renderGraphStudio(index);
   startSpineAnimation();
 }
 
@@ -1433,7 +1478,7 @@ function renderVerticalTimeline(milestones, activeMeta, index, layout) {
           <span class="fork-dest-left">
             <span class="fork-dest-orb" aria-hidden="true"></span>
             <span>
-              <span class="fork-dest-name">${escapeHtml(bMeta.label)}</span>
+              <span class="fork-dest-name"><span class="branch-code-pill" style="--pill-color:${destColor}">${escapeHtml(bMeta.code || 'P0')}</span>${escapeHtml(bMeta.label)}</span>
               <span class="fork-dest-sub">Ends at ${escapeHtml(money(tipWorth))}${escapeHtml(diffNote)}</span>
             </span>
           </span>
@@ -1556,17 +1601,16 @@ function buildPlanarTreeLayout(milestones, index) {
   const branchColors = new Map();
   let nextLane = 0;
 
-  // Put 'root' and 'main' on the same lane 0 if both appear
-  let colorIndex = 0;
+  // Put 'root' and 'main' on the same lane 0 if both appear, using each branch's canonical unified color
   for (const bid of orderedBranches) {
+    const metaColor = index.branchMeta.get(bid === 'root' ? 'main' : bid)?.color || BRANCH_PALETTE[0];
     if (bid === 'main' && laneOffsets.has('root')) {
       laneOffsets.set('main', laneOffsets.get('root'));
-      branchColors.set('main', BRANCH_PALETTE[0]);
+      branchColors.set('main', metaColor);
       continue;
     }
     laneOffsets.set(bid, nextLane);
-    branchColors.set(bid, bid === 'root' || bid === 'main' ? BRANCH_PALETTE[0] : BRANCH_PALETTE[Math.max(1, colorIndex) % BRANCH_PALETTE.length]);
-    colorIndex += 1;
+    branchColors.set(bid, metaColor);
     const counts = new Map();
     for (const node of milestones.filter(item => item.branch_id === bid)) {
       counts.set(node.date, (counts.get(node.date) || 0) + 1);
@@ -1744,11 +1788,10 @@ function renderTreeMinimap(index) {
 
     const showTip = () => {
       applyMinimapHighlight(node.id);
-      const bLabel = index.branchMeta.get(node.branch_id === 'root' ? 'main' : node.branch_id)?.label || 'Original path';
-      const pBid = parentBranchOf.get(node.branch_id);
-      const pLabel = pBid ? index.branchMeta.get(pBid === 'root' ? 'main' : pBid)?.label : null;
-      const origin = pLabel ? `From ${pLabel} · ` : '';
-      tooltip.innerHTML = `<strong>${escapeHtml(milestoneTitle(node))}</strong><span>${escapeHtml(origin)}${escapeHtml(bLabel)} · ${escapeHtml(node.date)} · ${escapeHtml(money(node.state.net_worth_chf))}</span>`;
+      const bMeta = index.branchMeta.get(node.branch_id === 'root' ? 'main' : node.branch_id);
+      const bCode = bMeta?.code || 'P0';
+      const bLabel = bMeta?.label || 'Original path';
+      tooltip.innerHTML = `<strong><span class="minimap-code" style="color:${bColor}">${escapeHtml(bCode)}</span> ${escapeHtml(milestoneTitle(node))}</strong><span>${escapeHtml(bLabel)} · ${escapeHtml(formatNiceDate(node.date, { includeDay: true }))} · ${escapeHtml(money(node.state.net_worth_chf))}</span>`;
       const leftPct = Math.max(15, Math.min(85, (p.x / W) * 100));
       const topPct = (p.y / H) * 100;
       tooltip.style.left = `${leftPct}%`;
@@ -1859,49 +1902,142 @@ function renderEndSummary(activeMeta, index) {
     `;
     container.append(el);
   }
-  const comparison = document.createElement('div');
-  comparison.className = 'summary-comparison-link';
-  const reportButton = document.createElement('button');
-  reportButton.type = 'button';
-  reportButton.className = 'ghost-button';
-  reportButton.textContent = 'Inspect sensitivity and checks';
-  const reportContent = document.createElement('div');
-  reportContent.className = 'path-report';
-  reportContent.setAttribute('aria-live', 'polite');
-  reportButton.addEventListener('click', async () => {
-    reportButton.disabled = true;
-    reportContent.textContent = 'Calculating this path…';
-    const revision = state.revision;
+  if (state.sensitivityOpen) {
+    loadAndRenderSensitivityReport(activeMeta);
+  }
+}
+
+function formatSensitivityValue(value, unit) {
+  if (value === null || value === undefined) return 'Unavailable';
+  const num = Number(value);
+  if (!Number.isFinite(num)) return String(value);
+  if (unit === 'CHF') return money(num);
+  if (unit === 'share' || unit === '%') {
+    const pct = unit === 'share' && Math.abs(num) <= 2 ? num * 100 : num;
+    return `${Number(pct.toFixed(2))}%`;
+  }
+  return `${Number(num.toFixed(2))}${unit ? ` ${unit}` : ''}`;
+}
+
+function setSensitivityPanelOpen(open) {
+  state.sensitivityOpen = open;
+  const panel = byId('path-report-panel');
+  const toggle = byId('toggle-sensitivity-panel');
+  if (panel) panel.hidden = !open;
+  if (toggle) toggle.setAttribute('aria-expanded', String(open));
+  if (open && state.nodes.size) {
+    const index = buildTreeIndex();
+    const activeMeta = index.branchMeta.get(state.activeBranchId) || index.branchMeta.get(index.branchIds[0]);
+    if (activeMeta) loadAndRenderSensitivityReport(activeMeta);
+  }
+}
+
+async function loadAndRenderSensitivityReport(activeMeta) {
+  const panel = byId('path-report-panel');
+  if (!panel || !activeMeta) return;
+  const chain = activeMeta.chain;
+  const tip = activeMeta.tipNode;
+  const renderShell = bodyHtml => {
+    panel.innerHTML = `
+      <div class="path-report-head">
+        <div>
+          <span class="card-kicker">SENSITIVITY & MODEL CHECKS</span>
+          <h3>${escapeHtml(activeMeta.label)}</h3>
+        </div>
+        <button type="button" class="drawer-close" id="close-sensitivity-panel" aria-label="Close sensitivity report">×</button>
+      </div>
+      ${bodyHtml}
+    `;
+    panel.querySelector('#close-sensitivity-panel')?.addEventListener('click', () => setSensitivityPanelOpen(false));
+  };
+
+  const revision = state.revision;
+  let bundle = state.pathReports.get(tip.id);
+  if (!bundle) {
+    renderShell('<p class="path-report-loading">Calculating one-at-a-time sensitivity and model checks…</p>');
     try {
-      let bundle = state.pathReports.get(tip.id);
-      if (!bundle) {
-        const result = await request('/api/path-report', { nodes: chain });
-        bundle = result.comparison_bundle;
-        state.pathReports.set(tip.id, bundle);
-      }
-      if (revision !== state.revision || !reportContent.isConnected) return;
-      const report = bundle.paths[bundle.baseline_path];
-      const formatValue = value => value === null || value === undefined ? 'Unavailable' : String(value);
-      const exactMoney = value => value == null ? 'Unavailable' : `CHF ${new Intl.NumberFormat('en-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value)}`;
-      const drivers = report.sensitivity_summary.drivers;
-      const rows = drivers.map(driver => {
-        const goals = (driver.goal_impacts || []).map(goal => `${goal.name}: deadline gap change ${goal.deadline_gap_delta_chf == null ? 'unavailable' : exactMoney(goal.deadline_gap_delta_chf)}`).join(', ');
-        return `<tr><td>${escapeHtml(driver.label || driver.field)}<br><small>${escapeHtml(driver.source || 'unknown')}</small></td><td>${escapeHtml(formatValue(driver.base_value))} → ${escapeHtml(formatValue(driver.perturbed_value))} ${escapeHtml(driver.unit || '')}</td><td>${escapeHtml(exactMoney(driver.terminal_cash_delta_chf))}</td><td>${escapeHtml(exactMoney(driver.minimum_liquidity_delta_chf))}</td><td>${escapeHtml(goals || 'No goal')}</td></tr>`;
-      }).join('');
-      const checks = report.sanity_checks.map(check => `<li>${escapeHtml(check.name.replaceAll('_', ' '))}: ${check.passed === null ? 'unavailable' : check.passed ? 'passed' : 'needs review'}</li>`).join('');
-      const limitations = bundle.limitations.map(item => `<li>${escapeHtml(item)}</li>`).join('');
-      reportContent.innerHTML = `<h3>One-at-a-time sensitivity</h3><div class="path-report-table"><table><thead><tr><th>Input</th><th>Change</th><th>Terminal cash</th><th>Minimum liquidity</th><th>Goal effect</th></tr></thead><tbody>${rows || '<tr><td colspan="5">No sensitivity drivers available.</td></tr>'}</tbody></table></div><h3>Model checks</h3><ul>${checks}</ul><h3>Model context</h3><ul>${limitations}</ul>`;
+      const result = await request('/api/path-report', { nodes: chain });
+      bundle = result.comparison_bundle;
+      state.pathReports.set(tip.id, bundle);
     } catch (error) {
-      if (reportContent.isConnected) reportContent.textContent = error.message;
-    } finally {
-      if (reportButton.isConnected) reportButton.disabled = false;
+      if (revision === state.revision && state.sensitivityOpen) {
+        renderShell(`<p class="form-error">${escapeHtml(error.message)}</p>`);
+      }
+      return;
     }
-  });
-  const link = document.createElement('a');
-  link.href = '/compare.html';
-  link.textContent = 'Open comparison workspace';
-  comparison.append(reportButton, reportContent, link);
-  container.append(comparison);
+  }
+  if (revision !== state.revision || !state.sensitivityOpen) return;
+
+  const report = bundle.paths[bundle.baseline_path];
+  const drivers = report.sensitivity_summary?.drivers || [];
+  const deltaCell = value => {
+    if (value == null) return '<td class="is-num">—</td>';
+    const cls = value > 0.5 ? ' is-pos' : value < -0.5 ? ' is-neg' : '';
+    return `<td class="is-num${cls}">${escapeHtml(moneySigned(value))}</td>`;
+  };
+  const rows = drivers.map(driver => {
+    const source = driver.source || 'assumption';
+    const sourceLabel = SOURCE_LABELS[source] || source;
+    const baseText = formatSensitivityValue(driver.base_value, driver.unit);
+    const pertText = formatSensitivityValue(driver.perturbed_value, driver.unit);
+    const goals = (driver.goal_impacts || [])
+      .map(goal => `${goal.name}: ${goal.deadline_gap_delta_chf == null ? 'unavailable' : moneySigned(goal.deadline_gap_delta_chf)}`)
+      .join(' · ');
+    return `
+      <tr>
+        <td>
+          <div class="path-report-driver">
+            <strong>${escapeHtml(driver.label || driver.field)}</strong>
+            <span class="source-badge source-${escapeHtml(source)}">${escapeHtml(sourceLabel)}</span>
+          </div>
+        </td>
+        <td style="white-space:nowrap;">${escapeHtml(baseText)} → ${escapeHtml(pertText)}</td>
+        ${deltaCell(driver.terminal_cash_delta_chf)}
+        ${deltaCell(driver.minimum_liquidity_delta_chf)}
+        <td>${escapeHtml(goals || 'No goal')}</td>
+      </tr>
+    `;
+  }).join('');
+
+  const checksHtml = (report.sanity_checks || []).map(check => {
+    const rawName = String(check.name || '').replaceAll('_', ' ');
+    const prettyName = rawName ? rawName[0].toUpperCase() + rawName.slice(1) : 'Check';
+    const pillCls = check.passed === null ? 'is-muted' : check.passed ? 'is-pass' : 'is-warn';
+    const pillText = check.passed === null ? '— Unavailable' : check.passed ? '✓ Passed' : '! Needs review';
+    return `<li><span>${escapeHtml(prettyName)}</span><span class="check-pill ${pillCls}">${pillText}</span></li>`;
+  }).join('');
+
+  const limitationsHtml = (bundle.limitations || []).map(item => `<li>${escapeHtml(item)}</li>`).join('');
+
+  renderShell(`
+    <div class="path-report-section-title">One-at-a-time sensitivity</div>
+    <div class="path-report-table">
+      <table>
+        <thead>
+          <tr>
+            <th>Input</th>
+            <th>Change tested</th>
+            <th style="text-align:right;">Terminal cash</th>
+            <th style="text-align:right;">Minimum liquidity</th>
+            <th>Goal effect</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows || '<tr><td colspan="5">No sensitivity drivers available for this path.</td></tr>'}
+        </tbody>
+      </table>
+    </div>
+    <div class="path-report-footer">
+      <div>
+        <div class="path-report-section-title">Model checks</div>
+        <ul class="path-checks-list">${checksHtml}</ul>
+      </div>
+      <div>
+        <div class="path-report-section-title">Model context</div>
+        <ul class="path-context-list">${limitationsHtml}</ul>
+      </div>
+    </div>
+  `);
 }
 
 function renderTrajectoryChart(activeMeta, index) {
@@ -1967,26 +2103,28 @@ function renderTrajectoryChart(activeMeta, index) {
     return `<text x="${x}" y="${H - 5}" text-anchor="${m === 0 ? 'start' : m === maxMonth ? 'end' : 'middle'}" fill="#967c6b" font-size="10.5">${formatMonthTime(m)}</text>`;
   }).join('');
 
+  const activeColor = activeMeta.color || BRANCH_PALETTE[0];
+  const parentColor = parentMeta?.color || '#a88770';
   svg.innerHTML = `
     <defs>
       <linearGradient id="trajGrad" x1="0" y1="0" x2="0" y2="1">
-        <stop offset="0%" stop-color="#ff8a3d" stop-opacity="0.30" />
-        <stop offset="100%" stop-color="#ff8a3d" stop-opacity="0.01" />
+        <stop offset="0%" stop-color="${activeColor}" stop-opacity="0.28" />
+        <stop offset="100%" stop-color="${activeColor}" stop-opacity="0.01" />
       </linearGradient>
     </defs>
     ${gridLines}
     ${zeroLine}
     <path d="${areaD}" fill="url(#trajGrad)" />
-    ${isBranch ? `<path d="${basePathD}" fill="none" stroke="#a88770" stroke-width="1.8" stroke-dasharray="5 5" opacity="0.85" />` : ''}
-    <path d="${activePathD}" fill="none" stroke="#ffa159" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
+    ${isBranch ? `<path d="${basePathD}" fill="none" stroke="${parentColor}" stroke-width="1.8" stroke-dasharray="5 5" opacity="0.72" />` : ''}
+    <path d="${activePathD}" fill="none" stroke="${activeColor}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
     ${yearTicks}
   `;
 
   wrap.replaceChildren(svg);
   legend.innerHTML = `
     <div class="legend-items">
-      <span class="legend-item"><i class="legend-swatch is-active"></i> ${escapeHtml(activeMeta.label)}</span>
-      ${isBranch ? `<span class="legend-item"><i class="legend-swatch is-baseline"></i> ${escapeHtml(parentMeta.label)}</span>` : ''}
+      <span class="legend-item"><i class="legend-swatch is-active" style="background:${activeColor}"></i> <strong>${escapeHtml(activeMeta.code || 'P0')}</strong> · ${escapeHtml(activeMeta.label)}</span>
+      ${isBranch ? `<span class="legend-item"><i class="legend-swatch is-baseline" style="border-top-color:${parentColor}"></i> <strong>${escapeHtml(parentMeta.code || 'P0')}</strong> · ${escapeHtml(parentMeta.label)}</span>` : ''}
     </div>
     <span>${activeChain[0].date} → ${activeChain[activeChain.length - 1].date}</span>
   `;
@@ -2181,16 +2319,17 @@ function fitTreeView({ animate = false } = {}) {
   }
 
   const axisOffset = 58;
-  const padX = 40;
+  const padX = 44;
   const padTop = 76;
   const padBottom = 68;
-  const contentW = Math.max(240, maxRight - minLeft);
+  // Leave room on the right for the colored branch ID badges (P0, P1, P1.1…) next to leaf nodes
+  const contentW = Math.max(240, (maxRight + 100) - minLeft);
   const contentH = Math.max(180, (maxBottom + axisOffset) - minTop);
   const scale = Math.min(
     1.15,
     Math.max(0.18, Math.min((vpW - padX * 2) / contentW, (vpH - padTop - padBottom) / contentH))
   );
-  const centerX = (minLeft + maxRight) / 2;
+  const centerX = (minLeft + maxRight + 100) / 2;
   const centerY = (minTop + maxBottom + axisOffset) / 2;
   const offsetY = (padTop - padBottom) / 2;
 
@@ -2465,6 +2604,37 @@ function renderTreeGraph({ fit = false, focusId = null } = {}) {
         ctx.fillText(formatNiceDate(date, { includeDay }), cx, axisY + 18 / scale);
       }
 
+      // Draw crisp color-coded branch ID badges (P0, P1, P1.1…) right beside each leaf node so IDs are effortless to spot
+      const liveIndex = buildTreeIndex();
+      const badgeFontSize = Math.min(36, Math.max(20, 14 / scale));
+      ctx.font = `700 ${badgeFontSize}px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      for (const leaf of getLeafPaths(liveIndex)) {
+        const box = boxes.get(leaf.leafNodeId);
+        if (!box) continue;
+        const text = leaf.code;
+        const textW = ctx.measureText(text).width;
+        const padH = 12 / scale;
+        const badgeW = textW + padH * 2;
+        const badgeH = badgeFontSize * 1.55;
+        const bx = box.right + 16 / scale;
+        const by = (box.top + box.bottom) / 2 - badgeH / 2;
+        const rad = badgeH / 2;
+        const [r, g, b] = hexToRgb(leaf.color);
+
+        ctx.beginPath();
+        ctx.roundRect(bx, by, badgeW, badgeH, rad);
+        ctx.fillStyle = `rgba(${r}, ${g}, ${b}, 0.18)`;
+        ctx.fill();
+        ctx.strokeStyle = leaf.color;
+        ctx.lineWidth = 1.8 / scale;
+        ctx.stroke();
+
+        ctx.fillStyle = '#fff6ee';
+        ctx.fillText(text, bx + badgeW / 2, (box.top + box.bottom) / 2 + 1 / scale);
+      }
+
       ctx.restore();
     });
   } else {
@@ -2489,8 +2659,9 @@ function renderTreeGraph({ fit = false, focusId = null } = {}) {
   for (const node of milestones) {
     const option = document.createElement('option');
     option.value = node.id;
-    const bLabel = index.branchMeta.get(node.branch_id === 'root' ? 'main' : node.branch_id)?.label || 'Original path';
-    option.textContent = `${bLabel} · ${formatNiceDate(node.date, { includeDay: true })}`;
+    const bMeta = index.branchMeta.get(node.branch_id === 'root' ? 'main' : node.branch_id);
+    const bCode = bMeta?.code || 'P0';
+    option.textContent = `${bCode} · ${formatNiceDate(node.date, { includeDay: true })}`;
     select.append(option);
   }
 
@@ -2597,7 +2768,9 @@ function renderInspector(node, { focusBranchInput = false } = {}) {
 
   const kicker = document.createElement('span');
   kicker.className = 'card-kicker';
-  kicker.textContent = formatNiceDate(node.date, { includeDay: true }).toUpperCase();
+  const nodeBranchMeta = index.branchMeta.get(node.branch_id === 'root' ? 'main' : node.branch_id);
+  const nodeBranchCode = nodeBranchMeta?.code || 'P0';
+  kicker.textContent = `${nodeBranchCode} · ${formatNiceDate(node.date, { includeDay: true }).toUpperCase()}`;
 
   const title = document.createElement('h2');
   title.textContent = milestoneTitle(node);
@@ -3329,6 +3502,8 @@ function renderResults(nodes, bundle = null) {
   state.activeBranchId = nodes.some(n => n.branch_id === 'main') ? 'main' : nodes[0].branch_id;
   state.selectedId = nodes[0].id;
   state.resultsView = 'timeline';
+  state.graphBuilder = { metricId: 'net_worth_chf', selectedBranchIds: [], zoom: null };
+  setSensitivityPanelOpen(false);
   setDrawerOpen(false);
   if (state.network) {
     state.graphNodes?.clear();
@@ -3567,4 +3742,643 @@ byId('download-run').addEventListener('click', () => {
   link.click();
   setTimeout(() => URL.revokeObjectURL(link.href), 1000);
   showToast('Run file saved. Check it with: scripts/reproduce.py <file>');
+});
+
+/* ==========================================================================
+   CUSTOM GRAPH STUDIO (Y-AXIS VARIABLE VS. TIME ACROSS LEAF BRANCHES)
+   ========================================================================== */
+
+const fmtPct1 = v => `${Number(v.toFixed(1))}%`;
+const fmtPts1 = v => `${Number(v.toFixed(1))} pts`;
+const fmtChfMo = v => `${money(v)}/mo`;
+const fmtChfSignedMo = v => `${moneySigned(v)}/mo`;
+
+const GRAPH_METRICS = [
+  // Balances & wealth
+  { id: 'net_worth_chf', group: 'Balances & wealth', label: 'Net worth', unit: 'CHF',
+    get: n => n.state?.net_worth_chf ?? 0, format: money, formatDiff: moneySigned, formatAxis: compactChf },
+  { id: 'real_net_worth_chf', group: 'Balances & wealth', label: 'Real net worth (inflation-adjusted)', unit: 'CHF',
+    get: n => n.state?.real_net_worth_chf ?? n.state?.net_worth_chf ?? 0, format: money, formatDiff: moneySigned, formatAxis: compactChf },
+  { id: 'cash_chf', group: 'Balances & wealth', label: 'Liquid cash', unit: 'CHF',
+    get: n => n.state?.cash_chf ?? 0, format: money, formatDiff: moneySigned, formatAxis: compactChf },
+  { id: 'real_cash_chf', group: 'Balances & wealth', label: 'Real cash (inflation-adjusted)', unit: 'CHF',
+    get: n => n.state?.real_cash_chf ?? n.state?.cash_chf ?? 0, format: money, formatDiff: moneySigned, formatAxis: compactChf },
+  { id: 'total_assets_chf', group: 'Balances & wealth', label: 'Total assets', unit: 'CHF',
+    get: n => n.state?.total_assets_chf ?? 0, format: money, formatDiff: moneySigned, formatAxis: compactChf },
+  { id: 'investment_value_chf', group: 'Balances & wealth', label: 'Investments', unit: 'CHF',
+    get: n => n.state?.risk_exposure?.investment_value_chf ?? 0, format: money, formatDiff: moneySigned, formatAxis: compactChf },
+  { id: 'total_debt_chf', group: 'Balances & wealth', label: 'Total debt', unit: 'CHF',
+    get: n => n.state?.total_debt_chf ?? 0, format: money, formatDiff: moneySigned, formatAxis: compactChf },
+
+  // Monthly cash flow (skip Month 0 opening snapshot where monthly flows are 0)
+  { id: 'income_chf', group: 'Monthly cash flow', label: 'Monthly income', unit: 'CHF/mo', skipMonthZero: true,
+    get: n => n.state?.cash_flow?.income_chf ?? 0, format: fmtChfMo, formatDiff: fmtChfSignedMo, formatAxis: compactChf },
+  { id: 'expenses_chf', group: 'Monthly cash flow', label: 'Monthly expenses', unit: 'CHF/mo', skipMonthZero: true,
+    get: n => n.state?.cash_flow?.expenses_chf ?? 0, format: fmtChfMo, formatDiff: fmtChfSignedMo, formatAxis: compactChf },
+  { id: 'operating_cash_flow_chf', group: 'Monthly cash flow', label: 'Operating cash flow', unit: 'CHF/mo', skipMonthZero: true,
+    get: n => n.state?.cash_flow?.operating_cash_flow_chf ?? 0, format: fmtChfMo, formatDiff: fmtChfSignedMo, formatAxis: compactChf },
+  { id: 'net_cash_flow_chf', group: 'Monthly cash flow', label: 'Net monthly cash flow', unit: 'CHF/mo', skipMonthZero: true,
+    get: n => n.state?.cash_flow?.net_cash_flow_chf ?? 0, format: fmtChfMo, formatDiff: fmtChfSignedMo, formatAxis: compactChf },
+  { id: 'investment_contribution_chf', group: 'Monthly cash flow', label: 'Monthly investment contribution', unit: 'CHF/mo', skipMonthZero: true,
+    get: n => n.state?.cash_flow?.investment_contribution_chf ?? 0, format: fmtChfMo, formatDiff: fmtChfSignedMo, formatAxis: compactChf },
+  { id: 'investment_return_chf', group: 'Monthly cash flow', label: 'Monthly investment return', unit: 'CHF/mo', skipMonthZero: true,
+    get: n => n.state?.cash_flow?.investment_return_chf ?? 0, format: fmtChfMo, formatDiff: fmtChfSignedMo, formatAxis: compactChf },
+  { id: 'debt_payments_chf', group: 'Monthly cash flow', label: 'Monthly debt payments', unit: 'CHF/mo', skipMonthZero: true,
+    get: n => n.state?.cash_flow?.debt_payments_chf ?? 0, format: fmtChfMo, formatDiff: fmtChfSignedMo, formatAxis: compactChf },
+  { id: 'debt_interest_chf', group: 'Monthly cash flow', label: 'Monthly debt interest', unit: 'CHF/mo', skipMonthZero: true,
+    get: n => n.state?.cash_flow?.debt_interest_chf ?? 0, format: fmtChfMo, formatDiff: fmtChfSignedMo, formatAxis: compactChf },
+  { id: 'one_off_costs_chf', group: 'Monthly cash flow', label: 'One-off costs', unit: 'CHF', skipMonthZero: true,
+    get: n => n.state?.cash_flow?.one_off_costs_chf ?? 0, format: money, formatDiff: moneySigned, formatAxis: compactChf },
+
+  // Risk & macro
+  { id: 'annual_volatility_chf', group: 'Risk & macro', label: 'Annual portfolio volatility', unit: 'CHF/yr',
+    get: n => n.state?.risk_exposure?.annual_volatility_chf ?? 0, format: v => `${money(v)}/yr`, formatDiff: v => `${moneySigned(v)}/yr`, formatAxis: compactChf },
+  { id: 'investment_share_of_assets', group: 'Risk & macro', label: 'Investment share of assets', unit: '%',
+    get: n => (n.state?.risk_exposure?.investment_share_of_assets ?? 0) * 100, format: fmtPct1, formatDiff: v => `${v >= 0 ? '+' : '−'}${Math.abs(v).toFixed(1)}%`, formatAxis: fmtPct1 },
+  { id: 'cpi', group: 'Risk & macro', label: 'Price index (CPI)', unit: 'pts',
+    get: n => n.state?.cpi ?? 100, format: fmtPts1, formatDiff: v => `${v >= 0 ? '+' : '−'}${Math.abs(v).toFixed(1)} pts`, formatAxis: v => String(Math.round(v)) },
+];
+
+const GRAPH_METRIC_MAP = new Map(GRAPH_METRICS.map(m => [m.id, m]));
+
+function getLeafPaths(index) {
+  const leaves = [];
+  for (const node of state.nodes.values()) {
+    const kids = index.childrenByParent.get(node.id);
+    if (kids && kids.length > 0) continue;
+
+    const chain = [];
+    let cur = node;
+    while (cur) {
+      chain.push(cur);
+      cur = cur.parent_id ? state.nodes.get(cur.parent_id) : null;
+    }
+    chain.reverse();
+
+    const bid = node.branch_id;
+    const meta = index.branchMeta.get(bid === 'root' ? 'main' : bid) || index.branchMeta.get(bid);
+    const label = meta?.label || (bid === 'main' || bid === 'root' ? 'Original path' : milestoneTitle(node));
+    const code = meta?.code || (bid === 'main' || bid === 'root' ? 'P0' : bid.slice(0, 6));
+    const color = meta?.color || BRANCH_PALETTE[0];
+
+    // Build readable decision trail for tooltips/accessibility
+    const seenBranches = [];
+    for (const step of chain) {
+      const sb = step.branch_id;
+      if (sb === 'root' || sb === 'main') continue;
+      if (seenBranches[seenBranches.length - 1] !== sb) seenBranches.push(sb);
+    }
+    const trail = seenBranches.length > 1
+      ? seenBranches.map(b => shortBranchLabel(index.branchMeta.get(b)?.label || b, 22)).join(' → ')
+      : label;
+
+    leaves.push({
+      id: bid,
+      leafNodeId: node.id,
+      code,
+      shortId: code,
+      color,
+      label,
+      trail,
+      chain,
+      tipNode: node,
+      forkMonth: meta?.forkMonth ?? 0,
+      isOriginal: bid === 'main' || bid === 'root',
+    });
+  }
+
+  leaves.sort((a, b) => {
+    if (a.isOriginal !== b.isOriginal) return a.isOriginal ? -1 : 1;
+    return a.code.localeCompare(b.code, undefined, { numeric: true });
+  });
+  return leaves;
+}
+
+function niceTicks(minVal, maxVal, targetCount = 5) {
+  const span = maxVal - minVal;
+  if (span <= 0) return { min: minVal - 1, max: maxVal + 1, ticks: [minVal - 1, minVal, maxVal + 1] };
+  const rawStep = span / Math.max(2, targetCount - 1);
+  const mag = Math.pow(10, Math.floor(Math.log10(rawStep)));
+  const norm = rawStep / mag;
+  const niceNorm = norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 2.5 ? 2.5 : norm <= 5 ? 5 : 10;
+  const step = niceNorm * mag;
+  const min = Math.floor(minVal / step) * step;
+  const max = Math.ceil(maxVal / step) * step;
+  const ticks = [];
+  for (let v = min; v <= max + step * 0.25; v += step) {
+    ticks.push(Math.abs(v) < step * 1e-6 ? 0 : Number(v.toFixed(6)));
+  }
+  return { min, max, ticks };
+}
+
+function populateGraphMetricSelect() {
+  const select = byId('graph-y-metric');
+  if (!select || select.options.length > 0) return;
+  const groups = new Map();
+  for (const metric of GRAPH_METRICS) {
+    if (!groups.has(metric.group)) {
+      const og = document.createElement('optgroup');
+      og.label = metric.group;
+      groups.set(metric.group, og);
+      select.append(og);
+    }
+    const opt = document.createElement('option');
+    opt.value = metric.id;
+    opt.textContent = `${metric.label} (${metric.unit})`;
+    groups.get(metric.group).append(opt);
+  }
+}
+
+function formatGraphAxisTick(metric, val, step) {
+  if (metric.formatAxis === compactChf) {
+    if (step < 1000) return money(val);
+    if (step < 5000 && Math.abs(val) >= 10_000 && Math.abs(val % 1000) > 1) {
+      const sign = val < 0 ? '−' : '';
+      return `${sign}CHF ${(Math.abs(val) / 1000).toFixed(1)}k`;
+    }
+  }
+  return metric.formatAxis(val);
+}
+
+function buildCustomGraphStage(config, leaves) {
+  const metric = GRAPH_METRIC_MAP.get(config.metricId) || GRAPH_METRICS[0];
+  const leafById = new Map(leaves.map(l => [l.id, l]));
+  const series = config.branchIds
+    .map(id => leafById.get(id))
+    .filter(Boolean)
+    .map(leaf => {
+      const pts = metric.skipMonthZero && leaf.chain.length > 1
+        ? leaf.chain.filter(n => n.month > 0)
+        : leaf.chain;
+      const byMonth = new Map();
+      for (const n of pts) byMonth.set(n.month, { node: n, value: Number(metric.get(n) || 0) });
+      return { ...leaf, pts, byMonth };
+    });
+
+  const W = 760;
+  const H = 310;
+  const padL = 86;
+  const padR = 24;
+  const padT = 18;
+  const padB = 34;
+  const innerW = W - padL - padR;
+  const innerH = H - padT - padB;
+
+  const svgNs = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(svgNs, 'svg');
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+
+  const stage = document.createElement('div');
+  stage.className = 'custom-graph-stage';
+
+  // Clean minimalistic empty graph state: crisp time axis + subtle horizontal guide lines + quiet prompt
+  if (!series.length) {
+    const sampleChain = leaves[0]?.chain || [];
+    const pts = metric.skipMonthZero && sampleChain.length > 1
+      ? sampleChain.filter(n => n.month > 0)
+      : sampleChain;
+    const xTickCount = Math.min(5, Math.max(2, pts.length));
+    const xTicksHtml = pts.length
+      ? Array.from({ length: xTickCount }, (_, idx) => {
+          const n = pts[Math.round((idx / Math.max(1, xTickCount - 1)) * (pts.length - 1))];
+          const x = (padL + (idx / Math.max(1, xTickCount - 1)) * innerW).toFixed(1);
+          const anchor = idx === 0 ? 'start' : idx === xTickCount - 1 ? 'end' : 'middle';
+          return `<line x1="${x}" y1="${H - padB}" x2="${x}" y2="${H - padB + 5}" stroke="rgba(176, 118, 78, 0.4)" stroke-width="1" />
+                  <text x="${x}" y="${H - 10}" text-anchor="${anchor}" fill="#a88e7c" font-size="11" font-family="DM Sans, sans-serif">${escapeHtml(formatNiceDate(n.date))}</text>`;
+        }).join('')
+      : '';
+
+    const gridLines = [0, 0.33, 0.66, 1].map(frac => {
+      const y = (padT + frac * innerH).toFixed(1);
+      return `<line x1="${padL}" y1="${y}" x2="${W - padR}" y2="${y}" stroke="rgba(110, 70, 48, 0.32)" stroke-width="1" stroke-dasharray="3 5" />`;
+    }).join('');
+
+    svg.innerHTML = `
+      ${gridLines}
+      <line x1="${padL}" y1="${padT}" x2="${padL}" y2="${H - padB}" stroke="rgba(176, 118, 78, 0.42)" stroke-width="1.1" />
+      <line x1="${padL}" y1="${H - padB}" x2="${W - padR}" y2="${H - padB}" stroke="rgba(176, 118, 78, 0.5)" stroke-width="1.2" />
+      <text x="${padL - 12}" y="${padT + 10}" text-anchor="end" fill="#a88e7c" font-size="11" font-family="DM Sans, sans-serif">${escapeHtml(metric.unit)}</text>
+      ${xTicksHtml}
+      <text x="${(padL + innerW / 2).toFixed(1)}" y="${(padT + innerH / 2 + 4).toFixed(1)}" text-anchor="middle" fill="#bfa490" font-size="13.5" font-family="DM Sans, sans-serif">Choose a branch above to plot ${escapeHtml(metric.label.toLowerCase())}</text>
+    `;
+    stage.append(svg);
+    return stage;
+  }
+
+  // Full available month span across selected branches
+  const allMonthsSet = new Set();
+  const dateByMonth = new Map();
+  for (const s of series) {
+    for (const n of s.pts) {
+      allMonthsSet.add(n.month);
+      if (!dateByMonth.has(n.month)) dateByMonth.set(n.month, n.date);
+    }
+  }
+  const allMonths = [...allMonthsSet].sort((a, b) => a - b);
+  const fullMinMonth = allMonths[0] ?? 0;
+  const fullMaxMonth = Math.max(fullMinMonth + 1, allMonths[allMonths.length - 1] ?? 1);
+
+  // Active X zoom window (if zoomed in, Y-axis auto-fits tightly to ONLY the visible window!)
+  const zoom = config.zoom;
+  const isZoomed = Boolean(zoom && zoom.minMonth != null && zoom.maxMonth != null && (zoom.minMonth > fullMinMonth || zoom.maxMonth < fullMaxMonth));
+  const minMonth = isZoomed ? Math.max(fullMinMonth, Math.min(fullMaxMonth - 2, zoom.minMonth)) : fullMinMonth;
+  const maxMonth = isZoomed ? Math.min(fullMaxMonth, Math.max(minMonth + 2, zoom.maxMonth)) : fullMaxMonth;
+  const visibleMonths = allMonths.filter(m => m >= minMonth && m <= maxMonth);
+  const activeMonths = visibleMonths.length ? visibleMonths : allMonths;
+
+  let rawMin = Infinity;
+  let rawMax = -Infinity;
+  for (const s of series) {
+    for (const m of activeMonths) {
+      const hit = s.byMonth.get(m);
+      if (!hit) continue;
+      if (hit.value < rawMin) rawMin = hit.value;
+      if (hit.value > rawMax) rawMax = hit.value;
+    }
+  }
+  if (!Number.isFinite(rawMin) || !Number.isFinite(rawMax)) { rawMin = 0; rawMax = 100; }
+  if (rawMin === rawMax) {
+    rawMin -= Math.max(10, Math.abs(rawMin) * 0.08);
+    rawMax += Math.max(10, Math.abs(rawMax) * 0.08);
+  } else {
+    const pad = (rawMax - rawMin) * 0.08;
+    rawMin -= pad;
+    rawMax += pad;
+  }
+  // Only anchor to 0 when data naturally comes close to zero (keeps close high-value lines clearly separated!)
+  if (!isZoomed && rawMin > 0 && rawMin < rawMax * 0.12 && metric.id !== 'cpi') rawMin = 0;
+  const { min: minVal, max: maxVal, ticks: yTicks } = niceTicks(rawMin, rawMax, 5);
+  const yStep = yTicks.length > 1 ? Math.abs(yTicks[1] - yTicks[0]) : Math.max(1, maxVal - minVal);
+
+  const xOf = m => padL + ((m - minMonth) / (maxMonth - minMonth)) * innerW;
+  const yOf = v => padT + innerH - ((v - minVal) / (maxVal - minVal)) * innerH;
+
+  // Minimalistic zoom bar right above the plot area
+  const zoomBar = document.createElement('div');
+  zoomBar.className = 'graph-zoom-bar';
+  const zoomHint = document.createElement('span');
+  zoomHint.className = 'graph-zoom-hint';
+  zoomHint.textContent = isZoomed
+    ? `Zoomed: ${formatNiceDate(dateByMonth.get(minMonth) || '')} → ${formatNiceDate(dateByMonth.get(maxMonth) || '')} · Double-click to reset`
+    : 'Drag across the chart to zoom in';
+
+  const zoomControls = document.createElement('div');
+  zoomControls.className = 'graph-zoom-controls';
+
+  const applyZoom = (nextMin, nextMax) => {
+    const clampedMin = Math.max(fullMinMonth, Math.round(nextMin));
+    const clampedMax = Math.min(fullMaxMonth, Math.round(nextMax));
+    if (clampedMin <= fullMinMonth && clampedMax >= fullMaxMonth) {
+      state.graphBuilder.zoom = null;
+    } else if (clampedMax - clampedMin >= 2) {
+      state.graphBuilder.zoom = { minMonth: clampedMin, maxMonth: clampedMax };
+    }
+    renderGraphStudio();
+  };
+
+  const zoomOutBtn = document.createElement('button');
+  zoomOutBtn.type = 'button';
+  zoomOutBtn.className = 'graph-zoom-btn';
+  zoomOutBtn.textContent = '−';
+  zoomOutBtn.title = 'Zoom out';
+  zoomOutBtn.disabled = !isZoomed;
+  zoomOutBtn.addEventListener('click', () => {
+    const span = maxMonth - minMonth;
+    const expand = Math.max(3, Math.round(span * 0.35));
+    applyZoom(minMonth - expand, maxMonth + expand);
+  });
+
+  const zoomInBtn = document.createElement('button');
+  zoomInBtn.type = 'button';
+  zoomInBtn.className = 'graph-zoom-btn';
+  zoomInBtn.textContent = '+';
+  zoomInBtn.title = 'Zoom in';
+  zoomInBtn.disabled = (maxMonth - minMonth) <= 3;
+  zoomInBtn.addEventListener('click', () => {
+    const span = maxMonth - minMonth;
+    if (span <= 3) return;
+    // When starting from full view, focus toward the diverging later part where branches separate
+    const shrink = Math.max(2, Math.round(span * 0.25));
+    const nextMin = !isZoomed ? Math.min(maxMonth - 3, minMonth + Math.round(span * 0.35)) : minMonth + shrink;
+    const nextMax = !isZoomed ? maxMonth : maxMonth - shrink;
+    applyZoom(nextMin, nextMax);
+  });
+
+  zoomControls.append(zoomOutBtn, zoomInBtn);
+  if (isZoomed) {
+    const resetBtn = document.createElement('button');
+    resetBtn.type = 'button';
+    resetBtn.className = 'graph-zoom-btn';
+    resetBtn.textContent = 'Reset';
+    resetBtn.addEventListener('click', () => {
+      state.graphBuilder.zoom = null;
+      renderGraphStudio();
+    });
+    zoomControls.append(resetBtn);
+  }
+  zoomBar.append(zoomHint, zoomControls);
+  stage.append(zoomBar);
+
+  const clipId = `graph-clip-${Math.random().toString(36).slice(2, 8)}`;
+
+  const gridHtml = yTicks.map(v => {
+    const y = yOf(v).toFixed(1);
+    return `<line x1="${padL}" y1="${y}" x2="${W - padR}" y2="${y}" stroke="rgba(110, 70, 48, 0.38)" stroke-width="1" />
+            <text x="${padL - 10}" y="${Number(y) + 4}" text-anchor="end" fill="#bfa490" font-size="11" font-family="DM Sans, sans-serif">${escapeHtml(formatGraphAxisTick(metric, v, yStep))}</text>`;
+  }).join('');
+
+  const zeroY = yOf(0);
+  const zeroHtml = minVal < 0 && maxVal > 0
+    ? `<line x1="${padL}" y1="${zeroY.toFixed(1)}" x2="${W - padR}" y2="${zeroY.toFixed(1)}" stroke="rgba(255, 127, 112, 0.55)" stroke-dasharray="5 5" stroke-width="1.3" />`
+    : '';
+
+  const xTickCount = Math.min(6, Math.max(2, activeMonths.length));
+  const xTickMonths = [];
+  for (let i = 0; i < xTickCount; i++) {
+    const idx = Math.round((i / (xTickCount - 1)) * (activeMonths.length - 1));
+    const m = activeMonths[idx];
+    if (xTickMonths[xTickMonths.length - 1] !== m) xTickMonths.push(m);
+  }
+  const xTicksHtml = xTickMonths.map((m, idx) => {
+    const x = xOf(m).toFixed(1);
+    const anchor = idx === 0 ? 'start' : idx === xTickMonths.length - 1 ? 'end' : 'middle';
+    const label = formatNiceDate(dateByMonth.get(m) || '');
+    return `<line x1="${x}" y1="${H - padB}" x2="${x}" y2="${H - padB + 5}" stroke="rgba(176, 118, 78, 0.45)" stroke-width="1" />
+            <text x="${x}" y="${H - 10}" text-anchor="${anchor}" fill="#bfa490" font-size="11" font-family="DM Sans, sans-serif">${escapeHtml(label)}</text>`;
+  }).join('');
+
+  // Crisp dark casing stroke behind each line keeps even very close curves visually sharp and separated
+  const pathsHtml = series.map(s => {
+    const d = s.pts.map((n, i) => `${i === 0 ? 'M' : 'L'}${xOf(n.month).toFixed(1)},${yOf(s.byMonth.get(n.month).value).toFixed(1)}`).join(' ');
+    const last = s.pts[s.pts.length - 1];
+    const lastX = xOf(last.month).toFixed(1);
+    const lastY = yOf(s.byMonth.get(last.month).value).toFixed(1);
+    const forkPt = s.forkMonth > 0 && s.byMonth.has(s.forkMonth) ? s.byMonth.get(s.forkMonth) : null;
+    const forkDot = forkPt
+      ? `<circle cx="${xOf(s.forkMonth).toFixed(1)}" cy="${yOf(forkPt.value).toFixed(1)}" r="3.8" fill="#261710" stroke="${s.color}" stroke-width="2" />`
+      : '';
+    return `
+      <path d="${d}" fill="none" stroke="#261710" stroke-width="4.4" stroke-opacity="0.72" stroke-linecap="round" stroke-linejoin="round" />
+      <path d="${d}" fill="none" stroke="${s.color}" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" />
+      ${forkDot}
+      <circle cx="${lastX}" cy="${lastY}" r="3.8" fill="${s.color}" stroke="#261710" stroke-width="1.6" />
+    `;
+  }).join('');
+
+  svg.innerHTML = `
+    <defs>
+      <clipPath id="${clipId}">
+        <rect x="${padL - 4}" y="${padT - 6}" width="${innerW + 8}" height="${innerH + 12}" />
+      </clipPath>
+    </defs>
+    ${gridHtml}
+    ${zeroHtml}
+    <line x1="${padL}" y1="${padT}" x2="${padL}" y2="${H - padB}" stroke="rgba(176, 118, 78, 0.42)" stroke-width="1.1" />
+    <line x1="${padL}" y1="${H - padB}" x2="${W - padR}" y2="${H - padB}" stroke="rgba(176, 118, 78, 0.55)" stroke-width="1.2" />
+    ${xTicksHtml}
+    <g clip-path="url(#${clipId})">${pathsHtml}</g>
+    <rect data-interactive="true" class="graph-brush-rect" x="0" y="${padT}" width="0" height="${innerH}" fill="rgba(255, 164, 94, 0.16)" stroke="rgba(255, 164, 94, 0.72)" stroke-width="1.2" style="display:none;pointer-events:none;" />
+    <g data-interactive="true" class="graph-crosshair-layer" style="display:none;">
+      <line class="graph-crosshair-line" x1="0" y1="${padT}" x2="0" y2="${H - padB}" stroke="rgba(255, 224, 192, 0.5)" stroke-dasharray="4 4" stroke-width="1.2" />
+      <g class="graph-crosshair-dots"></g>
+    </g>
+    <rect data-interactive="true" class="graph-hit-rect" x="${padL}" y="${padT}" width="${innerW}" height="${innerH}" fill="transparent" style="cursor:crosshair;" />
+  `;
+
+  const tooltip = document.createElement('div');
+  tooltip.className = 'custom-graph-tooltip';
+  tooltip.hidden = true;
+  stage.append(svg, tooltip);
+
+  const crosshairLayer = svg.querySelector('.graph-crosshair-layer');
+  const crosshairLine = svg.querySelector('.graph-crosshair-line');
+  const crosshairDots = svg.querySelector('.graph-crosshair-dots');
+  const brushRect = svg.querySelector('.graph-brush-rect');
+  const hitRect = svg.querySelector('.graph-hit-rect');
+
+  const clientXToSvgX = clientX => {
+    const rect = svg.getBoundingClientRect();
+    if (!rect.width) return padL;
+    return Math.max(padL, Math.min(W - padR, ((clientX - rect.left) / rect.width) * W));
+  };
+
+  const updateHover = clientX => {
+    const svgX = clientXToSvgX(clientX);
+    const frac = Math.max(0, Math.min(1, (svgX - padL) / innerW));
+    const approxMonth = minMonth + frac * (maxMonth - minMonth);
+    let nearest = activeMonths[0];
+    let bestDist = Infinity;
+    for (const m of activeMonths) {
+      const dist = Math.abs(m - approxMonth);
+      if (dist < bestDist) { bestDist = dist; nearest = m; }
+    }
+
+    const cx = xOf(nearest);
+    crosshairLayer.style.display = '';
+    crosshairLine.setAttribute('x1', cx.toFixed(1));
+    crosshairLine.setAttribute('x2', cx.toFixed(1));
+
+    const entries = [];
+    const dotsMarkup = [];
+    for (const s of series) {
+      const hit = s.byMonth.get(nearest);
+      if (!hit) continue;
+      const cy = yOf(hit.value);
+      dotsMarkup.push(`<circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="5" fill="${s.color}" stroke="#fff6ee" stroke-width="2" />`);
+      entries.push({ series: s, value: hit.value });
+    }
+    crosshairDots.innerHTML = dotsMarkup.join('');
+
+    const sorted = [...entries].sort((a, b) => b.value - a.value);
+    let diffHtml = '';
+    if (entries.length === 2) {
+      const spread = entries[1].value - entries[0].value;
+      diffHtml = `<div class="custom-graph-tooltip-diff">${escapeHtml(entries[1].series.code)} vs. ${escapeHtml(entries[0].series.code)}: <strong>${escapeHtml(metric.formatDiff(spread))}</strong></div>`;
+    } else if (sorted.length > 2) {
+      const spread = sorted[0].value - sorted[sorted.length - 1].value;
+      diffHtml = `<div class="custom-graph-tooltip-diff">Spread (${escapeHtml(sorted[0].series.code)} vs. ${escapeHtml(sorted[sorted.length - 1].series.code)}): <strong>${escapeHtml(metric.formatDiff(spread))}</strong></div>`;
+    }
+
+    tooltip.innerHTML = `
+      <div class="custom-graph-tooltip-date">${escapeHtml(formatNiceDate(dateByMonth.get(nearest) || '', { includeDay: true }))}</div>
+      ${sorted.map(e => `
+        <div class="custom-graph-tooltip-row">
+          <span class="custom-graph-tooltip-name"><i style="background:${e.series.color}"></i><strong>${escapeHtml(e.series.code)}</strong></span>
+          <span class="custom-graph-tooltip-val">${escapeHtml(metric.format(e.value))}</span>
+        </div>
+      `).join('')}
+      ${diffHtml}
+    `;
+    tooltip.hidden = false;
+    const pctX = (cx / W) * 100;
+    if (pctX > 62) {
+      tooltip.style.left = 'auto';
+      tooltip.style.right = `${Math.max(2, 100 - pctX + 2)}%`;
+    } else {
+      tooltip.style.right = 'auto';
+      tooltip.style.left = `${Math.min(72, pctX + 2)}%`;
+    }
+  };
+
+  let dragStartX = null;
+  hitRect.addEventListener('pointerdown', event => {
+    if (event.button !== 0) return;
+    dragStartX = clientXToSvgX(event.clientX);
+    hitRect.setPointerCapture(event.pointerId);
+    crosshairLayer.style.display = 'none';
+    tooltip.hidden = true;
+    brushRect.style.display = '';
+    brushRect.setAttribute('x', dragStartX.toFixed(1));
+    brushRect.setAttribute('width', '0');
+  });
+
+  hitRect.addEventListener('pointermove', event => {
+    if (dragStartX !== null) {
+      const curX = clientXToSvgX(event.clientX);
+      const x1 = Math.min(dragStartX, curX);
+      const w = Math.abs(curX - dragStartX);
+      brushRect.setAttribute('x', x1.toFixed(1));
+      brushRect.setAttribute('width', w.toFixed(1));
+      return;
+    }
+    updateHover(event.clientX);
+  });
+
+  const finishDrag = event => {
+    if (dragStartX === null) return;
+    const endX = clientXToSvgX(event.clientX);
+    const startX = dragStartX;
+    dragStartX = null;
+    brushRect.style.display = 'none';
+    if (Math.abs(endX - startX) > 14) {
+      const f1 = Math.max(0, Math.min(1, (Math.min(startX, endX) - padL) / innerW));
+      const f2 = Math.max(0, Math.min(1, (Math.max(startX, endX) - padL) / innerW));
+      const m1 = Math.floor(minMonth + f1 * (maxMonth - minMonth));
+      const m2 = Math.ceil(minMonth + f2 * (maxMonth - minMonth));
+      if (m2 - m1 >= 2) applyZoom(m1, m2);
+    }
+  };
+
+  hitRect.addEventListener('pointerup', finishDrag);
+  hitRect.addEventListener('pointercancel', () => {
+    dragStartX = null;
+    brushRect.style.display = 'none';
+  });
+  hitRect.addEventListener('pointerleave', () => {
+    if (dragStartX === null) {
+      crosshairLayer.style.display = 'none';
+      tooltip.hidden = true;
+    }
+  });
+  hitRect.addEventListener('dblclick', () => {
+    if (isZoomed) {
+      state.graphBuilder.zoom = null;
+      renderGraphStudio();
+    }
+  });
+
+  return stage;
+}
+
+function renderGraphStudio(index = buildTreeIndex()) {
+  if (!state.nodes.size) return;
+  populateGraphMetricSelect();
+  const leaves = getLeafPaths(index);
+  const valid = new Set(leaves.map(l => l.id));
+  state.graphBuilder.selectedBranchIds = state.graphBuilder.selectedBranchIds.filter(id => valid.has(id));
+
+  const metricSelect = byId('graph-y-metric');
+  if (metricSelect) metricSelect.value = state.graphBuilder.metricId;
+
+  const selectedSet = new Set(state.graphBuilder.selectedBranchIds);
+  const branchSelect = byId('graph-branch-select');
+  if (branchSelect) {
+    branchSelect.replaceChildren();
+    const available = leaves.filter(l => !selectedSet.has(l.id));
+    const placeholder = document.createElement('option');
+    placeholder.value = '';
+    placeholder.textContent = available.length ? 'Select a branch…' : 'All branches added';
+    branchSelect.append(placeholder);
+    for (const leaf of available) {
+      const opt = document.createElement('option');
+      opt.value = leaf.id;
+      opt.textContent = leaf.code;
+      branchSelect.append(opt);
+    }
+    branchSelect.disabled = available.length === 0;
+  }
+
+  const clearBtn = byId('graph-clear-all');
+  if (clearBtn) clearBtn.hidden = state.graphBuilder.selectedBranchIds.length === 0;
+
+  const chipsWrap = byId('graph-selected-branches');
+  if (chipsWrap) {
+    chipsWrap.replaceChildren();
+    chipsWrap.hidden = state.graphBuilder.selectedBranchIds.length === 0;
+    const leafById = new Map(leaves.map(l => [l.id, l]));
+    for (const id of state.graphBuilder.selectedBranchIds) {
+      const leaf = leafById.get(id);
+      if (!leaf) continue;
+      const chip = document.createElement('span');
+      chip.className = 'graph-branch-chip';
+      chip.style.setProperty('--chip-color', leaf.color);
+      chip.title = leaf.trail;
+      chip.innerHTML = `
+        <span class="graph-branch-swatch" aria-hidden="true"></span>
+        <span class="graph-branch-code">${escapeHtml(leaf.code)}</span>
+      `;
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.className = 'graph-branch-remove';
+      remove.setAttribute('aria-label', `Remove ${leaf.trail}`);
+      remove.textContent = '×';
+      remove.addEventListener('click', () => {
+        state.graphBuilder.selectedBranchIds = state.graphBuilder.selectedBranchIds.filter(item => item !== leaf.id);
+        renderGraphStudio();
+      });
+      chip.append(remove);
+      chipsWrap.append(chip);
+    }
+  }
+
+  const previewSlot = byId('graph-preview-slot');
+  if (previewSlot) {
+    previewSlot.replaceChildren(
+      buildCustomGraphStage(
+        { metricId: state.graphBuilder.metricId, branchIds: state.graphBuilder.selectedBranchIds, zoom: state.graphBuilder.zoom },
+        leaves
+      )
+    );
+  }
+}
+
+byId('toggle-sensitivity-panel')?.addEventListener('click', () => {
+  const next = !state.sensitivityOpen;
+  setSensitivityPanelOpen(next);
+  if (next) {
+    requestAnimationFrame(() => {
+      byId('path-report-panel')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    });
+  }
+});
+
+byId('graph-y-metric')?.addEventListener('change', event => {
+  state.graphBuilder.metricId = event.target.value;
+  renderGraphStudio();
+});
+
+byId('graph-branch-select')?.addEventListener('change', event => {
+  const id = event.target.value;
+  if (!id) return;
+  if (!state.graphBuilder.selectedBranchIds.includes(id)) {
+    state.graphBuilder.selectedBranchIds.push(id);
+  }
+  renderGraphStudio();
+});
+
+byId('graph-clear-all')?.addEventListener('click', () => {
+  state.graphBuilder.selectedBranchIds = [];
+  state.graphBuilder.zoom = null;
+  renderGraphStudio();
 });

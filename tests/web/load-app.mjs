@@ -5,8 +5,9 @@ import vm from 'node:vm';
 
 const EXPORTS = [
   'state', 'branchNodeIds', 'originalPathRemovals', 'isOriginalBranch', 'deleteBranch', 'buildRunFile',
-  'buildTreeIndex', 'getPathMilestones', 'nodeHealth', 'formatVariable', 'milestoneTitle', 'money',
-  'moneySigned', 'compactChf', 'escapeHtml', 'variableToDisplay', 'parseVariableInput', 'renderTuning',
+  'buildTreeIndex', 'getPathMilestones', 'getLeafPaths', 'niceTicks', 'GRAPH_METRICS', 'nodeHealth',
+  'formatVariable', 'milestoneTitle', 'money', 'moneySigned', 'compactChf', 'escapeHtml',
+  'variableToDisplay', 'parseVariableInput', 'renderTuning',
 ];
 
 // An object that accepts any property access, assignment or call, standing in for DOM elements.

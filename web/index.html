@@ -147,6 +147,7 @@
                 <h2>Where this path <em>leads.</em></h2>
               </div>
               <div class="summary-head-actions">
+                <button class="ghost-button" id="toggle-sensitivity-panel" type="button" aria-expanded="false">Sensitivity & checks</button>
                 <button class="ghost-button" id="download-run" type="button" title="Save every input and result of this run so it can be replayed exactly with scripts/reproduce.py">Download run file <span aria-hidden="true">⤓</span></button>
                 <button class="text-button" id="back-to-top" type="button">↑ Back to top</button>
               </div>
@@ -165,6 +166,39 @@
                 <div class="trajectory-chart-wrap" id="trajectory-chart"></div>
                 <div class="trajectory-legend" id="trajectory-legend"></div>
               </div>
+            </div>
+
+            <!-- Full-width Sensitivity & Model Checks Panel (opens on demand) -->
+            <div id="path-report-panel" class="path-report-panel" aria-live="polite" hidden></div>
+
+            <!-- Minimalistic Custom Comparison Graph (always visible, starts empty) -->
+            <div id="graph-studio" class="graph-studio">
+              <div class="graph-studio-head">
+                <div>
+                  <span class="card-kicker">CUSTOM GRAPH</span>
+                  <h3>Compare branches over time</h3>
+                </div>
+                <button type="button" class="text-button graph-quick-btn" id="graph-clear-all" hidden>Clear graph</button>
+              </div>
+
+              <div class="graph-controls">
+                <div class="graph-control">
+                  <label for="graph-y-metric">Y-axis</label>
+                  <div class="select-wrap">
+                    <select id="graph-y-metric"></select>
+                  </div>
+                </div>
+
+                <div class="graph-control">
+                  <label for="graph-branch-select">Add branch</label>
+                  <div class="select-wrap">
+                    <select id="graph-branch-select"></select>
+                  </div>
+                </div>
+              </div>
+
+              <div class="graph-selected-chips" id="graph-selected-branches" aria-label="Branches on graph" hidden></div>
+              <div id="graph-preview-slot" class="graph-preview-slot"></div>
             </div>
           </section>
 
