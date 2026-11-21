@@ -2138,7 +2138,8 @@ code {
 @keyframes confirm-in { from { opacity: 0; transform: translateY(8px) scale(0.96); } to { opacity: 1; transform: none; } }
 @keyframes confirm-fade { from { opacity: 0; } to { opacity: 1; } }
 
-#toggle-sensitivity-panel[aria-expanded="true"] {
+#toggle-sensitivity-panel[aria-expanded="true"],
+.recaps-toggle[aria-pressed="true"] {
   border-color: var(--accent-bright);
   background: rgba(255, 138, 61, 0.16);
   color: var(--text-strong);
@@ -3262,7 +3263,8 @@ html[data-theme="light"] .tree-key-recap {
 }
 
 html[data-theme="light"] #toggle-paths-panel[aria-expanded="true"],
-html[data-theme="light"] #toggle-sensitivity-panel[aria-expanded="true"] {
+html[data-theme="light"] #toggle-sensitivity-panel[aria-expanded="true"],
+html[data-theme="light"] .recaps-toggle[aria-pressed="true"] {
   border-color: #141412;
   background: #141412;
   color: #ffffff;

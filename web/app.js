@@ -37,6 +37,7 @@ const state = {
   treeHoverId: null,
   treeRenderData: null,
   sensitivityOpen: false,
+  hideRecaps: false,
   graphBuilder: { metricId: 'net_worth_chf', selectedBranchIds: [], zoom: null },
   theme: 'dark',
   run: null, // inputs needed to replay this run exactly (see financial_twin/reproduce.py)
@@ -1353,26 +1354,27 @@ function buildMilestoneProse(node, prevNode) {
   return parts.join(' ');
 }
 
-function getPathMilestones(chain, index) {
+function getPathMilestones(chain, index, { includeRecaps = !state.hideRecaps } = {}) {
   if (!chain.length) return [];
   const tip = chain[chain.length - 1];
 
   return chain.filter(node => {
     if (node.month === 0 || node.id === tip.id) return true;
-    if (node.month % 6 === 0) return true;
-    if (index.forkNodeIds.has(node.id)) return true;
     if (node.event_summary && node.event_summary !== 'Monthly update') return true;
     const parent = node.parent_id ? state.nodes.get(node.parent_id) : null;
     if (parent && parent.branch_id !== node.branch_id) return true;
+    if (!includeRecaps) return false;
+    if (node.month % 6 === 0) return true;
+    if (index.forkNodeIds.has(node.id)) return true;
     return false;
   });
 }
 
-function getAllGraphMilestones(index) {
+function getAllGraphMilestones(index, options) {
   const result = [];
   const seen = new Set();
   for (const bid of index.branchIds) {
-    for (const node of getPathMilestones(index.branchMeta.get(bid).chain, index)) {
+    for (const node of getPathMilestones(index.branchMeta.get(bid).chain, index, options)) {
       if (!seen.has(node.id)) {
         seen.add(node.id);
         result.push(node);
@@ -1380,6 +1382,41 @@ function getAllGraphMilestones(index) {
     }
   }
   return result;
+}
+
+function setHideRecaps(hide) {
+  state.hideRecaps = Boolean(hide);
+  for (const btn of document.querySelectorAll('.recaps-toggle')) {
+    btn.setAttribute('aria-pressed', String(state.hideRecaps));
+    btn.textContent = state.hideRecaps ? 'Show recaps' : 'Hide recaps';
+    btn.title = state.hideRecaps
+      ? 'Show periodic recap points again'
+      : 'Hide periodic recap points, leaving only starting points, events and endpoints';
+  }
+  if (!state.nodes.size || state.stage !== 'results') return;
+  if (state.resultsView === 'tree') {
+    renderTreeGraph({ fit: true });
+    if (state.selectedId && state.drawerOpen) {
+      const selected = state.nodes.get(state.selectedId);
+      if (selected) renderInspector(selected);
+    }
+  } else {
+    const index = buildTreeIndex();
+    const activeMeta = index.branchMeta.get(state.activeBranchId) || index.branchMeta.get(index.branchIds[0]);
+    if (activeMeta) {
+      const milestones = getPathMilestones(activeMeta.chain, index);
+      if (state.selectedId && !milestones.some(n => n.id === state.selectedId)) {
+        const curMonth = state.nodes.get(state.selectedId)?.month ?? 0;
+        const fallback = [...milestones].reverse().find(n => n.month <= curMonth) || milestones[0];
+        if (fallback) state.selectedId = fallback.id;
+      }
+    }
+    renderTimelineView();
+    if (state.drawerOpen && state.selectedId) {
+      const selected = state.nodes.get(state.selectedId);
+      if (selected) renderInspector(selected);
+    }
+  }
 }
 
 /* ==========================================================================
@@ -1741,11 +1778,30 @@ function renderVerticalTimeline(milestones, activeMeta, index, layout) {
   list.replaceChildren();
 
   const isBranch = activeMeta.id !== 'main' && activeMeta.id !== 'root';
+  const activeChainSet = new Set(activeMeta.chain.map(n => n.id));
+  const chainPos = new Map(activeMeta.chain.map((n, i) => [n.id, i]));
   state.spineNodesMeta = [];
 
   milestones.forEach((node, idx) => {
     const prevMilestone = idx > 0 ? milestones[idx - 1] : null;
-    const directChildren = index.childrenByParent.get(node.id) || [];
+    const nextMilestone = idx + 1 < milestones.length ? milestones[idx + 1] : null;
+    // Collect branches diverging at this milestone OR along hidden recap months before the next visible milestone
+    const startPos = chainPos.get(node.id);
+    const endPos = nextMilestone ? chainPos.get(nextMilestone.id) : activeMeta.chain.length;
+    const seenForkBranches = new Set();
+    const directChildren = [];
+    if (startPos !== undefined) {
+      for (let pos = startPos; pos < endPos; pos++) {
+        const step = activeMeta.chain[pos];
+        const stepKids = index.childrenByParent.get(step.id) || [];
+        if (stepKids.length <= 1) continue;
+        for (const child of stepKids) {
+          if (seenForkBranches.has(child.branch_id)) continue;
+          seenForkBranches.add(child.branch_id);
+          directChildren.push(child);
+        }
+      }
+    }
     const isFork = directChildren.length > 1;
     const isShortfall = node.state.cash_chf < 0;
     const isSelected = node.id === state.selectedId;
@@ -1879,12 +1935,12 @@ function renderVerticalTimeline(milestones, activeMeta, index, layout) {
       const destList = document.createElement('div');
       destList.className = 'fork-destinations';
 
-      const currentForkChild = directChildren.find(c => activeMeta.chain.some(n => n.id === c.id));
+      const currentForkChild = directChildren.find(c => activeChainSet.has(c.id));
       const activeSwapHere = state.branchSwap?.forkNodeId === node.id ? state.branchSwap : null;
       // Place Current path on top so switching visibly FLIP-swaps the chosen branch up into the lead slot!
       const orderedChildren = [...directChildren].sort((a, b) => {
-        const aCur = activeMeta.chain.some(n => n.id === a.id);
-        const bCur = activeMeta.chain.some(n => n.id === b.id);
+        const aCur = activeChainSet.has(a.id);
+        const bCur = activeChainSet.has(b.id);
         if (aCur !== bCur) return aCur ? -1 : 1;
         return 0;
       });
@@ -1892,13 +1948,15 @@ function renderVerticalTimeline(milestones, activeMeta, index, layout) {
       for (const child of orderedChildren) {
         const bMeta = index.branchMeta.get(child.branch_id);
         if (!bMeta) continue;
-        const isCurrent = activeMeta.chain.some(n => n.id === child.id);
+        const isCurrent = activeChainSet.has(child.id);
         const destColor = layout.branchColors.get(child.branch_id) || getBranchPalette()[0];
         const tipWorth = bMeta.tipNode.state.net_worth_chf;
         const isContinuingHere = child.branch_id === node.branch_id || (node.branch_id === 'root' && child.branch_id === 'main');
         const { parentMeta, parentNode } = isContinuingHere
           ? { parentMeta: null, parentNode: null }
           : getParentComparison(bMeta.id, bMeta.tipNode.month, index);
+        const splitOrigin = child.parent_id && child.parent_id !== node.id ? state.nodes.get(child.parent_id) : null;
+        const splitNote = splitOrigin && !isCurrent ? `Splits ${formatNiceDate(splitOrigin.date)} · ` : '';
         const diffNote = parentMeta && parentNode
           ? ` · ${moneySigned(tipWorth - parentNode.state.net_worth_chf)} vs. ${shortBranchLabel(parentMeta.label)}`
           : '';
@@ -1915,7 +1973,7 @@ function renderVerticalTimeline(milestones, activeMeta, index, layout) {
             <span class="fork-dest-orb" aria-hidden="true"></span>
             <span>
               <span class="fork-dest-name"><span class="branch-code-pill" style="--pill-color:${destColor}">${escapeHtml(bMeta.code || 'P0')}</span>${escapeHtml(bMeta.label)}</span>
-              <span class="fork-dest-sub">Ends at ${escapeHtml(money(tipWorth))}${escapeHtml(diffNote)}</span>
+              <span class="fork-dest-sub">${escapeHtml(splitNote)}Ends at ${escapeHtml(money(tipWorth))}${escapeHtml(diffNote)}</span>
             </span>
           </span>
           <span class="fork-dest-action">${isCurrent ? 'Current path' : 'Follow →'}</span>
@@ -4292,6 +4350,9 @@ document.addEventListener('visibilitychange', () => {
 });
 
 byId('range-toggle')?.addEventListener('click', () => setRangeVisible(!state.showRange));
+for (const btn of document.querySelectorAll('.recaps-toggle')) {
+  btn.addEventListener('click', () => setHideRecaps(!state.hideRecaps));
+}
 byId('theme-toggle')?.addEventListener('click', () => setTheme(isLightTheme() ? 'dark' : 'light'));
 initTheme();
 fetch('/api/branch/presets').then(response => response.json()).then(data => { state.presets = data.presets || []; }).catch(() => {});

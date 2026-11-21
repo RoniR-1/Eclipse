@@ -5,7 +5,7 @@ import vm from 'node:vm';
 
 const EXPORTS = [
   'state', 'branchNodeIds', 'originalPathRemovals', 'isOriginalBranch', 'deleteBranch', 'buildRunFile',
-  'buildTreeIndex', 'getPathMilestones', 'getLeafPaths', 'niceTicks', 'GRAPH_METRICS', 'nodeHealth',
+  'buildTreeIndex', 'getPathMilestones', 'getAllGraphMilestones', 'setHideRecaps', 'getLeafPaths', 'niceTicks', 'GRAPH_METRICS', 'nodeHealth',
   'formatVariable', 'milestoneTitle', 'money', 'moneySigned', 'compactChf', 'escapeHtml',
   'variableToDisplay', 'parseVariableInput', 'renderTuning',
   'setCurrency', 'localizeAmounts', 'currencyRateText', 'conversionText', 'chfToDisplay', 'displayToChf',
