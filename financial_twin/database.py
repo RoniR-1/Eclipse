@@ -34,6 +34,8 @@ def initialize_database(database_url, data_root=ROOT):
                 cursor.execute(sql.SQL("SELECT EXISTS (SELECT 1 FROM {} LIMIT 1)").format(sql.Identifier(name)))
                 if cursor.fetchone()[0]:
                     return False
+            if not Path(data_root).exists():
+                return False
             for name, relative_path, _ in TABLES:
                 path = Path(data_root) / relative_path
                 cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = %s ORDER BY ordinal_position", (name,))
