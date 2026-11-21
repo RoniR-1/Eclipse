@@ -43,89 +43,77 @@
 
     <main>
       <!-- STAGE 1: INTAKE -->
-      <section id="intake" class="hero">
-        <div class="hero-copy">
-          <div class="eyebrow"><span></span> A little clarity for what's next</div>
-          <h1>Meet your<br><em>financial future.</em></h1>
-          <p class="hero-description">
-            Big decisions deserve a clearer picture. Tell your AI Financial Twin where you are and where you want to go, then explore how your finances could evolve over time.
-          </p>
+      <section id="intake" class="intake-stage">
+        <div class="hero">
+          <div class="hero-copy">
+            <div class="eyebrow"><span></span> A little clarity for what's next</div>
+            <h1>Meet your<br><em>financial future.</em></h1>
+            <p class="hero-description">
+              Big decisions deserve a clearer picture. Tell your AI Financial Twin where you are and where you want to go, then explore how your finances could evolve over time.
+            </p>
+          </div>
+
+          <div class="intake-card">
+            <div class="card-top"><span class="card-kicker">YOUR STARTING POINT</span></div>
+            <h2>What’s on your mind?</h2>
+            <p>Use a fictional household. Include take-home pay, living costs and the decision you want to compare.</p>
+
+            <form id="intake-form">
+              <label for="statement">Your financial story</label>
+              <textarea id="statement" name="statement" required minlength="10" placeholder="I have CHF 15,000 saved and earn CHF 5,000 a month. I’m thinking about going back to school in two years and want to understand what that could mean for my savings..."></textarea>
+
+              <div class="preset-chips">
+                <button type="button" class="preset-chip" data-years="5" data-story="I'm Alexia, a student in Lausanne with CHF 8,000 in cash. I'm deciding whether to start working right away earning CHF 4,800 net per month with CHF 2,400 in monthly expenses, or spend two years on a Master's degree costing CHF 8,000 per year while working part-time for CHF 1,500 a month before earning CHF 6,500 net afterwards.">Alexia · Master's vs. Work</button>
+                <button type="button" class="preset-chip" data-years="5" data-story="I live in Zurich with CHF 85,000 saved in cash and CHF 40,000 in ETFs. I earn CHF 7,600 net per month and spend CHF 4,300. I want to see how my finances evolve over 5 years and explore buying an apartment in 2 years.">Buying a flat</button>
+                <button type="button" class="preset-chip" data-years="5" data-story="I have CHF 32,000 in savings, CHF 12,000 left on a student loan at 3% paying CHF 350/month, earn CHF 6,200 net and spend CHF 3,900 monthly. I'm thinking about taking a 1-year sabbatical or going part-time.">Sabbatical</button>
+              </div>
+
+              <div class="form-bottom">
+                <div class="time-field">
+                  <label for="years">Look ahead</label>
+                  <div class="select-wrap">
+                    <select id="years" name="years">
+                      <option value="5" selected>5 years</option>
+                      <option value="10">10 years</option>
+                      <option value="20">20 years</option>
+                    </select>
+                  </div>
+                </div>
+                <button class="primary-button" id="extract-button" type="submit">
+                  <span class="btn-label">Explore my scenario</span>
+                  <span class="btn-icon" aria-hidden="true">✳</span>
+                </button>
+              </div>
+              <p class="form-error" id="intake-error" role="alert"></p>
+            </form>
+          </div>
         </div>
 
-        <div class="intake-card">
-          <div class="card-top"><span class="card-kicker">YOUR STARTING POINT</span></div>
-          <h2>What’s on your mind?</h2>
-          <p>Use a fictional household. Include take-home pay, living costs and the decision you want to compare.</p>
-
-          <form id="intake-form">
-            <label for="statement">Your financial story</label>
-            <textarea id="statement" name="statement" required minlength="10" placeholder="I have CHF 15,000 saved and earn CHF 5,000 a month. I’m thinking about going back to school in two years and want to understand what that could mean for my savings..."></textarea>
-
-            <div class="preset-chips">
-              <button type="button" class="preset-chip" data-years="5" data-story="I'm Alexia, a student in Lausanne with CHF 8,000 in cash. I'm deciding whether to start working right away earning CHF 4,800 net per month with CHF 2,400 in monthly expenses, or spend two years on a Master's degree costing CHF 8,000 per year while working part-time for CHF 1,500 a month before earning CHF 6,500 net afterwards.">Alexia · Master's vs. Work</button>
-              <button type="button" class="preset-chip" data-years="5" data-story="I live in Zurich with CHF 85,000 saved in cash and CHF 40,000 in ETFs. I earn CHF 7,600 net per month and spend CHF 4,300. I want to see how my finances evolve over 5 years and explore buying an apartment in 2 years.">Buying a flat</button>
-              <button type="button" class="preset-chip" data-years="5" data-story="I have CHF 32,000 in savings, CHF 12,000 left on a student loan at 3% paying CHF 350/month, earn CHF 6,200 net and spend CHF 3,900 monthly. I'm thinking about taking a 1-year sabbatical or going part-time.">Sabbatical</button>
+        <div class="intake-faq" aria-label="Methodology and privacy">
+          <div class="intake-faq-head">
+            <div>
+              <span class="card-kicker">ABOUT &amp; METHODOLOGY</span>
+              <h2>Assumptions &amp; privacy</h2>
             </div>
+          </div>
 
-            <div class="form-bottom">
-              <div class="time-field">
-                <label for="years">Look ahead</label>
-                <div class="select-wrap">
-                  <select id="years" name="years">
-                    <option value="5" selected>5 years</option>
-                    <option value="10">10 years</option>
-                    <option value="20">20 years</option>
-                  </select>
-                </div>
+          <div class="intake-faq-grid">
+            <details class="privacy-details faq-item">
+              <summary>How your data is used</summary>
+              <div class="faq-body">
+                <p>Free-text extraction sends the story to the configured AI provider. A branch proposal sends the event description and selected financial details. A named public milestone may trigger a provider search. Provider retention depends on the account and service used.</p>
+                <p>The server stores validated AI answers in <code>AI_CACHE_DIR</code> (normally <code>.local/ai-cache</code>) until the operator removes those files. PostgreSQL stores public milestone names, estimates and sources. Entries expire for reuse after 180 days by default and remain in the database until the operator deletes them. Downloaded runs contain scenario inputs and results. You can delete them from your device.</p>
               </div>
-              <button class="primary-button" id="extract-button" type="submit">
-                <span class="btn-label">Explore my scenario</span>
-                <span class="btn-icon" aria-hidden="true">✳</span>
-              </button>
-            </div>
-            <p class="form-error" id="intake-error" role="alert"></p>
-          </form>
-
-          <p class="card-foot">Conditional simulations are not guaranteed forecasts or personalized financial advice. Profiles and datasets are fictional. Please use synthetic inputs and do not enter confidential financial data.</p>
-          <details class="privacy-details">
-            <summary>How your data is used</summary>
-            <p>Free-text extraction sends the story to the configured AI provider. A branch proposal sends the event description and selected financial details. A named public milestone may trigger a provider search. Provider retention depends on the account and service used.</p>
-            <p>The server stores validated AI answers in <code>AI_CACHE_DIR</code> (normally <code>.local/ai-cache</code>) until the operator removes those files. PostgreSQL stores public milestone names, estimates and sources. Entries expire for reuse after 180 days by default and remain in the database until the operator deletes them. Downloaded runs contain scenario inputs and results. You can delete them from your device.</p>
-          </details>
-          <details class="privacy-details">
-            <summary>Income, currency and household assumptions</summary>
-            <p>Enter income after taxes and social contributions. The engine calculates in CHF using a dated reference rate for other currencies. Cross-border paths use the supplied amounts throughout and omit changes in exchange rates, local taxes and exchange fees.</p>
-            <p>Missing costs may come from synthetic sample averages. Households in that sample have similar spending even when their income, employment and family size differ. Review whether those amounts fit your fictional household.</p>
-          </details>
-          <button class="text-button" id="offline-demo" type="button">Explore fictional demo without AI</button>
-          <details class="privacy-details">
-            <summary>Explore the ten-year starter comparison</summary>
-            <p>Compare the fictional starter dataset’s work, master's and relocation paths using its own assumptions.</p>
-            <button class="text-button" id="starter-comparison" type="button">Load starter comparison</button>
-            <div id="starter-result" aria-live="polite"></div>
-          </details>
-          <details class="privacy-details">
-            <summary>Run a structured comparison</summary>
-            <p>Explore fictional study and relocation scenarios.</p>
-            <div class="goal-edit">
-              <label>Starting cash (CHF)<input id="project-cash" type="number" min="0" value="20000"></label>
-              <label>Monthly net income (CHF)<input id="project-income" type="number" min="0" value="5000"></label>
-              <label>Monthly rent (CHF)<input id="project-rent" type="number" min="0" value="1500"></label>
-              <label>Decision starts after (months)<input id="project-month" type="number" min="0" max="60" value="12"></label>
-            </div>
-            <details>
-              <summary>Advanced JSON inputs</summary>
-              <label for="project-input">Projection inputs</label>
-              <textarea id="project-input" rows="9">{
-  "start": "2026-01",
-  "horizon_years": 5,
-  "profile": {"name": "Morgan", "age": 40, "cash_chf": 20000, "monthly_net_income_chf": 5000, "monthly_rent_chf": 1500},
-  "scenarios": {"Study": [{"type": "education", "start_month": 12}], "Move": [{"type": "relocation", "start_month": 12}]}
-}</textarea>
             </details>
-            <button class="text-button" id="run-project" type="button">Compare structured scenarios</button>
-            <div id="project-result" aria-live="polite"></div>
-          </details>
+
+            <details class="privacy-details faq-item">
+              <summary>Income, currency and household assumptions</summary>
+              <div class="faq-body">
+                <p>Enter income after taxes and social contributions. The engine calculates in CHF using a dated reference rate for other currencies. Cross-border paths use the supplied amounts throughout and omit changes in exchange rates, local taxes and exchange fees.</p>
+                <p>Missing costs may come from synthetic sample averages. Households in that sample have similar spending even when their income, employment and family size differ. Review whether those amounts fit your fictional household.</p>
+              </div>
+            </details>
+          </div>
         </div>
       </section>
 
@@ -205,9 +193,6 @@
             </div>
           </div>
 
-          <section id="path-comparison" class="path-comparison" aria-label="Path comparison" aria-live="polite"></section>
-          <p class="summary-note">These conditional simulations are not guaranteed forecasts or personalized financial advice. Profiles and datasets are fictional. Funding gaps require an explicit financing decision.</p>
-
           <!-- Centered, Unobstructed Free-Moving Vertical Timeline -->
           <div class="vtimeline-shell" id="vtimeline-shell">
             <canvas id="vtimeline-canvas" class="vtimeline-canvas" aria-hidden="true"></canvas>
@@ -239,7 +224,7 @@
                   </div>
                   <button type="button" class="range-toggle" id="range-toggle" aria-pressed="false" title="Show how far the selected path could move if its estimates are off">Show range</button>
                 </div>
-                <div class="trajectory-chart-wrap" id="trajectory-chart" role="region" aria-label="Scrollable trajectory chart" tabindex="0"></div>
+                <div class="trajectory-chart-wrap" id="trajectory-chart"></div>
                 <div class="trajectory-legend" id="trajectory-legend"></div>
               </div>
             </div>
