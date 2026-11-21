@@ -1183,15 +1183,6 @@ function renderTreeMinimap(index) {
 
   const activeSet = new Set(index.branchMeta.get(state.activeBranchId)?.chain.map(n => n.id) || []);
 
-  // Follow the exact same event-only tree structure as the Full Tree View (falling back to start/end if no events)
-  let milestones = treeEventNodes();
-  if (milestones.length <= 1) {
-    for (const bid of index.branchIds) {
-      const tip = index.branchMeta.get(bid)?.tipNode;
-      if (tip && !milestones.some(n => n.id === tip.id)) milestones.push(tip);
-    }
-  }
-  // Include all half-year intervals, events, and forks across every branch
   const milestones = getAllGraphMilestones(index);
 
   const layout = buildPlanarTreeLayout(milestones, index);
