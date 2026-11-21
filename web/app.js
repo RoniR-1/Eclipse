@@ -89,29 +89,28 @@ function currencyRateText(currency = state.currency) {
 // Numbers shown to people have at most two decimals and comma thousands separators (5,000).
 const twoDecimals = value => new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(value);
 
+// The sign goes after the currency: "CHF -1,000", "€-1,000", "+€1,000".
 const money = value => {
-  if (state.currency.code === 'CHF') {
-    return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0 }).format(value);
-  }
   const amount = chfToDisplay(value);
   const digits = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(Math.abs(amount));
-  return `${Math.round(amount) < 0 ? '-' : ''}${currencyPrefix()}${digits}`;
+  return `${currencyPrefix()}${Math.round(amount) < 0 ? '-' : ''}${digits}`;
 };
 
 const moneySigned = value => {
-  if (Math.abs(chfToDisplay(value)) < 0.5) return `${currencyPrefix()}0`;
-  return `${value > 0 ? '+' : '−'}${money(Math.abs(value))}`;
+  const amount = chfToDisplay(value);
+  if (Math.abs(amount) < 0.5) return `${currencyPrefix()}0`;
+  const digits = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(Math.abs(amount));
+  return `${currencyPrefix()}${amount > 0 ? '+' : '-'}${digits}`;
 };
 
 const compactChf = value => {
   const amount = chfToDisplay(value);
-  const sign = amount < 0 ? '−' : '';
   const abs = Math.abs(amount);
-  const prefix = currencyPrefix();
-  if (abs >= 1_000_000) return `${sign}${prefix}${(abs / 1_000_000).toFixed(1)}M`;
-  if (abs >= 10_000) return `${sign}${prefix}${Math.round(abs / 1000)}k`;
-  if (abs >= 1_000) return `${sign}${prefix}${(abs / 1_000).toFixed(1)}k`;
-  return `${sign}${prefix}${Math.round(abs)}`;
+  const prefix = `${currencyPrefix()}${amount < 0 ? '-' : ''}`;
+  if (abs >= 1_000_000) return `${prefix}${(abs / 1_000_000).toFixed(1)}M`;
+  if (abs >= 10_000) return `${prefix}${Math.round(abs / 1000)}k`;
+  if (abs >= 1_000) return `${prefix}${(abs / 1_000).toFixed(1)}k`;
+  return `${prefix}${Math.round(abs)}`;
 };
 
 // Server and AI text quotes amounts as "CHF 1,234.50"; show those in the chosen currency too.
@@ -3030,8 +3029,9 @@ function renderInspector(node, { focusBranchInput = false } = {}) {
     const remove = document.createElement('button');
     remove.type = 'button';
     remove.className = 'delete-branch';
-    remove.textContent = 'Delete this path';
-    remove.addEventListener('click', () => deleteBranch(node.branch_id));
+    // On a branch's first point this removes the whole branch; further along, it cuts the path from here.
+    remove.textContent = isBranchStart(node) ? 'Delete this path' : 'Delete this path from here';
+    remove.addEventListener('click', () => deleteFromNode(node.id));
     header.append(remove);
   }
 
@@ -3254,6 +3254,8 @@ function renderInspector(node, { focusBranchInput = false } = {}) {
   panel.append(header, narrativeSec);
   const info = renderBranchInfo(node);
   if (info) panel.append(info);
+  const appendedInfo = renderAppendedEvents(node);
+  if (appendedInfo) panel.append(appendedInfo);
   panel.append(acctSec, feasibility, commitmentSec, goalSec, provenance);
   if (editDetails) panel.append(editDetails);
   const composer = el('div', { class: 'branch-form' });
@@ -3493,7 +3495,7 @@ function renderReview(section, node, proposal, text, presetId = null) {
   section.replaceChildren();
   const title = el('input', { type: 'text', id: 'branch-title', maxlength: 60 });
   title.value = plan.title;
-  section.append(el('span', { class: 'card-kicker', text: 'REVIEW BEFORE BRANCHING' }), el('h3', { text: 'Check the numbers' }),
+  section.append(el('span', { class: 'card-kicker', text: 'REVIEW THE NUMBERS' }), el('h3', { text: 'Check the numbers' }),
     el('label', { for: 'branch-title', text: 'Event name' }), title);
   if (plan.summary) section.append(el('p', { class: 'proposal-summary', text: localizeAmounts(plan.summary) }));
   if (plan.assumptions) section.append(el('p', { class: 'proposal-assumptions', text: localizeAmounts(plan.assumptions) }));
@@ -3534,13 +3536,92 @@ function renderReview(section, node, proposal, text, presetId = null) {
       setButtonLoading(create, false, 'Simulating…', 'Create branch');
     }
   });
+  // Second choice: add the event to the path this point is on, instead of branching off it.
+  const following = followingNode(node);
+  const pathLabel = pathName(node);
+  const append = el('button', { type: 'button', class: 'ghost-button wide append-button', text: 'Add to this path' });
+  const appendHint = el('p', { class: 'append-hint', text: following
+    ? `Or add it to ${pathLabel} at this point: the months after it are recalculated with this event, keeping the later events and the branches that split off later. Branches that split off at this point stay as they are.`
+    : `Or add it to ${pathLabel}: this is its last point, so the path is extended by the period chosen above.` });
+  append.addEventListener('click', async () => {
+    error.textContent = '';
+    append.disabled = create.disabled = true;
+    append.textContent = 'Recalculating…';
+    const revision = state.revision;
+    try {
+      const name = title.value.trim() || plan.title;
+      const sequence = state.run ? state.run.next_sequence : undefined;
+      const result = await request('/api/branch/append', {
+        sequence, nodes: [...state.nodes.values()], node_id: node.id, event: name,
+        proposal: { ...plan, title: name }, months: following ? undefined : options.months(),
+      });
+      showAppendedEvent(node, name, result, revision);
+    } catch (problem) {
+      error.textContent = problem.message;
+    } finally {
+      append.disabled = create.disabled = false;
+      append.textContent = 'Add to this path';
+    }
+  });
   section.append(
     el('h4', { text: 'Monthly changes' }), lists.changes, addButton('changes', 'Add monthly change'),
     el('h4', { text: 'One-off amounts' }), lists.one_offs, addButton('one_offs', 'Add one-off'),
     el('h4', { text: 'Purchases' }), lists.assets, addButton('assets', 'Add purchase'),
     el('h4', { text: 'Investments' }), el('label', { class: 'block-field', for: 'branch-shock' }, el('span', { text: 'Change in investment value (%)' }), shock),
-    options.element, error, create,
+    options.element, error, create, appendHint, append,
     el('button', { type: 'button', class: 'back-button', text: '← Choose a different event', onclick: () => showComposer(section, node, text, presetId) }));
+}
+
+// The next point on the same path, if any (the starting point continues on the Original path).
+function followingNode(node) {
+  const path = node.branch_id === 'root' ? 'main' : node.branch_id;
+  return [...state.nodes.values()].find(item => item.parent_id === node.id && item.branch_id === path) || null;
+}
+
+function pathName(node) {
+  const path = node.branch_id === 'root' ? 'main' : node.branch_id;
+  return buildTreeIndex().branchMeta.get(path)?.label || (isOriginalBranch(path) ? 'the Original path' : 'this path');
+}
+
+// After /api/branch/append: replace the recalculated points and show where the event took effect.
+function showAppendedEvent(node, name, result, revision) {
+  if (revision !== state.revision || !state.nodes.has(node.id)) return;
+  state.revision += 1;
+  state.narratives.clear();
+  state.pathReports.clear();
+  for (const updated of result.nodes) state.nodes.set(updated.id, updated);
+  if (state.run && result.record) {
+    state.run.branches.push(result.record);
+    state.run.next_sequence = Math.max(state.run.next_sequence, (result.record.sequence ?? 0) + 1);
+  }
+  const first = result.nodes[0];
+  if (!first) return;
+  state.activeBranchId = first.branch_id;
+  state.selectedId = first.id;
+  const later = result.nodes.length - 1;
+  showToast(`Added “${name}” to ${pathName(first)}${later ? ` · ${later} later point${later === 1 ? '' : 's'} recalculated` : ''}`);
+  if (state.resultsView === 'tree') {
+    renderTreeGraph({ focusId: first.id });
+    selectNode(first.id);
+  } else {
+    renderTimelineView();
+    selectNode(first.id, { openDrawer: false, skipTimelineRender: true });
+    scrollMilestoneIntoView(first.id);
+  }
+}
+
+// Events added to a path at this point (/api/branch/append), with what each one assumes.
+function renderAppendedEvents(node) {
+  if (!node.appended_events?.length) return null;
+  const box = el('details', { class: 'inspector-section branch-info', open: true },
+    el('summary', { text: node.appended_events.length === 1 ? 'Event added here' : `${node.appended_events.length} events added here` }));
+  for (const item of node.appended_events) {
+    const list = el('ul');
+    for (const [text, source] of describeBlocks(item.proposal)) list.append(el('li', {}, el('span', { text }), setBadge(el('span'), source)));
+    box.append(el('h4', { text: item.title }), list);
+    if (item.proposal.assumptions) box.append(el('p', { class: 'proposal-assumptions', text: localizeAmounts(item.proposal.assumptions) }));
+  }
+  return box;
 }
 
 function syncVerticalSelection() {
@@ -3589,6 +3670,64 @@ function confirmDialog({ kicker, title, message, confirmLabel }) {
 }
 
 const isOriginalBranch = branchId => branchId === 'main' || branchId === 'root';
+
+// The first point of a branch: the starting point, or a point whose parent belongs to another branch.
+function isBranchStart(node) {
+  const parent = state.nodes.get(node.parent_id);
+  return !parent || parent.branch_id !== node.branch_id;
+}
+
+// The point and everything that follows from it: the rest of its branch and every branch that split off later.
+function nodesFrom(nodeId) {
+  const removed = new Set([nodeId]);
+  const start = state.nodes.get(nodeId);
+  const ordered = [...state.nodes.values()].filter(item => item.month > start.month).sort((a, b) => a.month - b.month);
+  for (const item of ordered) {
+    if (removed.has(item.parent_id)) removed.add(item.id);
+  }
+  return removed;
+}
+
+// "Delete this path" in the inspector. On a branch's first point the whole branch goes (as deleteBranch);
+// on a later point the branch is cut there, keeping its earlier points.
+async function deleteFromNode(nodeId) {
+  const node = state.nodes.get(nodeId);
+  if (!node) return;
+  if (isBranchStart(node)) return deleteBranch(node.branch_id);
+
+  const before = nodesFrom(nodeId);
+  const points = [...before].filter(id => state.nodes.get(id).branch_id === node.branch_id).length;
+  const nested = new Set([...before].map(id => state.nodes.get(id).branch_id).filter(id => id !== node.branch_id)).size;
+  const label = buildTreeIndex().branchMeta.get(node.branch_id)?.label || (isOriginalBranch(node.branch_id) ? 'Original path' : milestoneTitle(node));
+
+  const confirmed = await confirmDialog({
+    kicker: 'DELETE FROM THIS POINT',
+    title: `${label} from ${node.date}`,
+    message: `This removes this point and the rest of ${label} after it (${points} point${points === 1 ? '' : 's'})`
+      + `${nested ? `, and the ${nested} branch${nested === 1 ? '' : 'es'} that split off from them` : ''}. `
+      + "Earlier points stay. This can't be undone.",
+    confirmLabel: 'Delete this path from here',
+  });
+  if (!confirmed || !state.nodes.has(nodeId)) return;
+
+  // Recompute: a branch may have finished loading while the pop-up was open.
+  for (const id of nodesFrom(nodeId)) {
+    state.nodes.delete(id);
+    state.narratives.delete(id);
+  }
+
+  // Stay on the same path, at its new last point.
+  const lastId = node.parent_id;
+  state.activeBranchId = node.branch_id;
+  state.selectedId = lastId;
+  if (state.resultsView === 'tree') {
+    renderTreeGraph({ focusId: lastId });
+    selectNode(lastId);
+  } else {
+    switchActivePath(state.activeBranchId, { focusNodeId: lastId });
+  }
+  showToast(`Deleted ${label} from ${node.date}`);
+}
 
 // Original-path nodes that no other branch grew out of. The shared history other branches depend on stays.
 function originalPathRemovals() {
@@ -4213,8 +4352,7 @@ function formatGraphAxisTick(metric, val, step) {
     const dispVal = chfToDisplay(val);
     if (dispStep < 1000) return money(val);
     if (dispStep < 5000 && Math.abs(dispVal) >= 10_000 && Math.abs(dispVal % 1000) > 1) {
-      const sign = dispVal < 0 ? '−' : '';
-      return `${sign}${currencyPrefix()}${(Math.abs(dispVal) / 1000).toFixed(1)}k`;
+      return `${currencyPrefix()}${dispVal < 0 ? '-' : ''}${(Math.abs(dispVal) / 1000).toFixed(1)}k`;
     }
   }
   return metric.formatAxis(val);

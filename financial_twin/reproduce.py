@@ -10,6 +10,7 @@ or the database:
 - ``branches``: every branch in creation order, with what the AI produced for it, so replay does
   not need to ask the AI again: a ``change`` for a one-step branch (/api/branch) or the reviewed
   building-block ``proposal`` (/api/branch/apply). Each branch has a ``sequence`` number that makes its node IDs deterministic.
+  Events added to an existing path (/api/branch/append) are in the same list, in order, with ``kind: "append"``.
 - ``kept_node_ids``: the nodes still on screen after any deletions.
 - ``expected``: the values that were on screen, which replay must match exactly.
 - ``environment``: the Python and NumPy versions that produced the results.
@@ -23,7 +24,7 @@ from __future__ import annotations
 import json
 
 from financial_twin.branching import apply_proposal
-from financial_twin.server import VARIABLES, apply_branch_change, environment, random_test, run_simulation
+from financial_twin.server import VARIABLES, append_event, apply_branch_change, environment, random_test, run_simulation
 
 RUN_FORMAT = "financial-twin-run/1"
 EXPECTED_FIELDS = ("cash_chf", "net_worth_chf", "total_assets_chf", "total_debt_chf")
@@ -70,6 +71,15 @@ def replay(run):
         raise ValueError(f"Unknown run source: {run['source']!r}.")
     by_id = {node["id"]: node for node in nodes}
     for branch in run.get("branches", []):
+        if branch.get("kind") == "append":   # an event added to an existing path (/api/branch/append)
+            if branch["node_id"] not in by_id:
+                raise ValueError(f"Event {branch.get('event')!r} was added after unknown node {branch['node_id']}.")
+            result = append_event({"nodes": list(by_id.values()), "node_id": branch["node_id"], "event": branch["event"],
+                                   "proposal": branch["proposal"], "sequence": branch["sequence"],
+                                   "months": branch.get("months"), "extend": "months" in branch})
+            for node in result["nodes"]:
+                by_id[node["id"]] = node
+            continue
         parent = by_id.get(branch["parent_id"])
         if parent is None:
             raise ValueError(f"Branch {branch.get('event')!r} starts from unknown node {branch['parent_id']}.")
