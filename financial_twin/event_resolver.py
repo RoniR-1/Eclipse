@@ -22,8 +22,11 @@ def list_presets():
     url = os.environ.get('DATABASE_URL')
     if not url:
         return []
-    with psycopg.connect(url, row_factory=dict_row) as conn:
-        return conn.execute('SELECT event_type, normalized_key, display_name, keywords, params, source_urls, source_type FROM life_event_knowledge WHERE expires_at IS NULL OR expires_at > now() ORDER BY display_name').fetchall()
+    try:
+        with psycopg.connect(url, row_factory=dict_row) as conn:
+            return conn.execute('SELECT event_type, normalized_key, display_name, keywords, params, source_urls, source_type FROM life_event_knowledge WHERE expires_at IS NULL OR expires_at > now() ORDER BY display_name').fetchall()
+    except psycopg.Error:
+        return []
 
 
 def web_lookup(event_type, description, api_key):
@@ -49,29 +52,32 @@ def _resolve_event(event_type, description, api_key=None):
         return None
     normalized = normalize(description)
     key = description if description.startswith(event_type + ':') else event_type + ':' + normalized
-    with psycopg.connect(url, row_factory=dict_row) as conn:
-        row = conn.execute(
-            'SELECT *, expires_at IS NULL OR expires_at > now() AS valid '
-            'FROM life_event_knowledge WHERE normalized_key = %s AND event_type = %s',
-            (key, event_type),
-        ).fetchone()
-        if not row:
-            rows = conn.execute(
+    try:
+        with psycopg.connect(url, row_factory=dict_row) as conn:
+            row = conn.execute(
                 'SELECT *, expires_at IS NULL OR expires_at > now() AS valid '
-                'FROM life_event_knowledge WHERE event_type = %s', (event_type,),
-            ).fetchall()
-            for candidate in rows:
-                aliases = [candidate['normalized_key'].split(':', 1)[-1],
-                           candidate['display_name'], *(candidate['keywords'] or [])]
-                if any(isinstance(alias, str) and normalize(alias) == normalized for alias in aliases):
-                    row = candidate
-                    break
-        if row:
-            if row['valid']:
-                return {'params': row['params'], 'source': 'database_cache',
-                        'source_urls': row['source_urls'],
-                        'note': row.get('note') or row['display_name']}
-            key = row['normalized_key']
+                'FROM life_event_knowledge WHERE normalized_key = %s AND event_type = %s',
+                (key, event_type),
+            ).fetchone()
+            if not row:
+                rows = conn.execute(
+                    'SELECT *, expires_at IS NULL OR expires_at > now() AS valid '
+                    'FROM life_event_knowledge WHERE event_type = %s', (event_type,),
+                ).fetchall()
+                for candidate in rows:
+                    aliases = [candidate['normalized_key'].split(':', 1)[-1],
+                               candidate['display_name'], *(candidate['keywords'] or [])]
+                    if any(isinstance(alias, str) and normalize(alias) == normalized for alias in aliases):
+                        row = candidate
+                        break
+            if row:
+                if row['valid']:
+                    return {'params': row['params'], 'source': 'database_cache',
+                            'source_urls': row['source_urls'],
+                            'note': row.get('note') or row['display_name']}
+                key = row['normalized_key']
+    except psycopg.Error:
+        pass
     from . import server
     if not (api_key or server.configured_api_keys()):  # any key from .env, including AI_API_KEY_1, _2, ...
         return None
@@ -101,15 +107,18 @@ def _resolve_event(event_type, description, api_key=None):
     except ValueError:
         ttl = 180
     note = result.get('note') if isinstance(result.get('note'), str) else ''
-    with psycopg.connect(url, row_factory=dict_row) as conn:
-        conn.execute(
-            """INSERT INTO life_event_knowledge
-            (event_type, normalized_key, display_name, keywords, params, source_urls,
-             source_type, note, expires_at)
-            VALUES (%s, %s, %s, %s, %s, %s, 'ai_web_search', %s, now() + %s * interval '1 day')
-            ON CONFLICT (normalized_key) DO UPDATE SET params = EXCLUDED.params,
-            source_urls = EXCLUDED.source_urls, source_type = EXCLUDED.source_type,
-            note = EXCLUDED.note, updated_at = now(), expires_at = EXCLUDED.expires_at""",
-            (event_type, key, description, Jsonb([description]), Jsonb(params), Jsonb(urls), note, ttl),
-        )
+    try:
+        with psycopg.connect(url, row_factory=dict_row) as conn:
+            conn.execute(
+                """INSERT INTO life_event_knowledge
+                (event_type, normalized_key, display_name, keywords, params, source_urls,
+                 source_type, note, expires_at)
+                VALUES (%s, %s, %s, %s, %s, %s, 'ai_web_search', %s, now() + %s * interval '1 day')
+                ON CONFLICT (normalized_key) DO UPDATE SET params = EXCLUDED.params,
+                source_urls = EXCLUDED.source_urls, source_type = EXCLUDED.source_type,
+                note = EXCLUDED.note, updated_at = now(), expires_at = EXCLUDED.expires_at""",
+                (event_type, key, description, Jsonb([description]), Jsonb(params), Jsonb(urls), note, ttl),
+            )
+    except psycopg.Error:
+        pass
     return {'params': params, 'source': 'web_search', 'source_urls': urls, 'note': note}

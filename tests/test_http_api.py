@@ -147,6 +147,21 @@ class HttpApiTests(unittest.TestCase):
         self.assertEqual(status, 404)
         self.assertEqual(data, {"error": "Not found."})
 
+    def test_unexpected_api_failures_return_generic_500_and_server_recovers(self):
+        cases = (
+            ("financial_twin.projection.schema", "/api/schema", None),
+            ("financial_twin.server.run_simulation", "/api/simulate", {"scenario": SCENARIO}),
+        )
+        for target, path, body in cases:
+            with self.subTest(path=path), self.assertLogs("financial_twin.server", level="ERROR") as logs:
+                with patch(target, side_effect=RuntimeError("private request content")):
+                    status, data = self.call_json(path, body)
+            self.assertEqual(status, 500)
+            self.assertEqual(data, {"error": "An unexpected server error occurred. Please try again."})
+            self.assertIn("RuntimeError", logs.output[0])
+            self.assertNotIn("private request content", logs.output[0])
+            self.assertEqual(self.call_json("/api/config")[0], 200)
+
     def test_responses_are_not_cached(self):
         _, headers, _ = self.call("/api/config")
         self.assertEqual(headers["Cache-Control"], "no-store")
