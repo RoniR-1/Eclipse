@@ -433,6 +433,13 @@ def random_test(data, rng=None):
     return {"extraction": extraction, "years": years, "nodes": nodes}
 
 
+def run_projection(data):
+    """User profile + named decision paths in; baseline, paths, metrics and assumptions out."""
+    from financial_twin.projection import project
+    return project(data.get("profile"), data.get("scenarios"),
+                   horizon_years=data.get("horizon_years", 10), start=data.get("start"))
+
+
 class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(WEB), **kwargs)
@@ -449,6 +456,9 @@ class Handler(SimpleHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/api/config":
             self.send_json(200, {"has_api_key": bool((os.environ.get("AI_API_KEY") or os.environ.get("GEMINI_API_KEY")))})
+        elif self.path == "/api/schema":
+            from financial_twin.projection import schema
+            self.send_json(200, schema())
         else:
             super().do_GET()
 
@@ -476,6 +486,8 @@ class Handler(SimpleHTTPRequestHandler):
                 response = node_narrative(data)
             elif self.path == "/api/test":
                 response = random_test(data)
+            elif self.path == "/api/project":
+                response = run_projection(data)
             else:
                 self.send_json(404, {"error": "Not found."})
                 return
