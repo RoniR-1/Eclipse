@@ -2190,13 +2190,13 @@ function renderTreeGraph({ fit = false, focusId = null } = {}) {
       : `<b>${escapeHtml(displayTitle)}</b>`;
     const bg = isEvent
       ? (isSelected ? style.bgSelected : style.bg)
-      : (isSelected ? '#382013' : isActive ? '#26160e' : '#1f120b');
+      : (isSelected ? '#482d1e' : isActive ? '#362217' : '#2d1c13');
     const selectedBorder = isEvent ? style.borderSelected : '#f2be85';
     const border = isSelected
       ? selectedBorder
       : isEvent
         ? style.border
-        : (isActive ? 'rgba(204, 144, 98, 0.82)' : 'rgba(142, 96, 65, 0.72)');
+        : (isActive ? 'rgba(214, 156, 110, 0.84)' : 'rgba(156, 108, 76, 0.74)');
 
     return {
       id: node.id,
@@ -2206,7 +2206,7 @@ function renderTreeGraph({ fit = false, focusId = null } = {}) {
       color: {
         background: bg,
         border,
-        highlight: { background: isEvent ? style.bgSelected : '#382013', border: selectedBorder },
+        highlight: { background: isEvent ? style.bgSelected : '#482d1e', border: selectedBorder },
       },
       font: {
         color: isEvent || isSelected ? '#faece0' : '#dec7b3',
