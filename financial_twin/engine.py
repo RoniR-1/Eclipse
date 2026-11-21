@@ -268,7 +268,9 @@ def simulate(node, months, *, preferences=None, branch_id="main", scenario_updat
         if not matching:
             raise ValueError(f"No phase covers month {month}")
         phase = matching[0]
-        income = phase["monthly_income_chf"]
+        # Phase income is in today's money and follows the price index like living costs, so inflation
+        # (including year-specific rates) does not silently erode a salary. One-offs and loan payments stay nominal.
+        income = phase["monthly_income_chf"] * price_factor
         terms = expense_terms_at(scenario, month, price_factor)
         expenses = terms["actual_monthly_expenses_chf"]
         costs = [item for item in scenario["one_off_costs"] if item["month"] == month]

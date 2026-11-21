@@ -7,8 +7,9 @@ or the database:
 - ``source``: ``"simulate"`` (a scenario the AI extracted from the user's story) or ``"test"``
   (random test data, regenerated from ``seed`` and ``start_date``).
 - ``scenario``, ``years``, ``variables``: the engine inputs for the main path.
-- ``branches``: every branch in creation order, with the change the AI produced for it, so replay does
-  not need to ask the AI again. Each branch has a ``sequence`` number that makes its node IDs deterministic.
+- ``branches``: every branch in creation order, with what the AI produced for it, so replay does
+  not need to ask the AI again: a ``change`` for a one-step branch (/api/branch) or the reviewed
+  building-block ``proposal`` (/api/branch/apply). Each branch has a ``sequence`` number that makes its node IDs deterministic.
 - ``kept_node_ids``: the nodes still on screen after any deletions.
 - ``expected``: the values that were on screen, which replay must match exactly.
 - ``environment``: the Python and NumPy versions that produced the results.
@@ -21,7 +22,8 @@ from __future__ import annotations
 
 import json
 
-from financial_twin.server import apply_branch_change, environment, random_test, run_simulation
+from financial_twin.branching import apply_proposal
+from financial_twin.server import VARIABLES, apply_branch_change, environment, random_test, run_simulation
 
 RUN_FORMAT = "financial-twin-run/1"
 EXPECTED_FIELDS = ("cash_chf", "net_worth_chf", "total_assets_chf", "total_debt_chf")
@@ -71,8 +73,12 @@ def replay(run):
         parent = by_id.get(branch["parent_id"])
         if parent is None:
             raise ValueError(f"Branch {branch.get('event')!r} starts from unknown node {branch['parent_id']}.")
-        result = apply_branch_change(parent, branch["event"], branch["months"], branch.get("variables", {}),
-                                     branch["change"], branch["sequence"])
+        if "proposal" in branch:   # a reviewed building-block branch (/api/branch/apply)
+            result = apply_proposal(parent, branch["event"], branch["months"], branch.get("variables", {}),
+                                    branch["proposal"], VARIABLES, branch["sequence"])
+        else:                      # a one-step branch (/api/branch)
+            result = apply_branch_change(parent, branch["event"], branch["months"], branch.get("variables", {}),
+                                         branch["change"], branch["sequence"])
         for node in result["nodes"]:
             by_id[node["id"]] = node
     return by_id

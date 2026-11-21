@@ -55,7 +55,7 @@ The model applies these rules once per month, in this order.
 
 | Quantity | Calculation and interpretation |
 | --- | --- |
-| Living costs | Base monthly expenses × opening price index. The index starts at 1 and grows by `(1 + annual_inflation) ** (1/12)` per month. Income and dated one-offs use explicit nominal CHF assumptions. |
+| Income and living costs | Base monthly income and base monthly expenses × the price index. The index starts at 1 and grows by `(1 + annual_inflation) ** (1/12)` per month, so phase amounts are in today's money and wages keep pace with prices. Dated one-off costs and loan payments are nominal CHF amounts and are not indexed. |
 | Debt | Interest = opening principal × nominal annual loan rate / 12. Payment is capped at principal plus interest. The remaining amount becomes next month's principal. |
 | Asset growth | Each opening holding earns `(1 + annual_return) ** (1/12) - 1`. New contributions start earning returns the following month. |
 | Operating cash flow | Net income − living costs − dated costs − debt payments. |
@@ -97,6 +97,32 @@ print(baseline[-1]["state"]["cash_chf"], move[-1]["state"]["cash_chf"])
 Both paths start year two with CHF 22,400. Continuing to work adds CHF 14,400 to cash. Moving adds CHF 9,600 before the CHF 6,500 relocation cost. Their year-two closing balances are CHF 36,800 and CHF 25,500. The example uses the starter's illustrative amounts and chooses January 2025 as the opening date.
 
 For a CSV-backed opening state, use `load_synthetic_profile(data_dir, profile_id, monthly_expenses_chf=...)`. Supply total recurring living costs, including rent and excluding loan payments. The profile provides reference net income and rent but lacks a complete spending budget. Cash is repeated in the profile, account and asset files and enters the opening balance only once. Investment growth defaults to zero. A zero scheduled loan payment leaves accrued interest unpaid. The goals table can inform a user's chosen cash reserve. The engine does not infer preferences from a profile's age or employment.
+
+## Branching from a milestone
+
+Selecting a milestone opens **What if something changed?**. A user picks an event type, describes the event in their own words, or both. The AI turns the request into editable building blocks and sets every number; they are shown in a review card and only simulated after the user confirms.
+
+| Block | Meaning |
+| --- | --- |
+| Monthly change | Income or expense change per month, with a start offset and a duration (0 = permanent), for example −3,000 income for 24 months, then +1,000 from month 24 |
+| One-off amount | A single amount at an offset: positive for a cost, negative for money received (booked as one month of extra income) |
+| Purchase | An asset bought at the branch point with an optional loan. The server enforces price = loan + down payment, so a purchase never creates or destroys wealth; only the purchase costs reduce net worth. Annual value change models appreciation or depreciation. A rent deposit is a purchase of kind `deposit`. |
+| Investment change | Revalues existing investments at the branch point (0.7 = −30%) |
+
+Every block carries a source (`user`, `dataset`, `assumption` or `ai_estimate`), and editing a value marks it `user`. The server returns warnings when the down payment was corrected, a loan payment is below its interest, or upfront costs exceed the available cash.
+
+The event types in `financial_twin/branching.py` (Study, Career change, Relocate, New home, Unexpected expense, Have a child, Buy property, Market shock, Go part-time) carry no numbers. Each one gives the AI guidance on what to model, for example tuition for the study period, reduced income while studying and the graduate salary afterwards, plus an example of useful details such as the programme and country. The AI first asks for web search, so it can look up current figures such as tuition or local rents, and returns the pages it used as `source_urls`; the review card links them. If the provider rejects search, the request is repeated without it. The prompt includes the dataset reference values (study length, tuition, unexpected-expense amount, median rent), which the AI marks with source `dataset` when it uses them.
+
+| Endpoint | Purpose |
+| --- | --- |
+| `GET /api/branch/presets` | Event types: id, label and an example of useful details |
+| `POST /api/branch/propose` | `{parent, preset?, event?}` with at least one of them → `{proposal, origin}`. Always calls the AI. |
+| `POST /api/branch/apply` | `{parent, event, months, variables, proposal}` → branch nodes. Deterministic; the first node stores the applied proposal as `branch_proposal`. |
+| `POST /api/branch` | One step (propose and apply without review), kept for compatibility |
+
+`/api/branch/apply` splits the engine's phases at every block boundary, so temporary changes end on time and their start and end appear as milestones. The random test scenario, which must work without the AI, builds its branches from fixed sample events (`SAMPLES`); these are not offered to users. `tests/test_branching.py` checks durations, purchase accounting, money received, warnings, every preset and the AI and no-AI paths.
+
+A branch continues the situation at the selected node and does not inherit phases or one-off costs that the original path planned after that node, so each branch explores one event at a time.
 
 ## Check the implementation
 

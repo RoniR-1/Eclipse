@@ -16,6 +16,7 @@ from urllib.request import Request, urlopen
 from uuid import uuid4
 
 from financial_twin import create_root, simulate
+from financial_twin.branching import PRESETS, PROPOSAL_SCHEMA, apply_proposal, normalize_proposal, proposal_prompt
 from financial_twin.engine import is_investment_asset, _date_at, expense_terms_at
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -42,7 +43,7 @@ VARIABLES = {
     "safety_priority": ("Liquidity priority", "Higher priority keeps more money in cash instead of investing it.", 0, 1, 0.05, "%"),
     "emergency_months": ("Emergency reserve", "Months of living expenses used to set your cash reserve target.", 0, 24, 1, "months"),
     "investment_annual_return": ("Annual investment return", "Assumed yearly return on new investment contributions.", -0.2, 0.3, 0.01, "%"),
-    "annual_inflation": ("Annual inflation", "Annual growth in recurring living expenses.", 0, 0.15, 0.005, "%"),
+    "annual_inflation": ("Annual inflation", "Annual price growth. Monthly income and living costs both rise with it.", 0, 0.15, 0.005, "%"),
 }
 
 NUMBER = {"type": "number"}
@@ -470,6 +471,65 @@ def node_narrative(data):
         narrative = (f"In this projected month, income is CHF {income:,.0f} and expenses are CHF {expenses:,.0f}. "
                      f"After other cash flows, cash changes by CHF {net_flow:,.0f} to CHF {cash:,.0f}.")
     return {"narrative": narrative}
+
+
+def _branch_parent(data):
+    parent = data.get("parent")
+    if not isinstance(parent, dict) or not isinstance(parent.get("state"), dict):
+        raise ValueError("Provide a parent timeline node.")
+    return parent
+
+
+def propose_branch(data, api_key):
+    """Turn an event type and/or a description into editable building blocks, without simulating.
+
+    The AI sets every number. It first tries web search for current figures (returned as source links)
+    and falls back to a plain answer if the provider rejects search. Answers go through the AI cache,
+    so the same request at the same node returns the same proposal.
+    """
+    parent = _branch_parent(data)
+    preset = data.get("preset")
+    if preset is not None and preset not in PRESETS:
+        raise ValueError(f"Unknown event type; choose one of {list(PRESETS)}")
+    event = data.get("event") or ""
+    if not isinstance(event, str) or len(event) > 4000:
+        raise ValueError("Describe the event in up to 4,000 characters.")
+    event = event.strip()
+    if not preset and not event:
+        raise ValueError("Choose an event type or describe the event.")
+    prompt = proposal_prompt(event, parent, preset)
+
+    def checked(raw):
+        try:
+            return normalize_proposal(raw, parent)
+        except ValueError as exc:
+            raise ValueError("The AI returned an invalid breakdown of this event. Please rephrase and try again.") from exc
+
+    raw = cached_ai_answer("proposal", prompt, PROPOSAL_SCHEMA)
+    if raw is not None:
+        return {"proposal": checked(raw), "origin": "ai", "cached": True}
+    try:
+        raw = gemini_json(prompt, PROPOSAL_SCHEMA, api_key, web_search=True)
+    except ValueError:
+        raw = gemini_json(prompt, PROPOSAL_SCHEMA, api_key)
+    proposal = checked(raw)  # only a valid answer is stored
+    stored = store_ai_answer("proposal", prompt, PROPOSAL_SCHEMA, raw)
+    if stored != raw:
+        proposal = checked(stored)
+    return {"proposal": proposal, "origin": "ai", "cached": False}
+
+
+def apply_branch(data):
+    """Simulate a branch from a reviewed proposal. Deterministic: no AI call.
+
+    With a `sequence` number the branch ID is deterministic, and the returned `branch` record holds
+    everything replay needs (see financial_twin/reproduce.py).
+    """
+    sequence = data.get("sequence")
+    if sequence is not None and (isinstance(sequence, bool) or not isinstance(sequence, int) or sequence < 0):
+        raise ValueError("Branch sequence must be a nonnegative integer.")
+    return apply_proposal(_branch_parent(data), data.get("event"), data.get("months"),
+                          data.get("variables", {}), data.get("proposal"), VARIABLES, sequence)
 
 
 def run_branch(data, api_key):
@@ -907,7 +967,10 @@ class Handler(SimpleHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
-        if self.path == "/api/config":
+        if self.path == "/api/branch/presets":
+            self.send_json(200, {"presets": [{"id": key, "label": kind["label"], "example": kind["example"]}
+                                             for key, kind in PRESETS.items()]})
+        elif self.path == "/api/config":
             self.send_json(200, {"has_api_key": bool(configured_api_keys())})
         elif self.path == "/api/events/presets":
             from financial_twin.event_resolver import list_presets
@@ -941,6 +1004,13 @@ class Handler(SimpleHTTPRequestHandler):
                 if not isinstance(key, str):
                     raise ValueError("Invalid API key.")
                 response = run_branch(data, key.strip())
+            elif self.path == "/api/branch/propose":
+                key = data.get("api_key") or ""
+                if not isinstance(key, str):
+                    raise ValueError("Invalid API key.")
+                response = propose_branch(data, key.strip())
+            elif self.path == "/api/branch/apply":
+                response = apply_branch(data)
             elif self.path == "/api/edit-nodes":
                 response = edit_nodes(data)
             elif self.path == "/api/narrative":
