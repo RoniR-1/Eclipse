@@ -172,7 +172,9 @@ describe('formatting', () => {
     assert.equal(app.milestoneTitle(node('n', null, 'root', 0)), 'Starting point');
     assert.equal(app.milestoneTitle(node('n', null, 'A', 7, { event: 'Buy a car' })), 'Buy a car');
     assert.equal(app.milestoneTitle(node('n', null, 'main', 24)), 'Year 2');
-    assert.equal(app.milestoneTitle(node('n', null, 'main', 15)), 'Year 1, Month 3');
+    assert.equal(app.milestoneTitle(node('n', null, 'main', 6)), '6 months');
+    assert.equal(app.milestoneTitle(node('n', null, 'main', 18)), 'Year 1.5');
+    assert.equal(app.milestoneTitle(node('n', null, 'main', 15)), 'Month 15');
     assert.equal(app.milestoneTitle(node('n', null, 'main', 7, { cash: -1 })), 'Cash shortfall');
     assert.equal(app.milestoneTitle(node('n', null, 'main', 7)), 'Month 7');
   });

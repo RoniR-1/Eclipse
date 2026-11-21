@@ -14,7 +14,7 @@
  "branches": [
   {
    "sequence": 100,
-   "parent_id": "9fba7b8a630f20b12408039f",
+   "parent_id": "2c622e947ab7ea5340f619a6",
    "event": "Start a Bachelor's degree",
    "months": 30,
    "variables": {},
@@ -31,137 +31,137 @@
   }
  ],
  "kept_node_ids": [
-  "047e47e62b7995f496aabab4",
-  "06b09e3af6767b38c72d8f0f",
-  "073a6440da99665f21830860",
-  "09d7e36396247dbe3d43a545",
-  "0be78abeab8be5db7db265e4",
-  "0dda18bab8aee4aff7663821",
-  "0ec5acc50ebe53927d8a46a9",
-  "1109321d7af3f9d4184388a2",
-  "1147e10a91b3d2b8e04c51b4",
-  "13f0e27771b261f79bea4c1c",
-  "173a7f98c401474f8aee0daf",
-  "17e23a2b7b11dd12b4c3105d",
-  "196a233b0fe9ba6f96012c6c",
-  "1d047c84507b30a1e91b3aa5",
-  "1dc7c302c82b3e9074465ade",
-  "1edd4168b3d2fc22ffd2ed6a",
-  "1fbfadf1ff3688719216f414",
-  "22e67fd104a6d2d9af68b93c",
-  "28f52f4a2e8aa13825960f17",
-  "2a54954f6c3fbe4c8ff0e0f2",
-  "2c28b260a28fca2d4a984633",
-  "2ce8e520d9796993e94e0ab4",
-  "2d8efdbb380c92fcde4db153",
-  "2e8894235de2c7c3bbcacf9b",
-  "31d8c082604fb96cd5adf761",
-  "33860d66653f572856839497",
-  "33e44ce90e67c7017e30945a",
-  "35c0439410af6133bdc874f7",
-  "385ab64cd9c0d88e29076a76",
-  "3afe2cf40a90403a2af49cad",
-  "3d9e50da014f8d5724f0be7f",
-  "3fd8c9d4661c1edbaebaebaf",
-  "40b4448e280a93d76cd263f6",
-  "44a6e0a2efccc9cfe8a7c90f",
-  "44bf7316ec12f19113d676ad",
-  "44ce4df0f16adeb02f9cd30a",
-  "48bb59a35fd49acf6c7d0aac",
-  "4aeca0a8d819301de6285d43",
-  "4bb4aa76cead804d1165b66b",
-  "4bdd5ccc9f1dcb52adbcf467",
-  "4e3f454b54f0528c5bceaa98",
-  "57223209354c971b14eed1a7",
-  "5c333948609a42c68bfa3163",
-  "5c48ee677b9af26d434a6c82",
-  "5d5a24aef458c09a52a697fb",
-  "5d9f6a5832a370d89408bbcd",
-  "602a8c4f2ffa44b4244f5941",
-  "627a6ef3df56ce3cd3c09623",
-  "632565370df6b6bbc373dca2",
-  "63b716dd5e8c021c5b2ba3b7",
-  "64da4eb31f3c4d065bcaf584",
-  "654ec736ef39f2758593e661",
-  "6559e83e5a16caec80eb3a55",
-  "689617cf683ac8b310f8a174",
-  "6960a9017d96c2df9b34539b",
-  "6ece9ebdc144833cb951b752",
-  "712018f97e82096564505328",
-  "7298f09b24c8b6faaf7084bd",
-  "73bf635140a09a254de2328f",
-  "747e1c275878dba47a8c3efa",
-  "76fe08b53c6fc340ab744902",
-  "79c7929ddc251aa6061264ce",
-  "7bb78c22616fe7a54e0a5cc7",
-  "7e2851dc986d9caad7f65de7",
-  "7e68ef8d2474a71f4b4140cf",
-  "8b4688f70dfad091bdac57e5",
-  "8c633239e1099f316198ed70",
-  "8cfd01f99f131b3ac68f3f94",
-  "8d24caf710356be075fe0aaa",
-  "8d2df1a7d9b03cf8f1ea0fe7",
-  "8de90f456e9fa190f3e0e801",
-  "8e409586a2d87e2035103d93",
-  "930bcada9ee214cf118b3968",
-  "94ae33787520789c68604206",
-  "9933086267710bcf834ff2ec",
-  "9f2943865a2e7913765fdb3a",
-  "9f90c0cbbaf70969b902a8f1",
-  "9fba7b8a630f20b12408039f",
-  "a12ac090b9ea59511509dcb2",
-  "a19ab3140bde1b5b2acacbd1",
-  "a224ad5afacfadb05cf32f21",
-  "a233436a13a72484a9378fce",
-  "a24a415457c7d7652dfa9406",
-  "a3196fbf29a891a44a5f2142",
-  "a3a20a4fc62dcf239a9a2101",
-  "a6f91e624045822283254484",
-  "a87f65eb8c8be55427142968",
-  "a97790ec6fae0e61fbb74ce5",
-  "a9e27dbd9d87f2cca664ca42",
-  "ac45ef775a8b7b2009eb63a9",
-  "aee36d23170f95b841a290e0",
-  "b0bb2f93484f998bc4747f60",
-  "b12b01008a6e863be5dc1820",
-  "b2390abbc72464068457d7cc",
-  "b2480b833cf63f8617d68e83",
-  "b6ea4a4ce368be41633d798b",
-  "b88d841d18fedf6ed7e89479",
-  "bd8e3a9697c37b15d33e6d94",
-  "c3bada81b19202f3060d2264",
-  "c447f38014e260db41228cb4",
-  "c49bbc98e1b2bfdfc43d38f6",
-  "c9ebaec35c3c22fed772687a",
-  "cfae83018064316c099c29b8",
-  "d15334057a3f3e944f4c3fc4",
-  "d3aaa99899953b33956c9968",
-  "d4d6afe3e967c7fb483ad48d",
-  "d94766da651e3e0f93a8e0e7",
-  "da116c7aab9c7e8b45506f7b",
-  "da4fd842a83be23b0da350a4",
-  "ddccfccd622dbb18c79b74a0",
-  "dfae41df211fe416b47787be",
-  "e0ad3536ea137c97b03a821b",
-  "e257beb3e5511bcad672e6ca",
-  "e3ea5016fc79e455400146f4",
-  "e40371e0ffefa7f5857f63d0",
-  "e4274437f21d11f2dfd3143e",
-  "e567cb88eb42fa52b98a1447",
-  "e6209a83b75aad69db98934a",
-  "e8b69b481be263db78ab25b4",
-  "e95c0debbb1e59ef1b152c18",
-  "ea37a39cf7c73cefe28970cb",
-  "f071020e373273a84f168534",
-  "f35653f831ed7d087ba632ec",
-  "f3dbb070d6373a425a417f1e",
-  "f57922c2494fdc7f7b4f0f14",
-  "f59dee28d86f628390380f89",
-  "ff2701db80ec7a06c816b178"
+  "004308fe298fc239841a1c6c",
+  "00475a6bf52e8ce318c95563",
+  "00682d4a21c86fcc492a3008",
+  "042b58870b87aa3da362e123",
+  "0d3d6ba84bce63a48da0662b",
+  "0e6b48e9c29723369fa8a0a1",
+  "0e76731bd3152bd266654811",
+  "0f5a11dcebaa2a0ba41df435",
+  "100b3f569968e6c45a814d35",
+  "12c429d478495f987f02dc0f",
+  "1b9a5f1ccd2f491547b6eb30",
+  "1c93b73b16365af6045729a1",
+  "1ceb0a4e0b33ba0a6d649541",
+  "1ef541916f7945d788eb5df7",
+  "21177bd5d937b9babf28f493",
+  "21cfcab65d4d2344cb3a8920",
+  "2235cea899c58f981a4673f8",
+  "2307cc8112bac6a4b40c7602",
+  "237fcc6a9c46a2209a59c6d6",
+  "24ae2babcd4609d6fadf4a2a",
+  "26bbd772c7d6c5b7770e4961",
+  "282698a32ee2feba2520e372",
+  "2a2b45a2aa653b1307c1b719",
+  "2bcb97c1cc564de5f87bb6a7",
+  "2c622e947ab7ea5340f619a6",
+  "2d0c2ff7b5bdfaa392cc1f51",
+  "2d79d3681d860d668e2cf491",
+  "2e18c9b4529bc5d42b544ef3",
+  "31fbe58296dc9052539ef8b1",
+  "321210094f4327b612797b45",
+  "33da180b5a81c6c38dd41a45",
+  "34818712dbeec5ed76a54532",
+  "37ed7f0f564711a2bee25570",
+  "38aab62429b5c996cdc8e434",
+  "38b49c1bc1b8c95d5ce5702b",
+  "3b44998d14da725b8748d90a",
+  "3ffc6248e43ecc06a161b6c1",
+  "417d30c003a05e733034fff9",
+  "4360f8e4741a8b690e5e07ea",
+  "4408720acbb1d136a84c6ce0",
+  "46cc2adee10c3b6f090d81cf",
+  "47797c49c29f2481569be347",
+  "47c35632669387f7a9e17a5f",
+  "48b32a85ad0b1f4fdf9d534c",
+  "49695d27870133c8021c8461",
+  "4c76cf7e730bb9844dfe160e",
+  "4cf498ba5b5f94192549d21d",
+  "4d171ca64fba469e632e81d7",
+  "4dabddb899760199e6f079bf",
+  "505eade32a3985d8f0afb226",
+  "51fde907aa627065d622d6d6",
+  "56c0bd017984c185190871a4",
+  "56d395c04763a42bf1f556d6",
+  "584c77a1a97a0c8599acfa79",
+  "59e0ed8915d132fa311a2fb8",
+  "5b0e4e69c76af14224e5a932",
+  "5d1a848d270e0795e29f229c",
+  "5ea53a1da38dabfc91442430",
+  "5fa3f8404232d52cfa02e377",
+  "6125909de5b7869028b274aa",
+  "621b8832d2a484c534149a41",
+  "64405479053b178998b6b38a",
+  "67ddd8037255bc173ce5eb0f",
+  "69a7304a4a2ca4b89bb2c2dc",
+  "6a85205ff8730448d4076046",
+  "6cd984b64da090799d9113b9",
+  "7103e6ef9511ac7194cf689a",
+  "77846f051ecb85103537248e",
+  "7824f14a2c3840dc280a6d27",
+  "7b7d2e3c05af84f6a054dc16",
+  "7d9d58f6fa13ce3ab19ffdb3",
+  "7dc2112118d5eab0fd0426fd",
+  "7e51467af908e20368300490",
+  "7fef0e90191a12fbc41b7c9b",
+  "80e7f8d72caf9b338538515a",
+  "80f94366eb3da0228e4b4a64",
+  "85c2a9fe0652a630523ae16a",
+  "8689bb1ba8316dbee20da5f4",
+  "899afa0cd4bd80f0840b865f",
+  "8aa88680a334cbd0119c23ef",
+  "8aeb126b233ab84043267f76",
+  "8d16ca39bd3710fb5325e974",
+  "8ed0889fd66e459efe8f2374",
+  "8f937c499d3248589ffdf29a",
+  "90b569c047c2128d9d228cb6",
+  "933ce7206f499bad4407f3dc",
+  "97e7984559995da42bdd5140",
+  "9895ff1b859f0ac9cc94514e",
+  "9b558403f84cd7e6f16841a5",
+  "9dde113f40fd2156a9c8db93",
+  "9edad8b788f2d5ae539a0b4f",
+  "a2ccd1c75d8cfb5161f44a2f",
+  "a3f5bd5d8c74f0a611c239fc",
+  "a4fcdc856daacc48319db4ec",
+  "ae50ff1cadeff6d4d710801e",
+  "b60d765b9900fee31aa89236",
+  "b72ef69d9e4899f964b3e1c1",
+  "b8beef1dd961ac483ea5bd33",
+  "bb4e330a10186502fb7b534e",
+  "bd2d36e535c72db13f0f1637",
+  "bfb6dd0aed7f8b54c842a351",
+  "c2dce50de149e6c727345874",
+  "c4195b7a88e578ce30c0b9e3",
+  "c435b8c256c5d4c9f14b6838",
+  "c602cdb27f4d0b05ba8557d4",
+  "c9dbd4956296553280abb42d",
+  "cb4648a0e40bb88e3f78b105",
+  "d510f774c42136870bc36aac",
+  "d8b58348cfc056151c63e289",
+  "d9c69480357855b4701d462f",
+  "e020f4cb5de535cfa64ab434",
+  "e726b7a2e955e769f775d08e",
+  "e7c662ef838fdbd72dc6c81c",
+  "e96fab34afd00129d2147cc3",
+  "ea0be5594574ab96d3f5024d",
+  "eb71b1af9daa27ebd690beca",
+  "ee17a1f47659ec92aa935e2a",
+  "f125b8dc690c40ceb4c071d3",
+  "f4d5bb24790c462cb90b1106",
+  "f8358765af479fbfe4822b20",
+  "f93fd1a1e68f336f73aa263b",
+  "fabfd6a9a7f4e1c3b924ba22",
+  "fb5f1dc5288244985d90f6c1",
+  "fd39eba14a18eafc8bd0d841",
+  "fd93d4bfcdd0984e0dcfa1bf",
+  "fdf758d0602285bf54f6bb59",
+  "fed3499dc0eade895850faf2"
  ],
  "expected": [
   {
-   "id": "ff2701db80ec7a06c816b178",
+   "id": "ae50ff1cadeff6d4d710801e",
    "branch_id": "root",
    "month": 0,
    "date": "2026-01-01",
@@ -172,7 +172,7 @@
    "net_cash_flow_chf": 0.0
   },
   {
-   "id": "28f52f4a2e8aa13825960f17",
+   "id": "b72ef69d9e4899f964b3e1c1",
    "branch_id": "main",
    "month": 1,
    "date": "2026-02-01",
@@ -183,7 +183,7 @@
    "net_cash_flow_chf": 894.18
   },
   {
-   "id": "632565370df6b6bbc373dca2",
+   "id": "321210094f4327b612797b45",
    "branch_id": "main",
    "month": 2,
    "date": "2026-03-01",
@@ -194,7 +194,7 @@
    "net_cash_flow_chf": 894.18
   },
   {
-   "id": "76fe08b53c6fc340ab744902",
+   "id": "5ea53a1da38dabfc91442430",
    "branch_id": "main",
    "month": 3,
    "date": "2026-04-01",
@@ -205,7 +205,7 @@
    "net_cash_flow_chf": 894.18
   },
   {
-   "id": "c3bada81b19202f3060d2264",
+   "id": "fabfd6a9a7f4e1c3b924ba22",
    "branch_id": "main",
    "month": 4,
    "date": "2026-05-01",
@@ -216,7 +216,7 @@
    "net_cash_flow_chf": 894.18
   },
   {
-   "id": "8de90f456e9fa190f3e0e801",
+   "id": "12c429d478495f987f02dc0f",
    "branch_id": "main",
    "month": 5,
    "date": "2026-06-01",
@@ -227,7 +227,7 @@
    "net_cash_flow_chf": -1500.0
   },
   {
-   "id": "33e44ce90e67c7017e30945a",
+   "id": "a3f5bd5d8c74f0a611c239fc",
    "branch_id": "main",
    "month": 6,
    "date": "2026-07-01",
@@ -238,7 +238,7 @@
    "net_cash_flow_chf": 894.18
   },
   {
-   "id": "8d2df1a7d9b03cf8f1ea0fe7",
+   "id": "f8358765af479fbfe4822b20",
    "branch_id": "main",
    "month": 7,
    "date": "2026-08-01",
@@ -249,7 +249,7 @@
    "net_cash_flow_chf": 894.18
   },
   {
-   "id": "4bb4aa76cead804d1165b66b",
+   "id": "b8beef1dd961ac483ea5bd33",
    "branch_id": "main",
    "month": 8,
    "date": "2026-09-01",
@@ -260,7 +260,7 @@
    "net_cash_flow_chf": 894.18
   },
   {
-   "id": "f071020e373273a84f168534",
+   "id": "9895ff1b859f0ac9cc94514e",
    "branch_id": "main",
    "month": 9,
    "date": "2026-10-01",
@@ -271,7 +271,7 @@
    "net_cash_flow_chf": 894.18
   },
   {
-   "id": "e6209a83b75aad69db98934a",
+   "id": "2a2b45a2aa653b1307c1b719",
    "branch_id": "main",
    "month": 10,
    "date": "2026-11-01",
@@ -282,7 +282,7 @@
    "net_cash_flow_chf": 894.18
   },
   {
-   "id": "44ce4df0f16adeb02f9cd30a",
+   "id": "2d0c2ff7b5bdfaa392cc1f51",
    "branch_id": "main",
    "month": 11,
    "date": "2026-12-01",
@@ -293,7 +293,7 @@
    "net_cash_flow_chf": 894.18
   },
   {
-   "id": "f35653f831ed7d087ba632ec",
+   "id": "97e7984559995da42bdd5140",
    "branch_id": "main",
    "month": 12,
    "date": "2027-01-01",
@@ -304,7 +304,7 @@
    "net_cash_flow_chf": 894.18
   },
   {
-   "id": "a224ad5afacfadb05cf32f21",
+   "id": "4408720acbb1d136a84c6ce0",
    "branch_id": "main",
    "month": 13,
    "date": "2027-02-01",
@@ -315,7 +315,7 @@
    "net_cash_flow_chf": 894.18
   },
   {
-   "id": "8d24caf710356be075fe0aaa",
+   "id": "a4fcdc856daacc48319db4ec",
    "branch_id": "main",
    "month": 14,
    "date": "2027-03-01",
@@ -326,7 +326,7 @@
    "net_cash_flow_chf": 894.18
   },
   {
-   "id": "63b716dd5e8c021c5b2ba3b7",
+   "id": "f125b8dc690c40ceb4c071d3",
    "branch_id": "main",
    "month": 15,
    "date": "2027-04-01",
@@ -337,7 +337,7 @@
    "net_cash_flow_chf": 894.18
   },
   {
-   "id": "8c633239e1099f316198ed70",
+   "id": "21177bd5d937b9babf28f493",
    "branch_id": "main",
    "month": 16,
    "date": "2027-05-01",
@@ -348,7 +348,7 @@
    "net_cash_flow_chf": 894.18
   },
   {
-   "id": "073a6440da99665f21830860",
+   "id": "ea0be5594574ab96d3f5024d",
    "branch_id": "main",
    "month": 17,
    "date": "2027-06-01",
@@ -359,7 +359,7 @@
    "net_cash_flow_chf": 894.18
   },
   {
-   "id": "4aeca0a8d819301de6285d43",
+   "id": "fed3499dc0eade895850faf2",
    "branch_id": "main",
    "month": 18,
    "date": "2027-07-01",
@@ -370,7 +370,7 @@
    "net_cash_flow_chf": 894.18
   },
   {
-   "id": "1147e10a91b3d2b8e04c51b4",
+   "id": "100b3f569968e6c45a814d35",
    "branch_id": "main",
    "month": 19,
    "date": "2027-08-01",
@@ -381,7 +381,7 @@
    "net_cash_flow_chf": 894.18
   },
   {
-   "id": "c447f38014e260db41228cb4",
+   "id": "c9dbd4956296553280abb42d",
    "branch_id": "main",
    "month": 20,
    "date": "2027-09-01",
@@ -392,7 +392,7 @@
    "net_cash_flow_chf": 894.18
   },
   {
-   "id": "57223209354c971b14eed1a7",
+   "id": "21cfcab65d4d2344cb3a8920",
    "branch_id": "main",
    "month": 21,
    "date": "2027-10-01",
@@ -403,7 +403,7 @@
    "net_cash_flow_chf": 894.18
   },
   {
-   "id": "3fd8c9d4661c1edbaebaebaf",
+   "id": "4cf498ba5b5f94192549d21d",
    "branch_id": "main",
    "month": 22,
    "date": "2027-11-01",
@@ -414,7 +414,7 @@
    "net_cash_flow_chf": 894.18
   },
   {
-   "id": "5c333948609a42c68bfa3163",
+   "id": "64405479053b178998b6b38a",
    "branch_id": "main",
    "month": 23,
    "date": "2027-12-01",
@@ -425,7 +425,7 @@
    "net_cash_flow_chf": 894.18
   },
   {
-   "id": "a87f65eb8c8be55427142968",
+   "id": "237fcc6a9c46a2209a59c6d6",
    "branch_id": "main",
    "month": 24,
    "date": "2028-01-01",
@@ -436,7 +436,7 @@
    "net_cash_flow_chf": 894.18
   },
   {
-   "id": "2e8894235de2c7c3bbcacf9b",
+   "id": "1ef541916f7945d788eb5df7",
    "branch_id": "main",
    "month": 25,
    "date": "2028-02-01",
@@ -447,7 +447,7 @@
    "net_cash_flow_chf": 894.18
   },
   {
-   "id": "3d9e50da014f8d5724f0be7f",
+   "id": "00682d4a21c86fcc492a3008",
    "branch_id": "main",
    "month": 26,
    "date": "2028-03-01",
@@ -458,7 +458,7 @@
    "net_cash_flow_chf": 894.18
   },
   {
-   "id": "2ce8e520d9796993e94e0ab4",
+   "id": "1ceb0a4e0b33ba0a6d649541",
    "branch_id": "main",
    "month": 27,
    "date": "2028-04-01",
@@ -469,7 +469,7 @@
    "net_cash_flow_chf": 894.18
   },
   {
-   "id": "7e68ef8d2474a71f4b4140cf",
+   "id": "9b558403f84cd7e6f16841a5",
    "branch_id": "main",
    "month": 28,
    "date": "2028-05-01",
@@ -480,7 +480,7 @@
    "net_cash_flow_chf": 894.18
   },
   {
-   "id": "ea37a39cf7c73cefe28970cb",
+   "id": "47797c49c29f2481569be347",
    "branch_id": "main",
    "month": 29,
    "date": "2028-06-01",
@@ -491,7 +491,7 @@
    "net_cash_flow_chf": 894.18
   },
   {
-   "id": "9fba7b8a630f20b12408039f",
+   "id": "2c622e947ab7ea5340f619a6",
    "branch_id": "main",
    "month": 30,
    "date": "2028-07-01",
@@ -502,7 +502,7 @@
    "net_cash_flow_chf": 894.18
   },
   {
-   "id": "a97790ec6fae0e61fbb74ce5",
+   "id": "0d3d6ba84bce63a48da0662b",
    "branch_id": "main",
    "month": 31,
    "date": "2028-08-01",
@@ -513,7 +513,7 @@
    "net_cash_flow_chf": 894.18
   },
   {
-   "id": "33860d66653f572856839497",
+   "id": "67ddd8037255bc173ce5eb0f",
    "branch_id": "main",
    "month": 32,
    "date": "2028-09-01",
@@ -524,7 +524,7 @@
    "net_cash_flow_chf": 894.18
   },
   {
-   "id": "4e3f454b54f0528c5bceaa98",
+   "id": "8aeb126b233ab84043267f76",
    "branch_id": "main",
    "month": 33,
    "date": "2028-10-01",
@@ -535,7 +535,7 @@
    "net_cash_flow_chf": 894.18
   },
   {
-   "id": "09d7e36396247dbe3d43a545",
+   "id": "49695d27870133c8021c8461",
    "branch_id": "main",
    "month": 34,
    "date": "2028-11-01",
@@ -546,7 +546,7 @@
    "net_cash_flow_chf": 894.18
   },
   {
-   "id": "2c28b260a28fca2d4a984633",
+   "id": "0f5a11dcebaa2a0ba41df435",
    "branch_id": "main",
    "month": 35,
    "date": "2028-12-01",
@@ -557,7 +557,7 @@
    "net_cash_flow_chf": 894.18
   },
   {
-   "id": "13f0e27771b261f79bea4c1c",
+   "id": "cb4648a0e40bb88e3f78b105",
    "branch_id": "main",
    "month": 36,
    "date": "2029-01-01",
@@ -568,7 +568,7 @@
    "net_cash_flow_chf": 894.18
   },
   {
-   "id": "6960a9017d96c2df9b34539b",
+   "id": "bfb6dd0aed7f8b54c842a351",
    "branch_id": "main",
    "month": 37,
    "date": "2029-02-01",
@@ -579,7 +579,7 @@
    "net_cash_flow_chf": 894.18
   },
   {
-   "id": "173a7f98c401474f8aee0daf",
+   "id": "34818712dbeec5ed76a54532",
    "branch_id": "main",
    "month": 38,
    "date": "2029-03-01",
@@ -590,7 +590,7 @@
    "net_cash_flow_chf": 894.18
   },
   {
-   "id": "0dda18bab8aee4aff7663821",
+   "id": "59e0ed8915d132fa311a2fb8",
    "branch_id": "main",
    "month": 39,
    "date": "2029-04-01",
@@ -601,7 +601,7 @@
    "net_cash_flow_chf": 894.18
   },
   {
-   "id": "1edd4168b3d2fc22ffd2ed6a",
+   "id": "c4195b7a88e578ce30c0b9e3",
    "branch_id": "main",
    "month": 40,
    "date": "2029-05-01",
@@ -612,7 +612,7 @@
    "net_cash_flow_chf": 894.18
   },
   {
-   "id": "dfae41df211fe416b47787be",
+   "id": "56d395c04763a42bf1f556d6",
    "branch_id": "main",
    "month": 41,
    "date": "2029-06-01",
@@ -623,7 +623,7 @@
    "net_cash_flow_chf": 894.18
   },
   {
-   "id": "6ece9ebdc144833cb951b752",
+   "id": "004308fe298fc239841a1c6c",
    "branch_id": "main",
    "month": 42,
    "date": "2029-07-01",
@@ -634,7 +634,7 @@
    "net_cash_flow_chf": 894.18
   },
   {
-   "id": "8cfd01f99f131b3ac68f3f94",
+   "id": "3ffc6248e43ecc06a161b6c1",
    "branch_id": "main",
    "month": 43,
    "date": "2029-08-01",
@@ -645,7 +645,7 @@
    "net_cash_flow_chf": 894.18
   },
   {
-   "id": "e8b69b481be263db78ab25b4",
+   "id": "c435b8c256c5d4c9f14b6838",
    "branch_id": "main",
    "month": 44,
    "date": "2029-09-01",
@@ -656,7 +656,7 @@
    "net_cash_flow_chf": 894.18
   },
   {
-   "id": "e4274437f21d11f2dfd3143e",
+   "id": "621b8832d2a484c534149a41",
    "branch_id": "main",
    "month": 45,
    "date": "2029-10-01",
@@ -667,7 +667,7 @@
    "net_cash_flow_chf": 894.18
   },
   {
-   "id": "627a6ef3df56ce3cd3c09623",
+   "id": "37ed7f0f564711a2bee25570",
    "branch_id": "main",
    "month": 46,
    "date": "2029-11-01",
@@ -678,7 +678,7 @@
    "net_cash_flow_chf": 894.18
   },
   {
-   "id": "747e1c275878dba47a8c3efa",
+   "id": "584c77a1a97a0c8599acfa79",
    "branch_id": "main",
    "month": 47,
    "date": "2029-12-01",
@@ -689,7 +689,7 @@
    "net_cash_flow_chf": 894.18
   },
   {
-   "id": "385ab64cd9c0d88e29076a76",
+   "id": "042b58870b87aa3da362e123",
    "branch_id": "main",
    "month": 48,
    "date": "2030-01-01",
@@ -700,7 +700,7 @@
    "net_cash_flow_chf": 894.18
   },
   {
-   "id": "73bf635140a09a254de2328f",
+   "id": "5b0e4e69c76af14224e5a932",
    "branch_id": "main",
    "month": 49,
    "date": "2030-02-01",
@@ -711,7 +711,7 @@
    "net_cash_flow_chf": 894.18
   },
   {
-   "id": "35c0439410af6133bdc874f7",
+   "id": "56c0bd017984c185190871a4",
    "branch_id": "main",
    "month": 50,
    "date": "2030-03-01",
@@ -722,7 +722,7 @@
    "net_cash_flow_chf": 894.18
   },
   {
-   "id": "da4fd842a83be23b0da350a4",
+   "id": "a2ccd1c75d8cfb5161f44a2f",
    "branch_id": "main",
    "month": 51,
    "date": "2030-04-01",
@@ -733,7 +733,7 @@
    "net_cash_flow_chf": 894.18
   },
   {
-   "id": "5c48ee677b9af26d434a6c82",
+   "id": "4360f8e4741a8b690e5e07ea",
    "branch_id": "main",
    "month": 52,
    "date": "2030-05-01",
@@ -744,7 +744,7 @@
    "net_cash_flow_chf": 894.18
   },
   {
-   "id": "1109321d7af3f9d4184388a2",
+   "id": "fd39eba14a18eafc8bd0d841",
    "branch_id": "main",
    "month": 53,
    "date": "2030-06-01",
@@ -755,7 +755,7 @@
    "net_cash_flow_chf": 894.18
   },
   {
-   "id": "a6f91e624045822283254484",
+   "id": "417d30c003a05e733034fff9",
    "branch_id": "main",
    "month": 54,
    "date": "2030-07-01",
@@ -766,7 +766,7 @@
    "net_cash_flow_chf": 894.18
   },
   {
-   "id": "f3dbb070d6373a425a417f1e",
+   "id": "8ed0889fd66e459efe8f2374",
    "branch_id": "main",
    "month": 55,
    "date": "2030-08-01",
@@ -777,7 +777,7 @@
    "net_cash_flow_chf": 894.18
   },
   {
-   "id": "17e23a2b7b11dd12b4c3105d",
+   "id": "8aa88680a334cbd0119c23ef",
    "branch_id": "main",
    "month": 56,
    "date": "2030-09-01",
@@ -788,7 +788,7 @@
    "net_cash_flow_chf": 894.18
   },
   {
-   "id": "1fbfadf1ff3688719216f414",
+   "id": "31fbe58296dc9052539ef8b1",
    "branch_id": "main",
    "month": 57,
    "date": "2030-10-01",
@@ -799,7 +799,7 @@
    "net_cash_flow_chf": 894.18
   },
   {
-   "id": "e95c0debbb1e59ef1b152c18",
+   "id": "7e51467af908e20368300490",
    "branch_id": "main",
    "month": 58,
    "date": "2030-11-01",
@@ -810,7 +810,7 @@
    "net_cash_flow_chf": 894.18
   },
   {
-   "id": "b2390abbc72464068457d7cc",
+   "id": "26bbd772c7d6c5b7770e4961",
    "branch_id": "main",
    "month": 59,
    "date": "2030-12-01",
@@ -821,7 +821,7 @@
    "net_cash_flow_chf": 894.18
   },
   {
-   "id": "1d047c84507b30a1e91b3aa5",
+   "id": "0e76731bd3152bd266654811",
    "branch_id": "main",
    "month": 60,
    "date": "2031-01-01",
@@ -832,8 +832,8 @@
    "net_cash_flow_chf": 894.18
   },
   {
-   "id": "047e47e62b7995f496aabab4",
-   "branch_id": "b46857b4e6438934e3ec1f88",
+   "id": "7b7d2e3c05af84f6a054dc16",
+   "branch_id": "b88d5be15103cf9d8e1c6ab9",
    "month": 37,
    "date": "2029-02-01",
    "cash_chf": 46031.75000000001,
@@ -843,8 +843,8 @@
    "net_cash_flow_chf": 2235.45
   },
   {
-   "id": "e567cb88eb42fa52b98a1447",
-   "branch_id": "b46857b4e6438934e3ec1f88",
+   "id": "c2dce50de149e6c727345874",
+   "branch_id": "b88d5be15103cf9d8e1c6ab9",
    "month": 38,
    "date": "2029-03-01",
    "cash_chf": 48267.200000000004,
@@ -854,8 +854,8 @@
    "net_cash_flow_chf": 2235.45
   },
   {
-   "id": "2d8efdbb380c92fcde4db153",
-   "branch_id": "b46857b4e6438934e3ec1f88",
+   "id": "f93fd1a1e68f336f73aa263b",
+   "branch_id": "b88d5be15103cf9d8e1c6ab9",
    "month": 39,
    "date": "2029-04-01",
    "cash_chf": 50502.65,
@@ -865,8 +865,8 @@
    "net_cash_flow_chf": 2235.45
   },
   {
-   "id": "0be78abeab8be5db7db265e4",
-   "branch_id": "b46857b4e6438934e3ec1f88",
+   "id": "4c76cf7e730bb9844dfe160e",
+   "branch_id": "b88d5be15103cf9d8e1c6ab9",
    "month": 40,
    "date": "2029-05-01",
    "cash_chf": 52738.1,
@@ -876,8 +876,8 @@
    "net_cash_flow_chf": 2235.45
   },
   {
-   "id": "e40371e0ffefa7f5857f63d0",
-   "branch_id": "b46857b4e6438934e3ec1f88",
+   "id": "6cd984b64da090799d9113b9",
+   "branch_id": "b88d5be15103cf9d8e1c6ab9",
    "month": 41,
    "date": "2029-06-01",
    "cash_chf": 54973.549999999996,
@@ -887,8 +887,8 @@
    "net_cash_flow_chf": 2235.45
   },
   {
-   "id": "6559e83e5a16caec80eb3a55",
-   "branch_id": "b46857b4e6438934e3ec1f88",
+   "id": "38b49c1bc1b8c95d5ce5702b",
+   "branch_id": "b88d5be15103cf9d8e1c6ab9",
    "month": 42,
    "date": "2029-07-01",
    "cash_chf": 57208.99999999999,
@@ -898,8 +898,8 @@
    "net_cash_flow_chf": 2235.45
   },
   {
-   "id": "79c7929ddc251aa6061264ce",
-   "branch_id": "b46857b4e6438934e3ec1f88",
+   "id": "d8b58348cfc056151c63e289",
+   "branch_id": "b88d5be15103cf9d8e1c6ab9",
    "month": 43,
    "date": "2029-08-01",
    "cash_chf": 59444.44999999999,
@@ -909,8 +909,8 @@
    "net_cash_flow_chf": 2235.45
   },
   {
-   "id": "9f90c0cbbaf70969b902a8f1",
-   "branch_id": "b46857b4e6438934e3ec1f88",
+   "id": "eb71b1af9daa27ebd690beca",
+   "branch_id": "b88d5be15103cf9d8e1c6ab9",
    "month": 44,
    "date": "2029-09-01",
    "cash_chf": 61679.89999999999,
@@ -920,8 +920,8 @@
    "net_cash_flow_chf": 2235.45
   },
   {
-   "id": "44bf7316ec12f19113d676ad",
-   "branch_id": "b46857b4e6438934e3ec1f88",
+   "id": "fd93d4bfcdd0984e0dcfa1bf",
+   "branch_id": "b88d5be15103cf9d8e1c6ab9",
    "month": 45,
    "date": "2029-10-01",
    "cash_chf": 63915.349999999984,
@@ -931,8 +931,8 @@
    "net_cash_flow_chf": 2235.45
   },
   {
-   "id": "7298f09b24c8b6faaf7084bd",
-   "branch_id": "b46857b4e6438934e3ec1f88",
+   "id": "ee17a1f47659ec92aa935e2a",
+   "branch_id": "b88d5be15103cf9d8e1c6ab9",
    "month": 46,
    "date": "2029-11-01",
    "cash_chf": 66150.79999999997,
@@ -942,8 +942,8 @@
    "net_cash_flow_chf": 2235.45
   },
   {
-   "id": "a24a415457c7d7652dfa9406",
-   "branch_id": "b46857b4e6438934e3ec1f88",
+   "id": "6a85205ff8730448d4076046",
+   "branch_id": "b88d5be15103cf9d8e1c6ab9",
    "month": 47,
    "date": "2029-12-01",
    "cash_chf": 68386.24999999997,
@@ -953,8 +953,8 @@
    "net_cash_flow_chf": 2235.45
   },
   {
-   "id": "cfae83018064316c099c29b8",
-   "branch_id": "b46857b4e6438934e3ec1f88",
+   "id": "46cc2adee10c3b6f090d81cf",
+   "branch_id": "b88d5be15103cf9d8e1c6ab9",
    "month": 48,
    "date": "2030-01-01",
    "cash_chf": 70621.69999999997,
@@ -964,8 +964,8 @@
    "net_cash_flow_chf": 2235.45
   },
   {
-   "id": "2a54954f6c3fbe4c8ff0e0f2",
-   "branch_id": "b46857b4e6438934e3ec1f88",
+   "id": "7103e6ef9511ac7194cf689a",
+   "branch_id": "b88d5be15103cf9d8e1c6ab9",
    "month": 49,
    "date": "2030-02-01",
    "cash_chf": 72857.14999999997,
@@ -975,8 +975,8 @@
    "net_cash_flow_chf": 2235.45
   },
   {
-   "id": "a233436a13a72484a9378fce",
-   "branch_id": "b46857b4e6438934e3ec1f88",
+   "id": "2bcb97c1cc564de5f87bb6a7",
+   "branch_id": "b88d5be15103cf9d8e1c6ab9",
    "month": 50,
    "date": "2030-03-01",
    "cash_chf": 75092.59999999996,
@@ -986,8 +986,8 @@
    "net_cash_flow_chf": 2235.45
   },
   {
-   "id": "8e409586a2d87e2035103d93",
-   "branch_id": "b46857b4e6438934e3ec1f88",
+   "id": "bd2d36e535c72db13f0f1637",
+   "branch_id": "b88d5be15103cf9d8e1c6ab9",
    "month": 51,
    "date": "2030-04-01",
    "cash_chf": 77328.04999999996,
@@ -997,8 +997,8 @@
    "net_cash_flow_chf": 2235.45
   },
   {
-   "id": "a19ab3140bde1b5b2acacbd1",
-   "branch_id": "b46857b4e6438934e3ec1f88",
+   "id": "24ae2babcd4609d6fadf4a2a",
+   "branch_id": "b88d5be15103cf9d8e1c6ab9",
    "month": 52,
    "date": "2030-05-01",
    "cash_chf": 79563.49999999996,
@@ -1008,8 +1008,8 @@
    "net_cash_flow_chf": 2235.45
   },
   {
-   "id": "5d9f6a5832a370d89408bbcd",
-   "branch_id": "b46857b4e6438934e3ec1f88",
+   "id": "7fef0e90191a12fbc41b7c9b",
+   "branch_id": "b88d5be15103cf9d8e1c6ab9",
    "month": 53,
    "date": "2030-06-01",
    "cash_chf": 81798.94999999995,
@@ -1019,8 +1019,8 @@
    "net_cash_flow_chf": 2235.45
   },
   {
-   "id": "ddccfccd622dbb18c79b74a0",
-   "branch_id": "b46857b4e6438934e3ec1f88",
+   "id": "9dde113f40fd2156a9c8db93",
+   "branch_id": "b88d5be15103cf9d8e1c6ab9",
    "month": 54,
    "date": "2030-07-01",
    "cash_chf": 84034.39999999995,
@@ -1030,8 +1030,8 @@
    "net_cash_flow_chf": 2235.45
   },
   {
-   "id": "d15334057a3f3e944f4c3fc4",
-   "branch_id": "b46857b4e6438934e3ec1f88",
+   "id": "fb5f1dc5288244985d90f6c1",
+   "branch_id": "b88d5be15103cf9d8e1c6ab9",
    "month": 55,
    "date": "2030-08-01",
    "cash_chf": 86269.84999999995,
@@ -1041,8 +1041,8 @@
    "net_cash_flow_chf": 2235.45
   },
   {
-   "id": "b6ea4a4ce368be41633d798b",
-   "branch_id": "b46857b4e6438934e3ec1f88",
+   "id": "9edad8b788f2d5ae539a0b4f",
+   "branch_id": "b88d5be15103cf9d8e1c6ab9",
    "month": 56,
    "date": "2030-09-01",
    "cash_chf": 88505.29999999994,
@@ -1052,8 +1052,8 @@
    "net_cash_flow_chf": 2235.45
   },
   {
-   "id": "aee36d23170f95b841a290e0",
-   "branch_id": "b46857b4e6438934e3ec1f88",
+   "id": "c602cdb27f4d0b05ba8557d4",
+   "branch_id": "b88d5be15103cf9d8e1c6ab9",
    "month": 57,
    "date": "2030-10-01",
    "cash_chf": 90740.74999999994,
@@ -1063,8 +1063,8 @@
    "net_cash_flow_chf": 2235.45
   },
   {
-   "id": "c9ebaec35c3c22fed772687a",
-   "branch_id": "b46857b4e6438934e3ec1f88",
+   "id": "505eade32a3985d8f0afb226",
+   "branch_id": "b88d5be15103cf9d8e1c6ab9",
    "month": 58,
    "date": "2030-11-01",
    "cash_chf": 92976.19999999994,
@@ -1074,8 +1074,8 @@
    "net_cash_flow_chf": 2235.45
   },
   {
-   "id": "06b09e3af6767b38c72d8f0f",
-   "branch_id": "b46857b4e6438934e3ec1f88",
+   "id": "3b44998d14da725b8748d90a",
+   "branch_id": "b88d5be15103cf9d8e1c6ab9",
    "month": 59,
    "date": "2030-12-01",
    "cash_chf": 95211.64999999994,
@@ -1085,8 +1085,8 @@
    "net_cash_flow_chf": 2235.45
   },
   {
-   "id": "ac45ef775a8b7b2009eb63a9",
-   "branch_id": "b46857b4e6438934e3ec1f88",
+   "id": "00475a6bf52e8ce318c95563",
+   "branch_id": "b88d5be15103cf9d8e1c6ab9",
    "month": 60,
    "date": "2031-01-01",
    "cash_chf": 97447.09999999993,
@@ -1096,8 +1096,8 @@
    "net_cash_flow_chf": 2235.45
   },
   {
-   "id": "94ae33787520789c68604206",
-   "branch_id": "b91c8ac24d9d89cdc8d00014",
+   "id": "0e6b48e9c29723369fa8a0a1",
+   "branch_id": "bb21ae00098d751d605f16d9",
    "month": 49,
    "date": "2030-02-01",
    "cash_chf": 55420.640000000014,
@@ -1107,8 +1107,8 @@
    "net_cash_flow_chf": 894.18
   },
   {
-   "id": "f59dee28d86f628390380f89",
-   "branch_id": "b91c8ac24d9d89cdc8d00014",
+   "id": "5d1a848d270e0795e29f229c",
+   "branch_id": "bb21ae00098d751d605f16d9",
    "month": 50,
    "date": "2030-03-01",
    "cash_chf": 56314.820000000014,
@@ -1118,8 +1118,8 @@
    "net_cash_flow_chf": 894.18
   },
   {
-   "id": "e0ad3536ea137c97b03a821b",
-   "branch_id": "b91c8ac24d9d89cdc8d00014",
+   "id": "80e7f8d72caf9b338538515a",
+   "branch_id": "bb21ae00098d751d605f16d9",
    "month": 51,
    "date": "2030-04-01",
    "cash_chf": 57209.000000000015,
@@ -1129,8 +1129,8 @@
    "net_cash_flow_chf": 894.18
   },
   {
-   "id": "d4d6afe3e967c7fb483ad48d",
-   "branch_id": "b91c8ac24d9d89cdc8d00014",
+   "id": "1b9a5f1ccd2f491547b6eb30",
+   "branch_id": "bb21ae00098d751d605f16d9",
    "month": 52,
    "date": "2030-05-01",
    "cash_chf": 58103.180000000015,
@@ -1140,8 +1140,8 @@
    "net_cash_flow_chf": 894.18
   },
   {
-   "id": "d3aaa99899953b33956c9968",
-   "branch_id": "b91c8ac24d9d89cdc8d00014",
+   "id": "7d9d58f6fa13ce3ab19ffdb3",
+   "branch_id": "bb21ae00098d751d605f16d9",
    "month": 53,
    "date": "2030-06-01",
    "cash_chf": 58997.360000000015,
@@ -1151,8 +1151,8 @@
    "net_cash_flow_chf": 894.18
   },
   {
-   "id": "4bdd5ccc9f1dcb52adbcf467",
-   "branch_id": "b91c8ac24d9d89cdc8d00014",
+   "id": "e96fab34afd00129d2147cc3",
+   "branch_id": "bb21ae00098d751d605f16d9",
    "month": 54,
    "date": "2030-07-01",
    "cash_chf": 59891.540000000015,
@@ -1162,8 +1162,8 @@
    "net_cash_flow_chf": 894.18
   },
   {
-   "id": "a3196fbf29a891a44a5f2142",
-   "branch_id": "b91c8ac24d9d89cdc8d00014",
+   "id": "fdf758d0602285bf54f6bb59",
+   "branch_id": "bb21ae00098d751d605f16d9",
    "month": 55,
    "date": "2030-08-01",
    "cash_chf": 60785.720000000016,
@@ -1173,8 +1173,8 @@
    "net_cash_flow_chf": 894.18
   },
   {
-   "id": "c49bbc98e1b2bfdfc43d38f6",
-   "branch_id": "b91c8ac24d9d89cdc8d00014",
+   "id": "2d79d3681d860d668e2cf491",
+   "branch_id": "bb21ae00098d751d605f16d9",
    "month": 56,
    "date": "2030-09-01",
    "cash_chf": 61679.900000000016,
@@ -1184,8 +1184,8 @@
    "net_cash_flow_chf": 894.18
   },
   {
-   "id": "f57922c2494fdc7f7b4f0f14",
-   "branch_id": "b91c8ac24d9d89cdc8d00014",
+   "id": "933ce7206f499bad4407f3dc",
+   "branch_id": "bb21ae00098d751d605f16d9",
    "month": 57,
    "date": "2030-10-01",
    "cash_chf": 62574.080000000016,
@@ -1195,8 +1195,8 @@
    "net_cash_flow_chf": 894.18
   },
   {
-   "id": "44a6e0a2efccc9cfe8a7c90f",
-   "branch_id": "b91c8ac24d9d89cdc8d00014",
+   "id": "2e18c9b4529bc5d42b544ef3",
+   "branch_id": "bb21ae00098d751d605f16d9",
    "month": 58,
    "date": "2030-11-01",
    "cash_chf": 63468.26000000002,
@@ -1206,8 +1206,8 @@
    "net_cash_flow_chf": 894.18
   },
   {
-   "id": "22e67fd104a6d2d9af68b93c",
-   "branch_id": "b91c8ac24d9d89cdc8d00014",
+   "id": "2235cea899c58f981a4673f8",
+   "branch_id": "bb21ae00098d751d605f16d9",
    "month": 59,
    "date": "2030-12-01",
    "cash_chf": 64362.44000000002,
@@ -1217,8 +1217,8 @@
    "net_cash_flow_chf": 894.18
   },
   {
-   "id": "a3a20a4fc62dcf239a9a2101",
-   "branch_id": "b91c8ac24d9d89cdc8d00014",
+   "id": "e7c662ef838fdbd72dc6c81c",
+   "branch_id": "bb21ae00098d751d605f16d9",
    "month": 60,
    "date": "2031-01-01",
    "cash_chf": 65256.62000000002,
@@ -1228,8 +1228,8 @@
    "net_cash_flow_chf": 894.18
   },
   {
-   "id": "7bb78c22616fe7a54e0a5cc7",
-   "branch_id": "bd01fa8853e2384879d65e6a",
+   "id": "e726b7a2e955e769f775d08e",
+   "branch_id": "b22b9c2ea84ed4d42a1efdc6",
    "month": 31,
    "date": "2028-08-01",
    "cash_chf": 21031.22000000001,
@@ -1239,8 +1239,8 @@
    "net_cash_flow_chf": -17400.0
   },
   {
-   "id": "9933086267710bcf834ff2ec",
-   "branch_id": "bd01fa8853e2384879d65e6a",
+   "id": "1c93b73b16365af6045729a1",
+   "branch_id": "b22b9c2ea84ed4d42a1efdc6",
    "month": 32,
    "date": "2028-09-01",
    "cash_chf": 19631.22000000001,
@@ -1250,8 +1250,8 @@
    "net_cash_flow_chf": -1400.0
   },
   {
-   "id": "689617cf683ac8b310f8a174",
-   "branch_id": "bd01fa8853e2384879d65e6a",
+   "id": "48b32a85ad0b1f4fdf9d534c",
+   "branch_id": "b22b9c2ea84ed4d42a1efdc6",
    "month": 33,
    "date": "2028-10-01",
    "cash_chf": 18231.22000000001,
@@ -1261,8 +1261,8 @@
    "net_cash_flow_chf": -1400.0
   },
   {
-   "id": "b0bb2f93484f998bc4747f60",
-   "branch_id": "bd01fa8853e2384879d65e6a",
+   "id": "4d171ca64fba469e632e81d7",
+   "branch_id": "b22b9c2ea84ed4d42a1efdc6",
    "month": 34,
    "date": "2028-11-01",
    "cash_chf": 16831.22000000001,
@@ -1272,8 +1272,8 @@
    "net_cash_flow_chf": -1400.0
   },
   {
-   "id": "48bb59a35fd49acf6c7d0aac",
-   "branch_id": "bd01fa8853e2384879d65e6a",
+   "id": "80f94366eb3da0228e4b4a64",
+   "branch_id": "b22b9c2ea84ed4d42a1efdc6",
    "month": 35,
    "date": "2028-12-01",
    "cash_chf": 15431.220000000008,
@@ -1283,8 +1283,8 @@
    "net_cash_flow_chf": -1400.0
   },
   {
-   "id": "5d5a24aef458c09a52a697fb",
-   "branch_id": "bd01fa8853e2384879d65e6a",
+   "id": "38aab62429b5c996cdc8e434",
+   "branch_id": "b22b9c2ea84ed4d42a1efdc6",
    "month": 36,
    "date": "2029-01-01",
    "cash_chf": 14031.220000000008,
@@ -1294,8 +1294,8 @@
    "net_cash_flow_chf": -1400.0
   },
   {
-   "id": "b12b01008a6e863be5dc1820",
-   "branch_id": "bd01fa8853e2384879d65e6a",
+   "id": "77846f051ecb85103537248e",
+   "branch_id": "b22b9c2ea84ed4d42a1efdc6",
    "month": 37,
    "date": "2029-02-01",
    "cash_chf": 12631.220000000008,
@@ -1305,8 +1305,8 @@
    "net_cash_flow_chf": -1400.0
   },
   {
-   "id": "64da4eb31f3c4d065bcaf584",
-   "branch_id": "bd01fa8853e2384879d65e6a",
+   "id": "7824f14a2c3840dc280a6d27",
+   "branch_id": "b22b9c2ea84ed4d42a1efdc6",
    "month": 38,
    "date": "2029-03-01",
    "cash_chf": 11231.220000000008,
@@ -1316,8 +1316,8 @@
    "net_cash_flow_chf": -1400.0
   },
   {
-   "id": "b88d841d18fedf6ed7e89479",
-   "branch_id": "bd01fa8853e2384879d65e6a",
+   "id": "7dc2112118d5eab0fd0426fd",
+   "branch_id": "b22b9c2ea84ed4d42a1efdc6",
    "month": 39,
    "date": "2029-04-01",
    "cash_chf": 9831.220000000008,
@@ -1327,8 +1327,8 @@
    "net_cash_flow_chf": -1400.0
   },
   {
-   "id": "a12ac090b9ea59511509dcb2",
-   "branch_id": "bd01fa8853e2384879d65e6a",
+   "id": "d510f774c42136870bc36aac",
+   "branch_id": "b22b9c2ea84ed4d42a1efdc6",
    "month": 40,
    "date": "2029-05-01",
    "cash_chf": 8431.220000000008,
@@ -1338,8 +1338,8 @@
    "net_cash_flow_chf": -1400.0
   },
   {
-   "id": "8b4688f70dfad091bdac57e5",
-   "branch_id": "bd01fa8853e2384879d65e6a",
+   "id": "8f937c499d3248589ffdf29a",
+   "branch_id": "b22b9c2ea84ed4d42a1efdc6",
    "month": 41,
    "date": "2029-06-01",
    "cash_chf": 7031.220000000008,
@@ -1349,8 +1349,8 @@
    "net_cash_flow_chf": -1400.0
   },
   {
-   "id": "602a8c4f2ffa44b4244f5941",
-   "branch_id": "bd01fa8853e2384879d65e6a",
+   "id": "b60d765b9900fee31aa89236",
+   "branch_id": "b22b9c2ea84ed4d42a1efdc6",
    "month": 42,
    "date": "2029-07-01",
    "cash_chf": 5631.220000000008,
@@ -1360,8 +1360,8 @@
    "net_cash_flow_chf": -1400.0
   },
   {
-   "id": "1dc7c302c82b3e9074465ade",
-   "branch_id": "bd01fa8853e2384879d65e6a",
+   "id": "4dabddb899760199e6f079bf",
+   "branch_id": "b22b9c2ea84ed4d42a1efdc6",
    "month": 43,
    "date": "2029-08-01",
    "cash_chf": 4231.220000000008,
@@ -1371,8 +1371,8 @@
    "net_cash_flow_chf": -1400.0
   },
   {
-   "id": "d94766da651e3e0f93a8e0e7",
-   "branch_id": "bd01fa8853e2384879d65e6a",
+   "id": "47c35632669387f7a9e17a5f",
+   "branch_id": "b22b9c2ea84ed4d42a1efdc6",
    "month": 44,
    "date": "2029-09-01",
    "cash_chf": 2831.2200000000084,
@@ -1382,8 +1382,8 @@
    "net_cash_flow_chf": -1400.0
   },
   {
-   "id": "7e2851dc986d9caad7f65de7",
-   "branch_id": "bd01fa8853e2384879d65e6a",
+   "id": "51fde907aa627065d622d6d6",
+   "branch_id": "b22b9c2ea84ed4d42a1efdc6",
    "month": 45,
    "date": "2029-10-01",
    "cash_chf": 1431.2200000000084,
@@ -1393,8 +1393,8 @@
    "net_cash_flow_chf": -1400.0
   },
   {
-   "id": "bd8e3a9697c37b15d33e6d94",
-   "branch_id": "bd01fa8853e2384879d65e6a",
+   "id": "bb4e330a10186502fb7b534e",
+   "branch_id": "b22b9c2ea84ed4d42a1efdc6",
    "month": 46,
    "date": "2029-11-01",
    "cash_chf": 31.22000000000844,
@@ -1404,8 +1404,8 @@
    "net_cash_flow_chf": -1400.0
   },
   {
-   "id": "930bcada9ee214cf118b3968",
-   "branch_id": "bd01fa8853e2384879d65e6a",
+   "id": "33da180b5a81c6c38dd41a45",
+   "branch_id": "b22b9c2ea84ed4d42a1efdc6",
    "month": 47,
    "date": "2029-12-01",
    "cash_chf": -1368.7799999999916,
@@ -1415,8 +1415,8 @@
    "net_cash_flow_chf": -1400.0
   },
   {
-   "id": "a9e27dbd9d87f2cca664ca42",
-   "branch_id": "bd01fa8853e2384879d65e6a",
+   "id": "e020f4cb5de535cfa64ab434",
+   "branch_id": "b22b9c2ea84ed4d42a1efdc6",
    "month": 48,
    "date": "2030-01-01",
    "cash_chf": -2768.7799999999916,
@@ -1426,8 +1426,8 @@
    "net_cash_flow_chf": -1400.0
   },
   {
-   "id": "0ec5acc50ebe53927d8a46a9",
-   "branch_id": "bd01fa8853e2384879d65e6a",
+   "id": "8689bb1ba8316dbee20da5f4",
+   "branch_id": "b22b9c2ea84ed4d42a1efdc6",
    "month": 49,
    "date": "2030-02-01",
    "cash_chf": -4168.779999999992,
@@ -1437,8 +1437,8 @@
    "net_cash_flow_chf": -1400.0
   },
   {
-   "id": "b2480b833cf63f8617d68e83",
-   "branch_id": "bd01fa8853e2384879d65e6a",
+   "id": "90b569c047c2128d9d228cb6",
+   "branch_id": "b22b9c2ea84ed4d42a1efdc6",
    "month": 50,
    "date": "2030-03-01",
    "cash_chf": -5568.779999999992,
@@ -1448,8 +1448,8 @@
    "net_cash_flow_chf": -1400.0
   },
   {
-   "id": "da116c7aab9c7e8b45506f7b",
-   "branch_id": "bd01fa8853e2384879d65e6a",
+   "id": "8d16ca39bd3710fb5325e974",
+   "branch_id": "b22b9c2ea84ed4d42a1efdc6",
    "month": 51,
    "date": "2030-04-01",
    "cash_chf": -6968.779999999992,
@@ -1459,8 +1459,8 @@
    "net_cash_flow_chf": -1400.0
   },
   {
-   "id": "9f2943865a2e7913765fdb3a",
-   "branch_id": "bd01fa8853e2384879d65e6a",
+   "id": "5fa3f8404232d52cfa02e377",
+   "branch_id": "b22b9c2ea84ed4d42a1efdc6",
    "month": 52,
    "date": "2030-05-01",
    "cash_chf": -8368.779999999992,
@@ -1470,8 +1470,8 @@
    "net_cash_flow_chf": -1400.0
   },
   {
-   "id": "654ec736ef39f2758593e661",
-   "branch_id": "bd01fa8853e2384879d65e6a",
+   "id": "282698a32ee2feba2520e372",
+   "branch_id": "b22b9c2ea84ed4d42a1efdc6",
    "month": 53,
    "date": "2030-06-01",
    "cash_chf": -9768.779999999992,
@@ -1481,8 +1481,8 @@
    "net_cash_flow_chf": -1400.0
   },
   {
-   "id": "196a233b0fe9ba6f96012c6c",
-   "branch_id": "bd01fa8853e2384879d65e6a",
+   "id": "2307cc8112bac6a4b40c7602",
+   "branch_id": "b22b9c2ea84ed4d42a1efdc6",
    "month": 54,
    "date": "2030-07-01",
    "cash_chf": -11168.779999999992,
@@ -1492,8 +1492,8 @@
    "net_cash_flow_chf": -1400.0
   },
   {
-   "id": "40b4448e280a93d76cd263f6",
-   "branch_id": "bd01fa8853e2384879d65e6a",
+   "id": "69a7304a4a2ca4b89bb2c2dc",
+   "branch_id": "b22b9c2ea84ed4d42a1efdc6",
    "month": 55,
    "date": "2030-08-01",
    "cash_chf": -12568.779999999992,
@@ -1503,8 +1503,8 @@
    "net_cash_flow_chf": -1400.0
   },
   {
-   "id": "712018f97e82096564505328",
-   "branch_id": "bd01fa8853e2384879d65e6a",
+   "id": "899afa0cd4bd80f0840b865f",
+   "branch_id": "b22b9c2ea84ed4d42a1efdc6",
    "month": 56,
    "date": "2030-09-01",
    "cash_chf": -13968.779999999992,
@@ -1514,8 +1514,8 @@
    "net_cash_flow_chf": -1400.0
   },
   {
-   "id": "31d8c082604fb96cd5adf761",
-   "branch_id": "bd01fa8853e2384879d65e6a",
+   "id": "d9c69480357855b4701d462f",
+   "branch_id": "b22b9c2ea84ed4d42a1efdc6",
    "month": 57,
    "date": "2030-10-01",
    "cash_chf": -15368.779999999992,
@@ -1525,8 +1525,8 @@
    "net_cash_flow_chf": -1400.0
   },
   {
-   "id": "3afe2cf40a90403a2af49cad",
-   "branch_id": "bd01fa8853e2384879d65e6a",
+   "id": "6125909de5b7869028b274aa",
+   "branch_id": "b22b9c2ea84ed4d42a1efdc6",
    "month": 58,
    "date": "2030-11-01",
    "cash_chf": -16768.77999999999,
@@ -1536,8 +1536,8 @@
    "net_cash_flow_chf": -1400.0
   },
   {
-   "id": "e257beb3e5511bcad672e6ca",
-   "branch_id": "bd01fa8853e2384879d65e6a",
+   "id": "85c2a9fe0652a630523ae16a",
+   "branch_id": "b22b9c2ea84ed4d42a1efdc6",
    "month": 59,
    "date": "2030-12-01",
    "cash_chf": -18168.77999999999,
@@ -1547,8 +1547,8 @@
    "net_cash_flow_chf": -1400.0
   },
   {
-   "id": "e3ea5016fc79e455400146f4",
-   "branch_id": "bd01fa8853e2384879d65e6a",
+   "id": "f4d5bb24790c462cb90b1106",
+   "branch_id": "b22b9c2ea84ed4d42a1efdc6",
    "month": 60,
    "date": "2031-01-01",
    "cash_chf": -19568.77999999999,

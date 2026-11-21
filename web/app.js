@@ -173,14 +173,29 @@ function startAstralBackdrop() {
    FREE-MOVING ORGANIC LAVA-LAMP SPINE, MORPHING ORBS & BRANCH ARCS
    ========================================================================== */
 
-function drawOrganicOrb(ctx, x, y, t, seed, { selected, isFork, isShortfall, maxHalo }) {
+function hexToRgb(hex) {
+  const clean = (hex || '#ffa159').replace('#', '');
+  const n = parseInt(clean, 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+
+function mixRgb(a, b, ratio) {
+  return [
+    Math.round(a[0] + (b[0] - a[0]) * ratio),
+    Math.round(a[1] + (b[1] - a[1]) * ratio),
+    Math.round(a[2] + (b[2] - a[2]) * ratio),
+  ];
+}
+
+function drawOrganicOrb(ctx, x, y, t, seed, { selected, isFork, isShortfall, tintHex, maxHalo }) {
   const pulse = organicWave(t * 0.65, seed);
   const scale = (selected ? 1.24 : isFork ? 1.12 : 1.0) * (1 + pulse * 0.08);
   const baseR = 9.5 * scale;
 
-  const auraColor = isShortfall ? [255, 107, 91] : [255, 148, 70];
-  const midColor = isShortfall ? [255, 178, 166] : [255, 210, 164];
-  const coreColor = isShortfall ? [255, 242, 238] : [255, 248, 238];
+  const baseRgb = isShortfall ? [255, 107, 91] : hexToRgb(tintHex || '#ff9446');
+  const auraColor = baseRgb;
+  const midColor = mixRgb(baseRgb, [255, 245, 235], 0.42);
+  const coreColor = mixRgb(baseRgb, [255, 252, 248], 0.82);
 
   // 1. Soft astral outer bloom
   const haloR = Math.min(maxHalo, (selected ? 36 : 28) * (1 + pulse * 0.12));
@@ -296,49 +311,45 @@ function drawSpineFrame(nowMs) {
     });
   });
 
-  // 1. Undulating lava-lamp filament connecting consecutive orbs
+  // 1. Undulating lava-lamp filament connecting consecutive orbs (shifts smoothly to branch hue once diverged)
   if (points.length > 1) {
-    const drawFilament = (lineWidth, strokeStyle) => {
-      ctx.beginPath();
-      for (let i = 0; i < points.length - 1; i++) {
-        const a = points[i];
-        const b = points[i + 1];
-        const span = Math.max(1, b.y - a.y);
-        const steps = Math.max(10, Math.ceil(span / 10));
+    for (let i = 0; i < points.length - 1; i++) {
+      const a = points[i];
+      const b = points[i + 1];
+      const segRgb = hexToRgb(b.meta.tintHex || '#ffa159');
+      const segMid = mixRgb(segRgb, [255, 244, 232], 0.45);
+      const span = Math.max(1, b.y - a.y);
+      const steps = Math.max(10, Math.ceil(span / 10));
+
+      const traceSegment = () => {
+        ctx.beginPath();
         for (let s = 0; s <= steps; s++) {
-          if (i > 0 && s === 0) continue;
           const u = s / steps;
           const y = a.y + span * u;
           const linX = a.x + (b.x - a.x) * u;
           const env = Math.sin(Math.PI * u);
           const sway = organicWave(t * 0.68 - y * 0.0048, i * 2.93 + 0.6) * 11 * env;
           const x = linX + sway;
-          if (i === 0 && s === 0) ctx.moveTo(x, y);
+          if (s === 0) ctx.moveTo(x, y);
           else ctx.lineTo(x, y);
         }
-      }
-      ctx.strokeStyle = strokeStyle;
-      ctx.lineWidth = lineWidth;
+      };
+
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
+      traceSegment();
+      ctx.strokeStyle = `rgba(${segRgb.join(',')}, ${b.meta.isDiverged ? 0.24 : 0.17})`;
+      ctx.lineWidth = 10;
       ctx.stroke();
-    };
+
+      traceSegment();
+      ctx.strokeStyle = `rgba(${segMid.join(',')}, ${b.meta.isDiverged ? 0.72 : 0.52})`;
+      ctx.lineWidth = b.meta.isDiverged ? 2.1 : 1.8;
+      ctx.stroke();
+    }
 
     const topY = points[0].y;
     const botY = points[points.length - 1].y;
-    const glowGrad = ctx.createLinearGradient(0, topY, 0, botY);
-    glowGrad.addColorStop(0, 'rgba(255, 162, 92, 0.22)');
-    glowGrad.addColorStop(0.5, 'rgba(255, 138, 61, 0.16)');
-    glowGrad.addColorStop(1, 'rgba(255, 120, 50, 0.09)');
-
-    const coreGrad = ctx.createLinearGradient(0, topY, 0, botY);
-    coreGrad.addColorStop(0, 'rgba(255, 228, 198, 0.65)');
-    coreGrad.addColorStop(0.5, 'rgba(255, 168, 102, 0.50)');
-    coreGrad.addColorStop(1, 'rgba(255, 138, 61, 0.28)');
-
-    drawFilament(10, glowGrad);
-    drawFilament(1.85, coreGrad);
-
     // Subtle slow lava-lamp warm light droplets drifting down the filament
     if (!reduced) {
       const totalSpan = Math.max(1, botY - topY);
@@ -414,6 +425,7 @@ function drawSpineFrame(nowMs) {
       selected: pt.selected,
       isFork: pt.meta.isFork,
       isShortfall: pt.meta.isShortfall,
+      tintHex: pt.meta.tintHex,
       maxHalo,
     });
   }
@@ -626,11 +638,7 @@ function milestoneTitle(node) {
   if (node.month === 0) return 'Starting point';
   if (node.event_summary && node.event_summary !== 'Monthly update') return node.event_summary;
   if (node.month % 12 === 0) return `Year ${node.month / 12}`;
-  if (node.month % 3 === 0) {
-    const yrs = Math.floor(node.month / 12);
-    const rem = node.month % 12;
-    return yrs === 0 ? `Month ${rem}` : `Year ${yrs}, Month ${rem}`;
-  }
+  if (node.month % 6 === 0) return node.month === 6 ? '6 months' : `Year ${(node.month / 12).toFixed(1)}`;
   if (node.state.cash_chf < 0) return 'Cash shortfall';
   return `Month ${node.month}`;
 }
@@ -645,7 +653,7 @@ function buildMilestoneProse(node, prevNode) {
     if (s.total_debt_chf > 0) parts.push(`${money(s.total_debt_chf)} in debt`);
     const phase = s.active_variables?.phase;
     const budget = phase
-      ? ` Monthly net income is ${money(phase.monthly_income_chf)} with ${money(phase.monthly_expenses_chf)} in living expenses.`
+      ? ` Monthly net income is ${money(phase.monthly_income_chf)} with ${money(s.active_variables.expense_terms?.monthly_expenses_chf ?? phase.monthly_expenses_chf)} in living expenses at the start of the year.`
       : '';
     return `${parts.join(', ')}.${budget}`;
   }
@@ -687,7 +695,7 @@ function getPathMilestones(chain, index) {
 
   return chain.filter(node => {
     if (node.month === 0 || node.id === tip.id) return true;
-    if (node.month % 3 === 0) return true;
+    if (node.month % 6 === 0) return true;
     if (index.forkNodeIds.has(node.id)) return true;
     if (node.event_summary && node.event_summary !== 'Monthly update') return true;
     if (node.id === firstBreachId) return true;
@@ -891,27 +899,48 @@ function renderTimelineView() {
     state.activeBranchId = index.branchIds[0];
   }
   const activeMeta = index.branchMeta.get(state.activeBranchId);
-  const chain = activeMeta.chain;
+  const chain = activeMeta.id === 'main' || activeMeta.id === 'root'
+    ? activeMeta.chain
+    : index.nodesByBranch.get(activeMeta.id);
   const milestones = getPathMilestones(chain, index);
 
   if (!state.selectedId || !chain.some(n => n.id === state.selectedId)) {
     state.selectedId = activeMeta.firstNode.month > 0 ? activeMeta.firstNode.id : chain[0].id;
   }
 
-  const horizonYears = (activeMeta.tipNode.month / 12).toFixed(activeMeta.tipNode.month % 12 ? 1 : 0);
-  byId('active-path-kicker').textContent = activeMeta.label.toUpperCase();
-  byId('active-path-subtitle').textContent = activeMeta.id === 'main' || activeMeta.id === 'root'
-    ? `Your ${horizonYears}-year baseline projection (every 3 months).`
-    : `Diverged at ${formatMonthTime(activeMeta.forkMonth)} · compared against your Original path.`;
+  const layout = buildPlanarTreeLayout(getAllGraphMilestones(index), index);
+  const isAlternate = activeMeta.id !== 'main' && activeMeta.id !== 'root';
+  const activeColor = layout.branchColors.get(activeMeta.id) || BRANCH_PALETTE[0];
+  const parentBid = layout.parentBranchOf.get(activeMeta.id);
+  const parentLabel = parentBid ? index.branchMeta.get(parentBid === 'root' ? 'main' : parentBid)?.label : 'Original path';
 
-  renderVerticalTimeline(milestones, activeMeta, index);
+  const horizonYears = (activeMeta.tipNode.month / 12).toFixed(activeMeta.tipNode.month % 12 ? 1 : 0);
+  byId('active-path-kicker').textContent = isAlternate ? `ALTERNATE PATH · ${activeMeta.label.toUpperCase()}` : 'ORIGINAL PATH';
+  const dotEl = byId('active-path-dot');
+  if (dotEl) {
+    dotEl.style.background = activeColor;
+    dotEl.style.boxShadow = `0 0 10px ${activeColor}`;
+  }
+  byId('active-path-subtitle').textContent = isAlternate
+    ? `Diverged from ${parentLabel} at ${formatMonthTime(activeMeta.forkMonth)} · compared against your Original path.`
+    : `Your ${horizonYears}-year baseline projection.`;
+
+  const banner = byId('branch-banner');
+  banner.hidden = !isAlternate;
+  if (isAlternate) {
+    banner.style.setProperty('--branch-accent', activeColor);
+    byId('branch-banner-title').textContent = `Following alternate path: ${activeMeta.label}`;
+    byId('branch-banner-origin').textContent = `Branched from ${parentLabel} at ${formatMonthTime(activeMeta.forkMonth)}`;
+  }
+
+  renderVerticalTimeline(milestones, activeMeta, index, layout);
   renderTreeMinimap(index);
   renderEndSummary(activeMeta, index);
   renderTrajectoryChart(activeMeta, index);
   startSpineAnimation();
 }
 
-function renderVerticalTimeline(milestones, activeMeta, index) {
+function renderVerticalTimeline(milestones, activeMeta, index, layout) {
   const list = byId('vertical-timeline');
   list.replaceChildren();
 
@@ -924,13 +953,17 @@ function renderVerticalTimeline(milestones, activeMeta, index) {
     const isFork = directChildren.length > 1;
     const isShortfall = node.state.cash_chf < 0;
     const isSelected = node.id === state.selectedId;
+    const isDiverged = node.branch_id !== 'root' && node.branch_id !== 'main';
+    const isBranchEntry = isDiverged && prevMilestone && prevMilestone.branch_id !== node.branch_id;
+    const nodeBranchColor = layout.branchColors.get(node.branch_id) || BRANCH_PALETTE[0];
 
     const seed = ((idx + 1) * 2.317) + (node.month * 0.41);
-    state.spineNodesMeta.push({ id: node.id, isFork, isShortfall, seed });
+    state.spineNodesMeta.push({ id: node.id, isFork, isShortfall, isDiverged, tintHex: nodeBranchColor, seed });
 
     const li = document.createElement('li');
-    li.className = `vnode${isSelected ? ' is-selected' : ''}${isFork ? ' is-fork' : ''}`;
+    li.className = `vnode${isSelected ? ' is-selected' : ''}${isFork ? ' is-fork' : ''}${isDiverged ? ' is-diverged' : ''}`;
     li.dataset.nodeId = node.id;
+    li.style.setProperty('--node-branch-color', nodeBranchColor);
     li.addEventListener('click', event => {
       if (event.target.closest('button, .vnode-fork')) return;
       selectNode(node.id, { openDrawer: true });
@@ -944,6 +977,14 @@ function renderVerticalTimeline(milestones, activeMeta, index) {
 
     const content = document.createElement('div');
     content.className = 'vnode-content';
+
+    if (isBranchEntry) {
+      const marker = document.createElement('div');
+      marker.className = 'vnode-branch-marker';
+      const bLabel = index.branchMeta.get(node.branch_id)?.label || 'Alternate path';
+      marker.textContent = `⑂ Alternate path begins · ${bLabel}`;
+      content.append(marker);
+    }
 
     const eyebrow = document.createElement('div');
     eyebrow.className = 'vnode-eyebrow';
@@ -1199,16 +1240,7 @@ function renderTreeMinimap(index) {
 
   const activeSet = new Set(index.branchMeta.get(state.activeBranchId)?.chain.map(n => n.id) || []);
 
-  // Follow the exact same event-only tree structure as the Full Tree View (falling back to start/end if no events)
-  let milestones = treeEventNodes();
-  if (!milestones.length) {
-    milestones = [];
-    if (index.root) milestones.push(index.root);
-    for (const bid of index.branchIds) {
-      const tip = index.branchMeta.get(bid)?.tipNode;
-      if (tip && !milestones.some(n => n.id === tip.id)) milestones.push(tip);
-    }
-  }
+  const milestones = getAllGraphMilestones(index);
 
   const layout = buildPlanarTreeLayout(milestones, index);
   const { dates, laneOffsets, nextLane, branchColors, parentBranchOf } = layout;
@@ -1276,7 +1308,8 @@ function renderTreeMinimap(index) {
     path.setAttribute('stroke-opacity', edge.isActiveEdge ? '0.96' : '0.48');
     path.setAttribute('stroke-linecap', 'round');
     path.setAttribute('class', 'minimap-edge-hit');
-    path.addEventListener('click', () => {
+    path.addEventListener('click', event => {
+      event.stopPropagation();
       const targetBranch = edge.branchId === 'root' ? 'main' : edge.branchId;
       switchActivePath(targetBranch, { focusNodeId: edge.to });
     });
@@ -1355,7 +1388,8 @@ function renderTreeMinimap(index) {
       tooltip.hidden = true;
       applyMinimapHighlight(null);
     });
-    g.addEventListener('click', () => {
+    g.addEventListener('click', event => {
+      event.stopPropagation();
       tooltip.hidden = true;
       const targetBranch = node.branch_id === 'root' ? state.activeBranchId : node.branch_id;
       switchActivePath(targetBranch, { focusNodeId: node.id });
@@ -1564,7 +1598,7 @@ function nodeHealth(node) {
 
 function treeEventNodes() {
   return [...state.nodes.values()].filter(
-    node => node.month !== 0 && node.event_summary && node.event_summary !== 'Monthly update'
+    node => node.parent_id === null || (node.event_summary && node.event_summary !== 'Monthly update')
   );
 }
 
@@ -1608,7 +1642,7 @@ function applyTreeEdgeHighlight(focusNodeId) {
 function renderTreeGraph({ fit = false, focusId = null } = {}) {
   if (!state.nodes.size) return;
   const index = buildTreeIndex();
-  const milestones = treeEventNodes();
+  const milestones = getAllGraphMilestones(index);
   const visible = new Set(milestones.map(n => n.id));
   const activeSet = new Set(index.branchMeta.get(state.activeBranchId)?.chain.map(n => n.id) || []);
 
@@ -1640,9 +1674,14 @@ function renderTreeGraph({ fit = false, focusId = null } = {}) {
     ].filter(Boolean);
     const statusSuffix = flags.length ? `\n● ${status.label}\n${flags.join('\n')}` : '';
 
+    const phase = node.state.active_variables?.phase;
+    const initialValues = node.parent_id === null
+      ? `\nCash ${money(node.state.cash_chf)}${phase ? `\nIncome ${money(phase.monthly_income_chf)}/mo\nExpenses ${money(node.state.active_variables.expense_terms?.monthly_expenses_chf ?? phase.monthly_expenses_chf)}/mo` : ''}`
+      : '';
+
     return {
       id: node.id,
-      label: `${originLine}${milestoneTitle(node)}\n${money(node.state.net_worth_chf)}${statusSuffix}`,
+      label: `${originLine}${milestoneTitle(node)}\n${money(node.state.net_worth_chf)}${initialValues}${statusSuffix}`,
       x: dates.indexOf(node.date) * 310,
       y: (laneOffsets.get(node.branch_id) + rowOffset) * 165,
       color: {
@@ -1718,7 +1757,7 @@ function renderTreeGraph({ fit = false, focusId = null } = {}) {
     });
     // Time axis drawn along the bottom of the date columns
     state.network.on('afterDrawing', ctx => {
-      const nodes = treeEventNodes().filter(node => state.graphNodes?.get(node.id));
+      const nodes = getAllGraphMilestones(buildTreeIndex()).filter(node => state.graphNodes?.get(node.id));
       if (!nodes.length) return;
       const columns = [...new Set(nodes.map(node => node.date))].sort();
       const scale = state.network.getScale();
@@ -1962,6 +2001,98 @@ function renderInspector(node, { focusBranchInput = false } = {}) {
   appendDetails(breakdown, node.state);
   acctSec.append(breakdown);
 
+  const editForm = document.createElement('form');
+  editForm.className = 'branch-form node-edit-form';
+  const editMonth = Math.max(0, node.month - 1);
+  const editPhase = node.scenario.phases.find(phase => phase.start_month <= editMonth && (phase.end_month === null || editMonth < phase.end_month));
+  const editCost = node.scenario.one_off_costs.filter(cost => cost.month === editMonth).reduce((sum, cost) => sum + cost.amount_chf, 0);
+  const terms = s.active_variables.expense_terms || {};
+  const startingExpense = terms.monthly_expenses_chf ?? editPhase.monthly_expenses_chf;
+  const fields = [
+    ...(node.month === 0 ? [{ name: 'cash_chf', label: 'Starting cash (CHF)', value: s.cash_chf }] : []),
+    { name: 'monthly_income_chf', label: 'Monthly income (CHF)', value: editPhase.monthly_income_chf },
+    { name: 'monthly_expenses_chf', label: 'Monthly expenses at start of year (CHF)', value: startingExpense },
+    { name: 'yearly_expenses_chf', label: 'Annual expenses at start of year (CHF)', value: startingExpense * 12 },
+    ...(node.month === 0 ? [{ name: 'annual_inflation', label: 'Default annual inflation (%)', value: node.scenario.annual_inflation, percent: true }] : []),
+    { name: 'year_inflation', label: `Inflation for ${terms.year ?? node.date.slice(0, 4)} (%)`, value: terms.year_inflation ?? null, percent: true, optional: true, placeholder: 'Use default annual inflation' },
+    { name: 'inflation_exempt', label: 'Fixed by contract, unaffected by inflation', value: terms.inflation_exempt ?? false, type: 'checkbox' },
+    { name: 'duration_months', label: 'Expense duration (months)', value: terms.duration_months ?? null, optional: true, placeholder: 'Ongoing' },
+    { name: 'one_off_cost_chf', label: 'One-time cost (CHF)', value: editCost },
+    { name: 'date', label: 'Date', value: node.date, type: 'date' },
+  ];
+  const editTitle = document.createElement('h3');
+  editTitle.textContent = 'Edit this point';
+  editForm.append(editTitle);
+  for (const field of fields) {
+    const label = document.createElement('label');
+    const input = document.createElement('input');
+    input.type = field.type || 'number';
+    input.name = field.name;
+    if (field.type === 'checkbox') {
+      input.checked = field.value;
+      label.className = 'node-edit-check';
+      label.append(input, document.createTextNode(field.label));
+      editForm.append(label);
+      continue;
+    }
+    label.textContent = field.label;
+    input.value = field.value === null ? '' : field.percent ? Number((field.value * 100).toFixed(8)) : field.value;
+    input.required = !field.optional;
+    if (field.placeholder) input.placeholder = field.placeholder;
+    if (input.type === 'number') {
+      input.step = field.name === 'duration_months' ? '1' : 'any';
+      if (field.name === 'duration_months') input.min = '1';
+      else if (field.percent) input.min = '-99.999999';
+      else if (field.name !== 'cash_chf') input.min = '0';
+    }
+    label.append(input);
+    editForm.append(label);
+  }
+  const monthlyExpenses = editForm.elements.monthly_expenses_chf;
+  const yearlyExpenses = editForm.elements.yearly_expenses_chf;
+  monthlyExpenses.addEventListener('input', () => { yearlyExpenses.value = Number(monthlyExpenses.value) * 12; });
+  yearlyExpenses.addEventListener('input', () => { monthlyExpenses.value = Number(yearlyExpenses.value) / 12; });
+  const editError = document.createElement('p');
+  editError.className = 'form-error';
+  editError.setAttribute('role', 'alert');
+  const editButton = document.createElement('button');
+  editButton.type = 'submit';
+  editButton.className = 'primary-button wide';
+  editButton.textContent = 'Save changes';
+  editForm.append(editError, editButton);
+  editForm.addEventListener('submit', async event => {
+    event.preventDefault();
+    const edits = {};
+    for (const field of fields) {
+      if (field.name === 'yearly_expenses_chf') continue;
+      const input = editForm.elements[field.name];
+      let value;
+      if (input.type === 'checkbox') value = input.checked;
+      else if (input.type === 'number') value = input.value === '' ? null : Number(input.value) / (field.percent ? 100 : 1);
+      else value = input.value;
+      if (value !== field.value && !(field.percent && value !== null && field.value !== null && Math.abs(value - field.value) < 1e-10)) edits[field.name] = value;
+    }
+    if (!Object.keys(edits).length) return;
+    editError.textContent = '';
+    editButton.disabled = true;
+    const revision = state.revision;
+    try {
+      const result = await request('/api/edit-nodes', { nodes: [...state.nodes.values()], node_id: node.id, edits });
+      if (revision !== state.revision) return;
+      state.revision += 1;
+      state.narratives.clear();
+      for (const updated of result.nodes) state.nodes.set(updated.id, updated);
+      if (state.resultsView === 'tree') renderTreeGraph({ focusId: node.id });
+      else renderTimelineView();
+      selectNode(node.id);
+      showToast('Changes saved');
+    } catch (error) {
+      editError.textContent = error.message;
+    } finally {
+      editButton.disabled = false;
+    }
+  });
+
   const form = document.createElement('form');
   form.id = 'branch-form';
   form.className = 'branch-form';
@@ -1976,7 +2107,6 @@ function renderInspector(node, { focusBranchInput = false } = {}) {
     <label for="branch-months">Explore this branch for</label>
     <div class="select-wrap">
       <select id="branch-months">
-        <option value="3">3 months</option>
         <option value="6">6 months</option>
         <option value="12">1 year</option>
         <option value="24">2 years</option>
@@ -1990,11 +2120,11 @@ function renderInspector(node, { focusBranchInput = false } = {}) {
     </button>
   `;
 
-  panel.append(header, narrativeSec, acctSec, form);
+  panel.append(header, editForm, narrativeSec, acctSec, form);
 
   const remaining = state.years * 12 - node.month;
   const monthSelect = form.querySelector('#branch-months');
-  if (remaining > 0 && ![3, 6, 12, 24, 60].includes(remaining)) {
+  if (remaining > 0 && ![6, 12, 24, 60].includes(remaining)) {
     const option = document.createElement('option');
     option.value = remaining;
     option.textContent = `${remaining} months (to 5-year horizon)`;
@@ -2313,15 +2443,21 @@ byId('back-to-top').addEventListener('click', () => {
   window.scrollTo({ top: 0, behavior: 'smooth' });
 });
 byId('switch-to-tree').addEventListener('click', () => setResultsView('tree'));
-byId('open-tree-from-minimap').addEventListener('click', () => setResultsView('tree'));
 byId('back-to-timeline').addEventListener('click', () => setResultsView('timeline', { focusNodeId: state.selectedId }));
+byId('return-to-original').addEventListener('click', () => {
+  const index = buildTreeIndex();
+  const baseId = index.branchMeta.has('main') ? 'main' : index.branchIds[0];
+  switchActivePath(baseId);
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+});
 
-byId('toggle-minimap').addEventListener('click', () => {
-  const dock = byId('minimap-dock');
-  const btn = byId('toggle-minimap');
-  const collapsed = dock.classList.toggle('is-collapsed');
-  btn.textContent = collapsed ? '+' : '–';
-  btn.setAttribute('aria-expanded', String(!collapsed));
+const minimapDock = byId('minimap-dock');
+minimapDock.addEventListener('click', () => setResultsView('tree'));
+minimapDock.addEventListener('keydown', event => {
+  if (event.key === 'Enter' || event.key === ' ') {
+    event.preventDefault();
+    setResultsView('tree');
+  }
 });
 
 byId('close-drawer').addEventListener('click', () => setDrawerOpen(false));
@@ -2406,6 +2542,7 @@ byId('test-data').addEventListener('click', async () => {
   const button = byId('test-data');
   button.disabled = true;
   try {
+    state.years = Number(byId('years').value);
     const result = await request('/api/test', { years: state.years });
     state.years = result.years;
     state.extraction = result.extraction;

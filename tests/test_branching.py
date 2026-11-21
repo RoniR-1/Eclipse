@@ -75,13 +75,15 @@ class BranchEffectTests(unittest.TestCase):
         self.assertAlmostEqual(nodes[0]["state"]["risk_exposure"]["investment_value_chf"], 7000)
         self.assertAlmostEqual(self.parent["state"]["risk_exposure"]["investment_value_chf"], 10000)  # parent untouched
 
-    def test_earlier_phases_are_kept_and_the_current_one_is_split(self):
-        early = self.nodes[3]  # month 3, in the Study phase
+    def test_a_branch_keeps_the_past_and_replaces_the_planned_future_with_its_event(self):
+        # Branches are one event deep: phases and one-off costs planned after the branch month are not carried
+        # into the branch, so it shows the effect of this event alone.
+        early = self.nodes[3]  # month 3, in the Study phase; the original plan switches to Work at month 6
         nodes = branch(early, months=6, monthly_income_delta_chf=500)
         phases = nodes[0]["scenario"]["phases"]
-        self.assertEqual([(p["start_month"], p["end_month"]) for p in phases], [(0, 3), (3, 6), (6, None)])
-        self.assertEqual([p["monthly_income_chf"] for p in phases], [1500, 2000, 5500])
-        self.assertEqual(nodes[3]["state"]["cash_flow"]["income_chf"], 5500)  # month 7: Work phase, also changed
+        self.assertEqual([(p["start_month"], p["end_month"]) for p in phases], [(0, 3), (3, None)])
+        self.assertEqual([p["monthly_income_chf"] for p in phases], [1500, 2000])
+        self.assertEqual(nodes[3]["state"]["cash_flow"]["income_chf"], 2000)  # month 7: the Work phase is not inherited
 
     def test_branch_variables_override_from_the_branch_month(self):
         nodes = branch(self.parent, variables={"monthly_income_chf": 7000, "annual_inflation": 0.12, "savings_rate": 0.3})
@@ -161,7 +163,7 @@ class TestDataTests(unittest.TestCase):
                 self.assertEqual(data["nodes"][0]["date"], "2026-01-01")
 
     def test_invalid_test_data_requests_are_rejected(self):
-        for bad in ({"years": 0}, {"years": 51}, {"seed": -1}, {"seed": "abc"}, {"seed": True}, {"start_date": "tomorrow"}):
+        for bad in ({"years": -1}, {"years": 21}, {"seed": -1}, {"seed": "abc"}, {"seed": True}, {"start_date": "tomorrow"}):
             with self.subTest(bad), self.assertRaises(ValueError):
                 random_test(bad)
 
@@ -190,7 +192,7 @@ class ExtractValidationTests(unittest.TestCase):
     def test_bad_input_is_rejected_before_calling_the_ai(self):
         with patch("financial_twin.server.urlopen") as network:
             for statement, years, key in (("", 5, "k"), ("   ", 5, "k"), ("x" * 12001, 5, "k"), (None, 5, "k"),
-                                          ("I earn CHF 5000.", 0, "k"), ("I earn CHF 5000.", 5, "")):
+                                          ("I earn CHF 5000.", 21, "k"), ("I earn CHF 5000.", 5, "")):
                 with self.subTest(statement=str(statement)[:20], years=years, key=key), self.assertRaises(ValueError):
                     extract(statement, years, key)
             network.assert_not_called()

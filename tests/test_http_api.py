@@ -131,7 +131,7 @@ class HttpApiTests(unittest.TestCase):
             "invalid JSON": dict(raw=b"{not json"),
             "not an object": dict(raw=b"[1, 2]"),
             "too large": dict(raw=b"{" + b" " * 100001 + b"}"),
-            "invalid simulation input": dict(body={"scenario": SCENARIO, "years": 0, "variables": VARIABLES}),
+            "invalid simulation input": dict(body={"scenario": SCENARIO, "years": 21, "variables": VARIABLES}),
             "unknown variable": dict(body={"scenario": SCENARIO, "years": 1, "variables": {"bogus": 1, "savings_rate": 0.1, "risk_tolerance": 0.2}}),
         }
         for name, kwargs in cases.items():

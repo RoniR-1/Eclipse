@@ -60,7 +60,27 @@
                 <label for="years">Look ahead</label>
                 <div class="select-wrap">
                   <select id="years" name="years">
+                    <option value="0">0 years</option>
+                    <option value="1">1 year</option>
+                    <option value="2">2 years</option>
+                    <option value="3">3 years</option>
+                    <option value="4">4 years</option>
                     <option value="5" selected>5 years</option>
+                    <option value="6">6 years</option>
+                    <option value="7">7 years</option>
+                    <option value="8">8 years</option>
+                    <option value="9">9 years</option>
+                    <option value="10">10 years</option>
+                    <option value="11">11 years</option>
+                    <option value="12">12 years</option>
+                    <option value="13">13 years</option>
+                    <option value="14">14 years</option>
+                    <option value="15">15 years</option>
+                    <option value="16">16 years</option>
+                    <option value="17">17 years</option>
+                    <option value="18">18 years</option>
+                    <option value="19">19 years</option>
+                    <option value="20">20 years</option>
                   </select>
                 </div>
               </div>
@@ -119,15 +139,27 @@
         <div id="timeline-view" class="timeline-view">
           <div class="results-header">
             <div>
-              <div class="eyebrow"><span></span> <span id="active-path-kicker">ORIGINAL PATH</span></div>
+              <div class="eyebrow"><span id="active-path-dot"></span> <span id="active-path-kicker">ORIGINAL PATH</span></div>
               <h1>A look <em>ahead.</em></h1>
-              <p id="active-path-subtitle">Your 5-year projection, unfolding every 3 months.</p>
+              <p id="active-path-subtitle">Your 5-year projection.</p>
             </div>
             <div class="results-actions">
               <button class="ghost-button" id="jump-to-summary" type="button">Summary <span aria-hidden="true">↓</span></button>
               <button class="ghost-button" id="switch-to-tree" type="button">Full tree <span aria-hidden="true">⑂</span></button>
               <button class="text-button" id="adjust-scenario" type="button"><span aria-hidden="true">←</span> Adjust assumptions</button>
             </div>
+          </div>
+
+          <!-- Clear indicator shown only when viewing an alternative branch -->
+          <div id="branch-banner" class="branch-banner" hidden>
+            <div class="branch-banner-left">
+              <span class="branch-banner-orb" id="branch-banner-orb" aria-hidden="true"></span>
+              <div>
+                <strong id="branch-banner-title">Alternate path</strong>
+                <span id="branch-banner-origin">Branched from Original path</span>
+              </div>
+            </div>
+            <button type="button" class="branch-return-btn" id="return-to-original">← Return to Original path</button>
           </div>
 
           <!-- Centered, Unobstructed Free-Moving Vertical Timeline -->
@@ -165,14 +197,8 @@
             </div>
           </section>
 
-          <!-- Floating Corner Tree Minimap (zero text until node hover) -->
-          <section class="minimap-dock" id="minimap-dock" aria-label="Decision tree minimap">
-            <div class="minimap-top">
-              <button type="button" class="minimap-icon-btn" id="toggle-minimap" aria-label="Collapse minimap" aria-expanded="true" title="Toggle minimap">–</button>
-              <button type="button" class="minimap-expand" id="open-tree-from-minimap" title="Open full interactive tree">
-                Full tree <span aria-hidden="true">↗</span>
-              </button>
-            </div>
+          <!-- Floating Corner Tree Minimap (click block for full tree, click dot to jump) -->
+          <section class="minimap-dock" id="minimap-dock" role="button" tabindex="0" title="Open full tree view" aria-label="Decision tree minimap — click to open full tree view">
             <div class="minimap-canvas" id="tree-minimap">
               <div class="minimap-tooltip" id="minimap-tooltip" hidden></div>
             </div>
@@ -198,7 +224,7 @@
                 <span class="tree-controls-hint">Drag · Scroll to zoom</span>
                 <button class="ghost-button" id="fit-graph" type="button">Fit</button>
               </div>
-              <label class="milestone-label" for="milestone-select">Select an event</label>
+              <label class="milestone-label" for="milestone-select">Jump to point</label>
               <div class="select-wrap">
                 <select id="milestone-select"></select>
               </div>
