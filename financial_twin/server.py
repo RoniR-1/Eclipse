@@ -387,7 +387,7 @@ def random_test(data, rng=None):
     """Build a random scenario and timeline without calling the AI, for trying out the UI."""
     import random
     rng = rng or random.Random()
-    years = years_value(data.get("years", 10))
+    years = years_value(data.get("years", 5))
     income = rng.randrange(3000, 12001, 100)
     scenario = {
         "start_date": date.today().isoformat(), "currency": "CHF",
