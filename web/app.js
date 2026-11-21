@@ -100,9 +100,7 @@ function health(node) {
 }
 
 function milestoneNodes() {
-  const nodes = [...state.nodes.values()];
-  const parentIds = new Set(nodes.map(node => node.parent_id).filter(Boolean));
-  return nodes.filter(node => node.month === 0 || node.month % 12 === 0 || node.event_summary !== 'Monthly update' || !parentIds.has(node.id) || (node.parent_id && state.nodes.get(node.parent_id)?.branch_id !== node.branch_id));
+  return [...state.nodes.values()].filter(node => node.month !== 0 && node.event_summary && node.event_summary !== 'Monthly update');
 }
 
 function renderGraph(fit = false) {
@@ -176,6 +174,13 @@ function renderGraph(fit = false) {
   }
   const select = byId('milestone-select');
   select.replaceChildren();
+  select.disabled = milestones.length === 0;
+  if (!milestones.length) {
+    const option = document.createElement('option');
+    option.value = '';
+    option.textContent = 'No events to display';
+    select.append(option);
+  }
   for (const node of milestones) {
     const option = document.createElement('option');
     option.value = node.id;
@@ -354,9 +359,17 @@ function renderResults(nodes) {
   state.revision += 1;
   state.nodes = new Map(nodes.map(node => [node.id, node]));
   state.narratives = new Map();
-  state.selectedId = nodes[0].id;
+  state.selectedId = milestoneNodes()[0]?.id ?? null;
   renderGraph(true);
-  selectNode(state.selectedId);
+  if (state.selectedId) selectNode(state.selectedId);
+  else {
+    const panel = byId('inspector');
+    panel.replaceChildren();
+    const empty = document.createElement('p');
+    empty.className = 'inspector-empty';
+    empty.textContent = 'There are no events to display in this timeline.';
+    panel.append(empty);
+  }
 }
 
 byId('fit-graph').addEventListener('click', () => state.network?.fit({ animation: true }));
