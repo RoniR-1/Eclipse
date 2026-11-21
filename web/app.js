@@ -668,7 +668,7 @@ function buildMilestoneProse(node, prevNode) {
     if (s.total_debt_chf > 0) parts.push(`${money(s.total_debt_chf)} in debt`);
     const phase = s.active_variables?.phase;
     const budget = phase
-      ? ` Monthly net income is ${money(phase.monthly_income_chf)} with ${money(phase.monthly_expenses_chf)} in living expenses.`
+      ? ` Monthly net income is ${money(phase.monthly_income_chf)} with ${money(s.active_variables.expense_terms?.monthly_expenses_chf ?? phase.monthly_expenses_chf)} in living expenses at the start of the year.`
       : '';
     return `${parts.join(', ')}.${budget}`;
   }
@@ -1585,7 +1585,7 @@ function renderTreeGraph({ fit = false, focusId = null } = {}) {
 
     const phase = node.state.active_variables?.phase;
     const initialValues = node.parent_id === null
-      ? `\nCash ${money(node.state.cash_chf)}${phase ? `\nIncome ${money(phase.monthly_income_chf)}/mo\nExpenses ${money(phase.monthly_expenses_chf)}/mo` : ''}`
+      ? `\nCash ${money(node.state.cash_chf)}${phase ? `\nIncome ${money(phase.monthly_income_chf)}/mo\nExpenses ${money(node.state.active_variables.expense_terms?.monthly_expenses_chf ?? phase.monthly_expenses_chf)}/mo` : ''}`
       : '';
 
     return {
@@ -1906,11 +1906,17 @@ function renderInspector(node, { focusBranchInput = false } = {}) {
   const editMonth = Math.max(0, node.month - 1);
   const editPhase = node.scenario.phases.find(phase => phase.start_month <= editMonth && (phase.end_month === null || editMonth < phase.end_month));
   const editCost = node.scenario.one_off_costs.filter(cost => cost.month === editMonth).reduce((sum, cost) => sum + cost.amount_chf, 0);
+  const terms = s.active_variables.expense_terms || {};
+  const startingExpense = terms.monthly_expenses_chf ?? editPhase.monthly_expenses_chf;
   const fields = [
     ...(node.month === 0 ? [{ name: 'cash_chf', label: 'Starting cash (CHF)', value: s.cash_chf }] : []),
     { name: 'monthly_income_chf', label: 'Monthly income (CHF)', value: editPhase.monthly_income_chf },
-    { name: 'monthly_expenses_chf', label: 'Monthly expenses before inflation (CHF)', value: editPhase.monthly_expenses_chf },
-    { name: 'yearly_expenses_chf', label: 'Yearly expenses before inflation (CHF)', value: editPhase.monthly_expenses_chf * 12 },
+    { name: 'monthly_expenses_chf', label: 'Monthly expenses at start of year (CHF)', value: startingExpense },
+    { name: 'yearly_expenses_chf', label: 'Annual expenses at start of year (CHF)', value: startingExpense * 12 },
+    ...(node.month === 0 ? [{ name: 'annual_inflation', label: 'Default annual inflation (%)', value: node.scenario.annual_inflation, percent: true }] : []),
+    { name: 'year_inflation', label: `Inflation for ${terms.year ?? node.date.slice(0, 4)} (%)`, value: terms.year_inflation ?? null, percent: true, optional: true, placeholder: 'Use default annual inflation' },
+    { name: 'inflation_exempt', label: 'Fixed by contract, unaffected by inflation', value: terms.inflation_exempt ?? false, type: 'checkbox' },
+    { name: 'duration_months', label: 'Expense duration (months)', value: terms.duration_months ?? null, optional: true, placeholder: 'Ongoing' },
     { name: 'one_off_cost_chf', label: 'One-time cost (CHF)', value: editCost },
     { name: 'date', label: 'Date', value: node.date, type: 'date' },
   ];
@@ -1919,15 +1925,25 @@ function renderInspector(node, { focusBranchInput = false } = {}) {
   editForm.append(editTitle);
   for (const field of fields) {
     const label = document.createElement('label');
-    label.textContent = field.label;
     const input = document.createElement('input');
     input.type = field.type || 'number';
     input.name = field.name;
-    input.value = field.value;
-    input.required = true;
+    if (field.type === 'checkbox') {
+      input.checked = field.value;
+      label.className = 'node-edit-check';
+      label.append(input, document.createTextNode(field.label));
+      editForm.append(label);
+      continue;
+    }
+    label.textContent = field.label;
+    input.value = field.value === null ? '' : field.percent ? Number((field.value * 100).toFixed(8)) : field.value;
+    input.required = !field.optional;
+    if (field.placeholder) input.placeholder = field.placeholder;
     if (input.type === 'number') {
-      input.step = 'any';
-      if (field.name !== 'cash_chf') input.min = '0';
+      input.step = field.name === 'duration_months' ? '1' : 'any';
+      if (field.name === 'duration_months') input.min = '1';
+      else if (field.percent) input.min = '-99.999999';
+      else if (field.name !== 'cash_chf') input.min = '0';
     }
     label.append(input);
     editForm.append(label);
@@ -1950,8 +1966,11 @@ function renderInspector(node, { focusBranchInput = false } = {}) {
     for (const field of fields) {
       if (field.name === 'yearly_expenses_chf') continue;
       const input = editForm.elements[field.name];
-      const value = input.type === 'number' ? Number(input.value) : input.value;
-      if (value !== field.value) edits[field.name] = value;
+      let value;
+      if (input.type === 'checkbox') value = input.checked;
+      else if (input.type === 'number') value = input.value === '' ? null : Number(input.value) / (field.percent ? 100 : 1);
+      else value = input.value;
+      if (value !== field.value && !(field.percent && value !== null && field.value !== null && Math.abs(value - field.value) < 1e-10)) edits[field.name] = value;
     }
     if (!Object.keys(edits).length) return;
     editError.textContent = '';

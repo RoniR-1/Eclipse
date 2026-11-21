@@ -1320,6 +1320,17 @@ body.world-mode #inspector-panel .drawer-close {
   font: inherit;
 }
 
+.node-edit-form .node-edit-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.node-edit-form .node-edit-check input {
+  width: auto;
+  margin: 0;
+}
+
 .inspector-narrative {
   font-size: 13px;
   line-height: 1.65;

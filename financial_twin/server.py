@@ -15,7 +15,7 @@ from urllib.request import Request, urlopen
 from uuid import uuid4
 
 from financial_twin import create_root, simulate
-from financial_twin.engine import is_investment_asset, _date_at
+from financial_twin.engine import is_investment_asset, _date_at, expense_terms_at
 
 ROOT = Path(__file__).resolve().parent.parent
 WEB = ROOT / "web"
@@ -441,14 +441,31 @@ def edit_nodes(data):
     selected = old[selected_id]
     month = max(0, selected["month"] - 1)
     phase = next(p for p in selected["scenario"]["phases"] if p["start_month"] <= month and (p["end_month"] is None or month < p["end_month"]))
-    allowed = {"cash_chf", "monthly_income_chf", "monthly_expenses_chf", "one_off_cost_chf", "date"}
+    allowed = {"cash_chf", "monthly_income_chf", "monthly_expenses_chf", "one_off_cost_chf", "date",
+               "year_inflation", "annual_inflation", "inflation_exempt", "duration_months"}
     if set(edits) - allowed:
         raise ValueError("Unknown editable field.")
     for key, value in edits.items():
-        if key != "date" and (isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or (key != "cash_chf" and value < 0)):
+        if key == "date":
+            continue
+        if key == "inflation_exempt":
+            if not isinstance(value, bool):
+                raise ValueError("Inflation exemption must be true or false.")
+            continue
+        if key in ("year_inflation", "duration_months") and value is None:
+            continue
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
             raise ValueError("Enter valid financial amounts.")
-    if "cash_chf" in edits and selected["parent_id"] is not None:
-        raise ValueError("Starting cash can only be changed at the starting point.")
+        if key in ("year_inflation", "annual_inflation"):
+            if value <= -1:
+                raise ValueError("Inflation must be greater than -100%.")
+        elif key == "duration_months":
+            if not isinstance(value, int) or value < 1:
+                raise ValueError("Duration must be a positive number of months.")
+        elif key != "cash_chf" and value < 0:
+            raise ValueError("Enter valid financial amounts.")
+    if ("cash_chf" in edits or "annual_inflation" in edits) and selected["parent_id"] is not None:
+        raise ValueError("Starting cash and global inflation can only be changed at the starting point.")
     new_start = None
     if "date" in edits:
         date.fromisoformat(edits["date"])
@@ -457,7 +474,21 @@ def edit_nodes(data):
             raise ValueError("This date cannot be represented on the monthly timeline.")
         if selected["parent_id"] and edits["date"] <= old[selected["parent_id"]]["date"]:
             raise ValueError("The date must be after the previous node.")
-    changes = {key: edits[key] - phase[key] for key in ("monthly_income_chf", "monthly_expenses_chf") if key in edits}
+    changes = {key: edits[key] - phase[key] for key in ("monthly_income_chf",) if key in edits}
+    old_terms = selected["state"]["active_variables"].get("expense_terms")
+    if old_terms is None:
+        factor = selected["state"]["active_variables"].get("price_factor", 1)
+        if selected["month"] > 0:
+            rate = selected["scenario"]["annual_inflation"]
+            factor /= (1 + rate) ** (1 / 12)
+        old_terms = expense_terms_at(selected["scenario"], month, factor)
+    term_edit = any(key in edits for key in ("monthly_expenses_chf", "inflation_exempt", "duration_months"))
+    duration = edits.get("duration_months", old_terms["duration_months"])
+    term = {"start_month": month, "end_month": None if duration is None else month + duration,
+            "monthly_expenses_chf": edits.get("monthly_expenses_chf", old_terms["monthly_expenses_chf"]),
+            "phase_expenses_chf": phase["monthly_expenses_chf"],
+            "inflation_exempt": edits.get("inflation_exempt", old_terms["inflation_exempt"])}
+    edit_year = date.fromisoformat(_date_at(new_start or selected["scenario"]["start_date"], month)).year
     children = {}
     for node in nodes:
         children.setdefault(node["parent_id"], []).append(node)
@@ -465,6 +496,8 @@ def edit_nodes(data):
     propagate_cost = {}
     propagate_date = {}
     propagate_cash = {}
+    propagate_inflation = {}
+    propagate_year = {}
     pending = [selected]
     while pending:
         original = pending.pop(0)
@@ -486,6 +519,31 @@ def edit_nodes(data):
             propagate_cash[original["id"]] = inherit_cash
             if inherit_cash:
                 scenario["opening_cash_chf"] = edits["cash_chf"]
+        if "annual_inflation" in edits:
+            inherit_inflation = original["id"] == selected_id
+            if not inherit_inflation:
+                previous = old[original["parent_id"]]
+                inherit_inflation = propagate_inflation[original["parent_id"]] and previous["scenario"]["annual_inflation"] == scenario["annual_inflation"]
+            propagate_inflation[original["id"]] = inherit_inflation
+            if inherit_inflation:
+                scenario["annual_inflation"] = edits["annual_inflation"]
+        if "year_inflation" in edits:
+            overrides = scenario.setdefault("inflation_by_year", {})
+            inherit_year = original["id"] == selected_id
+            if not inherit_year:
+                previous = old[original["parent_id"]]
+                previous_rate = previous["scenario"].get("inflation_by_year", {}).get(str(edit_year))
+                inherit_year = propagate_year[original["parent_id"]] and previous_rate == overrides.get(str(edit_year))
+            propagate_year[original["id"]] = inherit_year
+            if inherit_year:
+                if edits["year_inflation"] is None:
+                    overrides.pop(str(edit_year), None)
+                else:
+                    overrides[str(edit_year)] = edits["year_inflation"]
+        if term_edit:
+            terms = scenario.setdefault("expense_terms", [])
+            terms[:] = [item for item in terms if item["start_month"] != month]
+            terms.append(deepcopy(term))
         for item in scenario["phases"]:
             if item["end_month"] is None or item["end_month"] > month:
                 for key, delta in changes.items():

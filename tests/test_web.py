@@ -33,6 +33,35 @@ class WebFlowTests(unittest.TestCase):
         self.assertEqual(revised[branch[-1]["id"]]["state"]["assets"][0]["value_chf"], 20000)
         self.assertEqual(revised[branch[-1]["id"]]["scenario"]["opening_cash_chf"], 12000)
 
+    def test_expense_inflation_override_and_fixed_duration(self):
+        scenario = {"start_date": "2025-01-01", "opening_cash_chf": 50000, "annual_inflation": 0.12,
+                    "phases": [{"start_month": 0, "end_month": None, "monthly_income_chf": 0, "monthly_expenses_chf": 1000}],
+                    "one_off_costs": [], "assets": [], "debts": [], "preferences": {}}
+        root = create_root(scenario)
+        nodes = [root, *simulate(root, 25)]
+        edits = {"monthly_expenses_chf": 1200, "inflation_exempt": True,
+                 "duration_months": 14, "year_inflation": 0.24, "annual_inflation": 0.06}
+        changed = edit_nodes({"nodes": nodes, "node_id": root["id"], "edits": edits})["nodes"]
+        revised = {node["month"]: node for node in changed}
+        self.assertEqual(revised[0]["state"]["active_variables"]["expense_terms"]["year_inflation"], 0.24)
+        self.assertEqual(revised[1]["state"]["cash_flow"]["expenses_chf"], 1200)
+        self.assertEqual(revised[14]["state"]["cash_flow"]["expenses_chf"], 1200)
+        self.assertAlmostEqual(revised[15]["state"]["cash_flow"]["expenses_chf"],
+                               1000 * 1.24 * 1.06 ** (2 / 12))
+        self.assertEqual(revised[15]["state"]["active_variables"]["expense_terms"]["year"], 2026)
+        self.assertIsNone(revised[15]["state"]["active_variables"]["expense_terms"]["year_inflation"])
+
+    def test_year_inflation_override_applies_to_one_year(self):
+        scenario = {"start_date": "2025-01-01", "opening_cash_chf": 100000, "annual_inflation": 0.06,
+                    "phases": [{"start_month": 0, "end_month": None, "monthly_income_chf": 0, "monthly_expenses_chf": 1000}],
+                    "one_off_costs": [], "assets": [], "debts": [], "preferences": {}}
+        root = create_root(scenario)
+        nodes = [root, *simulate(root, 25)]
+        changed = edit_nodes({"nodes": nodes, "node_id": root["id"], "edits": {"year_inflation": 0.24}})["nodes"]
+        revised = {node["month"]: node for node in changed}
+        self.assertAlmostEqual(revised[13]["state"]["cash_flow"]["expenses_chf"], 1240)
+        self.assertAlmostEqual(revised[25]["state"]["cash_flow"]["expenses_chf"], 1240 * 1.06)
+
     def test_projection_resolves_description_and_preserves_user_amounts(self):
         data = {"profile": {"age": 30, "cash_chf": 10000, "monthly_net_income_chf": 5000, "monthly_rent_chf": 1500},
                 "scenarios": {"Study": [{"type": "education", "description": "Bachelor at ETH Zurich", "in_months": 0}]},
