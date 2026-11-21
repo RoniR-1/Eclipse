@@ -81,6 +81,14 @@ class LoaderTests(unittest.TestCase):
         self.assertEqual(nodes[0]["parent_id"], root["id"])
         self.assertGreater(nodes[-1]["state"]["total_debt_chf"], 35407.71)
 
+    def test_master_funding_need_and_terminal_cash(self):
+        scenario = load_starter_scenario(CHALLENGE / "starter-kit/sample_profile.json",
+                                         CHALLENGE / "starter-kit/scenario_config.json",
+                                         "Master's degree", start_date="2025-01-01")
+        final = simulate(create_root(scenario), 120)[-1]["state"]
+        self.assertEqual(final["cash_chf"], 144600)
+        self.assertEqual(final["funding_feasibility"]["maximum_funding_need_chf"], 18600)
+
 
 if __name__ == "__main__":
     unittest.main()

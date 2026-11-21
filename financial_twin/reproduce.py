@@ -78,7 +78,8 @@ def replay(run):
                                     branch["proposal"], VARIABLES, branch["sequence"])
         else:                      # a one-step branch (/api/branch)
             result = apply_branch_change(parent, branch["event"], branch["months"], branch.get("variables", {}),
-                                         branch["change"], branch["sequence"])
+                                         branch["change"], branch["sequence"],
+                                         inferred_transformation=branch.get("inferred_transformation"), include_report=False)
         for node in result["nodes"]:
             by_id[node["id"]] = node
     return by_id
