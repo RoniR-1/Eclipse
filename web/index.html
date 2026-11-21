@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#101d19">
+  <title>Financial Twin — make room for your future</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="page-shell">
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="Financial Twin home"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span><span>financial<span class="brand-light">twin</span></span></a>
+      <button class="settings-button" id="open-settings" type="button" aria-label="Gemini API settings"><span aria-hidden="true">⚙</span> <span class="settings-label">API settings</span></button>
+    </header>
+    <main>
+      <section id="intake" class="hero">
+        <div class="hero-copy">
+          <div class="eyebrow"><span></span> A little clarity for what's next</div>
+          <h1>Meet your<br><em>financial future.</em></h1>
+          <p class="hero-description">Big decisions deserve a clearer picture. Tell your AI Financial Twin where you are and where you want to go, then explore how your finances could evolve over time.</p>
+        </div>
+        <div class="intake-card">
+          <div class="card-top"><span class="card-kicker">YOUR STARTING POINT</span></div>
+          <h2>What’s on your mind?</h2>
+          <p>Share your situation, your goals, and the decision you’d like to explore.</p>
+          <form id="intake-form">
+            <label for="statement">Your financial story</label>
+            <textarea id="statement" name="statement" required minlength="10" placeholder="I have CHF 15,000 saved and earn CHF 5,000 a month. I’m thinking about going back to school in two years and want to understand what that could mean for my savings..."></textarea>
+            <div class="form-bottom"><div class="time-field"><label for="years">Look ahead</label><div class="select-wrap"><select id="years" name="years"><option value="5">5 years</option><option value="10" selected>10 years</option><option value="20">20 years</option></select></div></div><button class="primary-button" id="extract-button" type="submit">Explore my scenario <span aria-hidden="true">✳</span></button></div>
+            <p class="form-error" id="intake-error" role="alert"></p>
+          </form>
+          <div class="card-foot">Your story is sent to Google Gemini for analysis.</div>
+        </div>
+      </section>
+      <section id="tuning" class="stage" hidden>
+        <div class="stage-heading"><div><div class="eyebrow"><span></span> YOUR SCENARIO</div><h1>Make it <em>yours.</em></h1><p>Fine-tune the assumptions that matter to your story.</p></div><button class="text-button" id="edit-story" type="button">Edit your story</button></div>
+        <div class="tuning-grid"><div class="summary-card"><div class="card-kicker">THE PICTURE SO FAR</div><h2>Your starting point</h2><p id="scenario-summary"></p><div id="baseline" class="baseline"></div><div id="assumptions" class="assumptions"></div><p class="summary-note">Review these inferred figures before exploring your future.</p></div><div class="sliders-card"><div class="card-top"><span class="card-kicker">FINE-TUNE YOUR FUTURE</span></div><h2>Adjust your assumptions</h2><p>Move the controls to reflect what feels right for you.</p><form id="simulate-form"><div id="sliders"></div><p class="form-error" id="simulate-error" role="alert"></p><button class="primary-button wide" id="simulate-button" type="submit">Simulate future <span aria-hidden="true">✳</span></button></form></div></div>
+      </section>
+      <section id="results" class="stage" hidden>
+        <div class="stage-heading"><div><div class="eyebrow"><span></span> YOUR FINANCIAL TIMELINE</div><h1>A look <em>ahead.</em></h1><p>Explore how your choices could shape your financial picture.</p></div><button class="text-button" id="adjust-scenario" type="button">Adjust assumptions</button></div>
+        <div class="timeline-layout">
+          <div class="graph-card">
+            <div class="graph-heading"><div><span class="card-kicker">YOUR PATHS</span><h2>Explore your timeline</h2><p>Select a milestone to inspect it or imagine another path.</p></div><button class="secondary-button fit-button" id="fit-graph" type="button">Fit timeline</button></div>
+            <div id="timeline-graph" class="timeline-graph" aria-label="Interactive financial timeline graph"></div>
+            <div class="graph-help">Drag to explore · Scroll to zoom · Select a milestone for details</div>
+            <label class="milestone-label" for="milestone-select">Select a milestone</label><select id="milestone-select"></select>
+          </div>
+          <aside class="inspector" id="inspector" aria-live="polite"><div class="inspector-empty"><span class="card-kicker">MILESTONE DETAILS</span><h2>Every future starts somewhere.</h2><p>Select a milestone to see the details and explore a different decision.</p></div></aside>
+        </div>
+      </section>
+    </main>
+    <footer><span>financialtwin</span></footer>
+  </div>
+  <dialog id="settings-dialog"><form method="dialog" id="settings-form"><div class="dialog-top"><span class="card-kicker">SETTINGS</span><button class="close-button" value="cancel" aria-label="Close settings">×</button></div><h2>Connect AI</h2><p>Add your API key to analyze your story. You can also configure <code>AI_API_KEY</code> in the server environment.</p><label for="api-key">API key</label><input type="password" id="api-key" autocomplete="off" placeholder="Paste your API key"><p class="key-note">A key entered here stays in this browser session.</p><button type="submit" class="primary-button wide" value="save">Save settings</button></form></dialog>
+  <script src="/vis-network.min.js" defer></script>
+  <script src="/app.js" defer></script>
+</body>
+</html>
