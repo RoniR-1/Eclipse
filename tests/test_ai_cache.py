@@ -120,6 +120,19 @@ class SameStorySameNumbersTests(CacheTestCase):
         self.assertEqual(extract(STORY, 5, "key"), repaired)
         self.assertEqual(self.ai.calls, 2)
 
+    def test_cache_write_failure_returns_the_validated_answer_and_cleans_up(self):
+        with patch("financial_twin.server.os.replace", side_effect=OSError("disk unavailable")):
+            result = extract(STORY, 5, "key")
+        self.assertEqual(result["scenario"]["opening_cash_chf"], 11000)
+        self.assertEqual(list(self.cache.iterdir()), [])
+        self.assertEqual(self.ai.calls, 1)
+
+    def test_cache_directory_failure_returns_the_validated_answer(self):
+        with patch.object(Path, "mkdir", side_effect=OSError("disk unavailable")):
+            result = extract(STORY, 5, "key")
+        self.assertEqual(result["scenario"]["opening_cash_chf"], 11000)
+        self.assertEqual(self.ai.calls, 1)
+
     def test_the_first_stored_answer_wins_when_two_requests_race(self):
         prompt, schema = "question", {"type": "object"}
         self.assertEqual(server.store_ai_answer("extract", prompt, schema, {"answer": "A"}), {"answer": "A"})

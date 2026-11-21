@@ -190,11 +190,17 @@ class NarrativeTests(unittest.TestCase):
 
 class ExtractValidationTests(unittest.TestCase):
     def test_bad_input_is_rejected_before_calling_the_ai(self):
-        with patch("financial_twin.server.urlopen") as network:
+        with patch.dict(os.environ, {"AI_API_KEY": "configured-key"}, clear=True), patch("financial_twin.server.urlopen") as network:
             for statement, years, key in (("", 5, "k"), ("   ", 5, "k"), ("x" * 12001, 5, "k"), (None, 5, "k"),
-                                          ("I earn CHF 5000.", 21, "k"), ("I earn CHF 5000.", 5, "")):
+                                          ("I earn CHF 5000.", 21, "k")):
                 with self.subTest(statement=str(statement)[:20], years=years, key=key), self.assertRaises(ValueError):
                     extract(statement, years, key)
+            network.assert_not_called()
+
+    def test_missing_key_is_rejected_before_calling_the_ai(self):
+        with patch.dict(os.environ, {}, clear=True), patch("financial_twin.server.urlopen") as network:
+            with self.assertRaisesRegex(ValueError, "API key"):
+                extract("I earn CHF 5000.", 5, "")
             network.assert_not_called()
 
     def test_scenario_without_a_starting_phase_is_rejected(self):
