@@ -1,5 +1,6 @@
 from copy import deepcopy
 from email.message import Message
+from http.client import IncompleteRead
 import io
 import json
 import unittest
@@ -12,6 +13,9 @@ from financial_twin.server import Handler, apply_branch_change, edit_nodes, extr
 
 class WebFlowTests(unittest.TestCase):
     def setUp(self):
+        self.provider_environment = patch.dict("os.environ", {"AI_BASE_URL": "", "GEMINI_MODEL": "gemini-test", "AI_TEMPERATURE": "0"})
+        self.provider_environment.start()
+        self.addCleanup(self.provider_environment.stop)
         self.cooldowns = patch.dict("financial_twin.server.MODEL_COOLDOWNS", {}, clear=True)
         self.cooldowns.start()
         self.addCleanup(self.cooldowns.stop)
@@ -224,10 +228,29 @@ class WebFlowTests(unittest.TestCase):
         data = self.gemini_result()
         environment = {"AI_BASE_URL": "https://example.test/v1/", "AI_API_KEY_MODEL": "first, second"}
         failures = [HTTPError("https://example.test", 503, "Unavailable", {}, None),
-                    TimeoutError(), URLError(TimeoutError())]
+                    TimeoutError(), URLError(TimeoutError()), ConnectionResetError(), IncompleteRead(b"partial")]
         for failure in failures:
             response = io.BytesIO(json.dumps({"choices": [{"message": {"content": json.dumps(data)}}]}).encode())
             with self.subTest(failure=type(failure).__name__), patch.dict("financial_twin.server.MODEL_COOLDOWNS", {}, clear=True), patch.dict("os.environ", environment), patch("financial_twin.server.urlopen", side_effect=[failure, response]) as urlopen:
+                result = extract("Study then work", 5, "test-key")
+            self.assertEqual(urlopen.call_count, 2)
+            self.assertEqual(result["summary"], data["summary"])
+
+    def test_native_provider_handles_interrupted_response(self):
+        from financial_twin.server import gemini_json
+
+        for failure in (ConnectionResetError(), IncompleteRead(b"partial")):
+            with self.subTest(failure=type(failure).__name__), patch("financial_twin.server.urlopen", side_effect=failure):
+                with self.assertRaisesRegex(ValueError, "Could not reach Gemini"):
+                    gemini_json("test", {}, "key")
+
+    def test_configured_model_fallback_on_invalid_response(self):
+        data = self.gemini_result()
+        environment = {"AI_BASE_URL": "https://example.test/v1/", "AI_API_KEY_MODEL": "first, second"}
+        for invalid in ({"choices": []}, {"choices": [{"message": {"content": "[]"}}]}):
+            responses = [io.BytesIO(json.dumps(invalid).encode()),
+                         io.BytesIO(json.dumps({"choices": [{"message": {"content": json.dumps(data)}}]}).encode())]
+            with self.subTest(invalid=invalid), patch.dict("financial_twin.server.MODEL_COOLDOWNS", {}, clear=True), patch.dict("os.environ", environment), patch("financial_twin.server.urlopen", side_effect=responses) as urlopen:
                 result = extract("Study then work", 5, "test-key")
             self.assertEqual(urlopen.call_count, 2)
             self.assertEqual(result["summary"], data["summary"])

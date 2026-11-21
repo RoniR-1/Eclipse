@@ -1,8 +1,10 @@
 from copy import deepcopy
 from datetime import date
 from hashlib import sha256
+from http.client import IncompleteRead
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 import json
+import logging
 import math
 import os
 import platform
@@ -263,11 +265,17 @@ def store_ai_answer(kind, prompt, schema, answer):
         existing = cached_ai_answer(kind, prompt, schema)
         if existing is not None:
             return existing
-        path.parent.mkdir(parents=True, exist_ok=True)
         temporary = path.with_name(f"{path.stem}.{uuid4().hex}.tmp")
-        temporary.write_text(json.dumps({"kind": kind, "version": AI_PROMPT_VERSION, "answer": answer},
-                                        allow_nan=False), encoding="utf-8")
-        os.replace(temporary, path)  # atomic: readers see the old state or the complete new file
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            temporary.write_text(json.dumps({"kind": kind, "version": AI_PROMPT_VERSION, "answer": answer},
+                                            allow_nan=False), encoding="utf-8")
+            os.replace(temporary, path)
+        except OSError:
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                pass
     return answer
 
 
@@ -392,10 +400,13 @@ def request_json_with_key(prompt, schema, api_key, web_search=False):
                 if native_search:
                     candidate = result["candidates"][0]
                     parsed = json.loads(candidate["content"]["parts"][0]["text"])
-                    chunks = candidate.get("groundingMetadata", {}).get("groundingChunks", [])
-                    parsed["source_urls"] = [chunk.get("web", {}).get("uri") for chunk in chunks if chunk.get("web", {}).get("uri")]
                 else:
                     parsed = json.loads(result["choices"][0]["message"]["content"])
+                if not isinstance(parsed, dict):
+                    raise TypeError("Provider response must be a JSON object")
+                if native_search:
+                    chunks = candidate.get("groundingMetadata", {}).get("groundingChunks", [])
+                    parsed["source_urls"] = [chunk.get("web", {}).get("uri") for chunk in chunks if chunk.get("web", {}).get("uri")]
                 if web_search and not native_search:
                     annotations = result["choices"][0]["message"].get("annotations", [])
                     parsed["source_urls"] = [item.get("url_citation", {}).get("url") for item in annotations if item.get("url_citation", {}).get("url")]
@@ -415,14 +426,18 @@ def request_json_with_key(prompt, schema, api_key, web_search=False):
                 if exc.code == 429:
                     raise AIKeyError("The AI provider rate limit was reached. Please try again shortly.") from exc
                 raise ValueError("The AI provider is unavailable. Please try again.") from exc
-            except (URLError, TimeoutError) as exc:
-                if isinstance(exc, TimeoutError) or isinstance(getattr(exc, "reason", None), TimeoutError):
+            except (URLError, TimeoutError, ConnectionError, IncompleteRead) as exc:
+                if isinstance(exc, (TimeoutError, ConnectionError, IncompleteRead)) or isinstance(getattr(exc, "reason", None), (TimeoutError, ConnectionError, IncompleteRead)):
                     with MODEL_COOLDOWNS_LOCK:
                         MODEL_COOLDOWNS[(*identity, model)] = monotonic() + retry_seconds
                     if index + 1 < len(models):
                         continue
                 raise ValueError("Could not reach the AI provider. Check your connection and try again.") from exc
-            except (KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
+            except (AttributeError, KeyError, IndexError, TypeError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+                with MODEL_COOLDOWNS_LOCK:
+                    MODEL_COOLDOWNS[(*identity, model)] = monotonic() + retry_seconds
+                if index + 1 < len(models):
+                    continue
                 raise ValueError("The AI provider returned an invalid response. Please try again.") from exc
     model = os.environ.get("GEMINI_MODEL", "gemini-3.8-flash")
     if not model.replace("-", "").replace(".", "").isalnum():
@@ -443,6 +458,8 @@ def request_json_with_key(prompt, schema, api_key, web_search=False):
             result = json.load(response)
         candidate = result["candidates"][0]
         parsed = json.loads(candidate["content"]["parts"][0]["text"])
+        if not isinstance(parsed, dict):
+            raise TypeError("Provider response must be a JSON object")
         if web_search:
             chunks = candidate.get("groundingMetadata", {}).get("groundingChunks", [])
             parsed["source_urls"] = [chunk.get("web", {}).get("uri") for chunk in chunks if chunk.get("web", {}).get("uri")]
@@ -455,9 +472,9 @@ def request_json_with_key(prompt, schema, api_key, web_search=False):
         if exc.code == 429:
             raise AIKeyError("Gemini rate limit reached. Please try again shortly.") from exc
         raise ValueError("Gemini is unavailable. Please try again.") from exc
-    except (URLError, TimeoutError) as exc:
+    except (URLError, TimeoutError, ConnectionError, IncompleteRead) as exc:
         raise ValueError("Could not reach Gemini. Check your connection and try again.") from exc
-    except (KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
+    except (AttributeError, KeyError, IndexError, TypeError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise ValueError("Gemini returned an invalid response. Please try again.") from exc
 
 
@@ -1089,6 +1106,7 @@ class Handler(SimpleHTTPRequestHandler):
 
     def send_json(self, status, data):
         body = json.dumps(data, allow_nan=False).encode()
+        self._response_started = True
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Cache-Control", "no-store")
@@ -1097,6 +1115,18 @@ class Handler(SimpleHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
+        if not self.path.startswith("/api/"):
+            super().do_GET()
+            return
+        self._response_started = False
+        try:
+            self.api_get()
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+            return
+        except Exception as exc:
+            self.api_failure(exc)
+
+    def api_get(self):
         if self.path == "/api/branch/presets":
             self.send_json(200, {"presets": [{"id": key, "label": kind["label"], "example": kind["example"]}
                                              for key, kind in PRESETS.items()]})
@@ -1115,6 +1145,23 @@ class Handler(SimpleHTTPRequestHandler):
             super().do_GET()
 
     def do_POST(self):
+        self._response_started = False
+        try:
+            self.api_post()
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+            return
+        except Exception as exc:
+            self.api_failure(exc)
+
+    def api_failure(self, exc):
+        logging.getLogger(__name__).error("Unexpected API error (%s)", type(exc).__name__)
+        if not self._response_started:
+            try:
+                self.send_json(500, {"error": "An unexpected server error occurred. Please try again."})
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                pass
+
+    def api_post(self):
         try:
             if self.headers.get_content_type() != "application/json":
                 raise ValueError("Content-Type must be application/json.")
