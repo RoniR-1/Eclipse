@@ -1,10 +1,9 @@
 const byId = id => document.getElementById(id);
 
-const SESSION_KEY_STORAGE = 'financial_twin_api_key';
+// Remove an API key saved by the former settings dialog; the server now uses the keys in .env.
+try { sessionStorage.removeItem('financial_twin_api_key'); } catch { /* storage unavailable */ }
 
 const state = {
-  apiKey: (() => { try { return sessionStorage.getItem(SESSION_KEY_STORAGE) || ''; } catch { return ''; } })(),
-  serverHasApiKey: false,
   stage: 'intake',
   resultsView: 'timeline', // 'timeline' | 'tree'
   drawerOpen: false,
@@ -25,6 +24,7 @@ const state = {
   astralRaf: null,
   treeHoverId: null,
   treeRenderData: null,
+  run: null, // inputs needed to replay this run exactly (see financial_twin/reproduce.py)
 };
 
 const BRANCH_PALETTE = [
@@ -531,29 +531,6 @@ async function request(path, body) {
   return data;
 }
 
-function updateApiStatusUi() {
-  const connected = Boolean(state.apiKey || state.serverHasApiKey);
-  byId('api-status-dot')?.classList.toggle('is-connected', connected);
-  const note = byId('api-status-note');
-  if (!note) return;
-  if (state.apiKey) note.textContent = 'Using your API key for this browser session.';
-  else if (state.serverHasApiKey) note.textContent = 'Server .env API key is configured. Enter one above to override for this session.';
-  else note.textContent = 'A key entered here stays in this browser session.';
-}
-
-async function checkServerConfig() {
-  try {
-    const res = await fetch('/api/config');
-    if (res.ok) {
-      const data = await res.json();
-      state.serverHasApiKey = Boolean(data.has_api_key);
-    }
-  } catch {
-    // Ignore
-  }
-  updateApiStatusUi();
-}
-
 /* ==========================================================================
    TREE & PATH TOPOLOGY HELPERS
    ========================================================================== */
@@ -738,6 +715,21 @@ function getAllGraphMilestones(index) {
    STAGE 2: TUNING RENDERER
    ========================================================================== */
 
+// Assumption values are typed in display units: percentages as percent (42 = 42%), money in CHF, months as months.
+const isFractionPercent = variable => (variable.unit === '%' || variable.unit === 'percent') && Number(variable.max) <= 1;
+
+function variableToDisplay(variable, value) {
+  const number = Number(value) * (isFractionPercent(variable) ? 100 : 1);
+  return String(Number(number.toFixed(2)));
+}
+
+// Reads a typed value ("5'000", "CHF 5,000", "42%", "3 months") into the variable's own units; null if not a number.
+function parseVariableInput(variable, text) {
+  const cleaned = String(text).replace(/chf|%|months?|[\s'’_]/gi, '').replace(/,(?=\d{3}(\D|$))/g, '').replace(',', '.');
+  if (!/^-?(\d+\.?\d*|\.\d+)$/.test(cleaned)) return null;
+  return Number(cleaned) / (isFractionPercent(variable) ? 100 : 1);
+}
+
 function formatVariable(variable, value) {
   const number = Number(value);
   if (variable.unit === '%' || variable.unit === 'percent') {
@@ -785,11 +777,27 @@ function renderTuning(data) {
     const label = document.createElement('label');
     label.htmlFor = `slider-${variable.id}`;
     label.textContent = variable.label;
-    const output = document.createElement('output');
-    output.className = 'slider-value';
-    output.htmlFor = label.htmlFor;
-    output.textContent = formatVariable(variable, variable.value);
-    heading.append(label, output);
+    // Text box next to the slider: type an exact value, or drag the slider. Both stay in sync.
+    const valueBox = document.createElement('div');
+    valueBox.className = 'slider-entry';
+    const field = document.createElement('input');
+    field.type = 'text';
+    field.inputMode = 'decimal';
+    field.autocomplete = 'off';
+    field.className = 'slider-number';
+    field.id = `value-${variable.id}`;
+    field.value = variableToDisplay(variable, variable.value);
+    field.setAttribute('aria-label', `${variable.label} value`);
+    valueBox.append(field);
+    const unitText = isFractionPercent(variable) || variable.unit === 'percent' ? '%' : variable.unit;
+    if (unitText) {
+      const unit = document.createElement('span');
+      unit.className = 'slider-unit';
+      unit.textContent = unitText;
+      if (unitText === 'CHF') valueBox.prepend(unit);
+      else valueBox.append(unit);
+    }
+    heading.append(label, valueBox);
 
     const description = document.createElement('p');
     description.className = 'slider-description';
@@ -806,19 +814,68 @@ function renderTuning(data) {
     input.step = Math.abs(stepsFromMinimum - Math.round(stepsFromMinimum)) < 1e-8 ? variable.step : 'any';
     input.value = variable.value;
     input.setAttribute('aria-describedby', description.id);
-    input.addEventListener('input', () => {
-      output.textContent = formatVariable(variable, input.value);
-    });
 
     const ends = document.createElement('div');
     ends.className = 'range-ends';
     const min = document.createElement('span');
     const max = document.createElement('span');
-    min.textContent = formatVariable(variable, variable.min);
-    max.textContent = formatVariable(variable, variable.max);
+    const showEnds = () => {
+      min.textContent = formatVariable(variable, input.min);
+      max.textContent = formatVariable(variable, input.max);
+    };
+    showEnds();
     ends.append(min, max);
 
-    item.append(heading, description, input, ends);
+    const hint = document.createElement('p');
+    hint.className = 'slider-hint';
+    hint.setAttribute('role', 'alert');
+
+    input.addEventListener('input', () => {
+      field.value = variableToDisplay(variable, input.value);
+      field.classList.remove('is-invalid');
+      field.removeAttribute('aria-invalid');
+      hint.textContent = '';
+    });
+
+    // Typed values: CHF amounts may go beyond the slider (it stretches to fit), since the server accepts any
+    // nonnegative amount; other values are limited to the slider's range, as the server enforces it.
+    const applyTyped = ({ final }) => {
+      const value = parseVariableInput(variable, field.value);
+      const invalid = value === null || (variable.unit === 'CHF' && value < 0);
+      field.classList.toggle('is-invalid', invalid);
+      if (invalid) {
+        field.setAttribute('aria-invalid', 'true');
+        hint.textContent = variable.unit === 'CHF' ? 'Enter an amount of 0 or more.' : 'Enter a number.';
+        return;
+      }
+      field.removeAttribute('aria-invalid');
+      hint.textContent = '';
+      let applied = value;
+      if (variable.unit === 'CHF') {
+        if (value > Number(input.max)) input.max = value;
+        if (value < Number(input.min)) input.min = value;
+        showEnds();
+      } else {
+        applied = Math.min(Number(variable.max), Math.max(Number(variable.min), value));
+        if (applied !== value) {
+          hint.textContent = `Limited to ${formatVariable(variable, variable.min)}–${formatVariable(variable, variable.max)}.`;
+        }
+      }
+      const offStep = Math.abs((applied - Number(input.min)) / Number(variable.step) % 1) > 1e-8;
+      if (offStep) input.step = 'any';
+      input.value = applied;
+      if (final) field.value = variableToDisplay(variable, applied);
+    };
+    field.addEventListener('input', () => applyTyped({ final: false }));
+    field.addEventListener('change', () => applyTyped({ final: true }));
+    field.addEventListener('keydown', event => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        applyTyped({ final: true });
+      }
+    });
+
+    item.append(heading, description, input, ends, hint);
     container.append(item);
   }
 }
@@ -1985,15 +2042,20 @@ function renderInspector(node, { focusBranchInput = false } = {}) {
       const variables = Object.fromEntries(
         [...form.querySelectorAll('input[type="range"]:enabled')].map(input => [input.name, Number(input.value)])
       );
+      const sequence = state.run ? state.run.next_sequence : undefined;
       const result = await request('/api/branch', {
+        sequence,
         parent: node,
         event: form.querySelector('#branch-event').value.trim(),
         months: Number(monthSelect.value),
         variables,
-        api_key: state.apiKey || undefined,
       });
       if (revision !== state.revision || !state.nodes.has(node.id)) return;
       for (const child of result.nodes) state.nodes.set(child.id, child);
+      if (state.run && result.branch) {
+        state.run.branches.push(result.branch);
+        state.run.next_sequence = Math.max(state.run.next_sequence, (result.branch.sequence ?? 0) + 1);
+      }
       if (result.nodes.length) {
         const first = result.nodes[0];
         state.activeBranchId = first.branch_id;
@@ -2282,24 +2344,6 @@ byId('follow-selected-path').addEventListener('click', () => {
   setResultsView('timeline', { focusNodeId: state.selectedId });
 });
 
-byId('open-settings').addEventListener('click', () => {
-  byId('api-key').value = state.apiKey;
-  updateApiStatusUi();
-  byId('settings-dialog').showModal();
-});
-byId('settings-form').addEventListener('submit', event => {
-  if (event.submitter?.value === 'save') {
-    state.apiKey = byId('api-key').value.trim();
-    try {
-      if (state.apiKey) sessionStorage.setItem(SESSION_KEY_STORAGE, state.apiKey);
-      else sessionStorage.removeItem(SESSION_KEY_STORAGE);
-    } catch {
-      // Ignore
-    }
-    updateApiStatusUi();
-  }
-});
-
 byId('edit-story').addEventListener('click', () => showStage('intake'));
 byId('adjust-scenario').addEventListener('click', () => showStage('tuning'));
 byId('tree-adjust-scenario').addEventListener('click', () => {
@@ -2317,7 +2361,6 @@ byId('intake-form').addEventListener('submit', async event => {
     state.extraction = await request('/api/extract', {
       statement: byId('statement').value.trim(),
       years: state.years,
-      api_key: state.apiKey || undefined,
     });
     renderTuning(state.extraction);
     showStage('tuning');
@@ -2332,6 +2375,12 @@ byId('simulate-form').addEventListener('submit', async event => {
   event.preventDefault();
   const button = byId('simulate-button');
   byId('simulate-error').textContent = '';
+  const invalidField = event.currentTarget.querySelector('.slider-number.is-invalid');
+  if (invalidField) {
+    byId('simulate-error').textContent = 'Fix the highlighted value before simulating.';
+    invalidField.focus();
+    return;
+  }
   setButtonLoading(button, true, 'Simulating…', 'Simulate future');
   try {
     const variables = Object.fromEntries([...new FormData(event.currentTarget)].map(([key, value]) => [key, Number(value)]));
@@ -2340,6 +2389,11 @@ byId('simulate-form').addEventListener('submit', async event => {
       years: state.years,
       variables,
     });
+    state.run = {
+      source: 'simulate', seed: null, start_date: result.scenario.start_date, years: state.years,
+      scenario: structuredClone(state.extraction.scenario), variables, branches: [], next_sequence: 0,
+      environment: result.environment,
+    };
     renderResults(result.nodes);
   } catch (error) {
     byId('simulate-error').textContent = error.message;
@@ -2355,8 +2409,14 @@ byId('test-data').addEventListener('click', async () => {
     const result = await request('/api/test', { years: state.years });
     state.years = result.years;
     state.extraction = result.extraction;
+    state.run = {
+      source: 'test', seed: result.seed, start_date: result.start_date, years: result.years,
+      scenario: null, variables: {}, branches: [], next_sequence: result.next_sequence,
+      environment: result.environment,
+    };
     renderTuning(state.extraction);
     renderResults(result.nodes);
+    showToast(`Test data generated with seed ${result.seed}`);
   } catch (error) {
     showToast(`Could not generate test data: ${error.message}`, { error: true });
   } finally {
@@ -2434,5 +2494,53 @@ document.addEventListener('visibilitychange', () => {
   }
 });
 
-checkServerConfig();
 startAstralBackdrop();
+
+/* ==========================================================================
+   REPRODUCIBILITY: DOWNLOAD RUN FILE
+   ========================================================================== */
+
+// Same layout as financial_twin/reproduce.py build_run(); replay with scripts/reproduce.py <file>.
+function buildRunFile() {
+  const run = state.run;
+  const nodes = [...state.nodes.values()];
+  return {
+    format: 'financial-twin-run/1',
+    created_at: new Date().toISOString(),
+    source: run.source,
+    seed: run.seed,
+    start_date: run.start_date,
+    years: run.years,
+    units: { currency: 'CHF', time_step: 'month', horizon_years: run.years },
+    scenario: run.scenario,
+    variables: run.variables,
+    branches: run.branches,
+    kept_node_ids: nodes.map(node => node.id).sort(),
+    expected: nodes.map(node => ({
+      id: node.id,
+      branch_id: node.branch_id,
+      month: node.month,
+      date: node.date,
+      cash_chf: node.state.cash_chf,
+      net_worth_chf: node.state.net_worth_chf,
+      total_assets_chf: node.state.total_assets_chf,
+      total_debt_chf: node.state.total_debt_chf,
+      net_cash_flow_chf: node.state.cash_flow.net_cash_flow_chf,
+    })),
+    environment: run.environment,
+  };
+}
+
+byId('download-run').addEventListener('click', () => {
+  if (!state.run || !state.nodes.size) {
+    showToast('Run a simulation first.', { error: true });
+    return;
+  }
+  const blob = new Blob([JSON.stringify(buildRunFile(), null, 1)], { type: 'application/json' });
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = `financial-twin-run-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.json`;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+  showToast('Run file saved. Check it with: scripts/reproduce.py <file>');
+});

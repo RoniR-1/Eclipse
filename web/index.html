@@ -26,11 +26,6 @@
           <span aria-hidden="true">⚄</span>
           <span class="settings-label">Test</span>
         </button>
-        <button class="settings-button" id="open-settings" type="button" aria-label="AI API settings">
-          <span class="api-dot" id="api-status-dot" aria-hidden="true"></span>
-          <span aria-hidden="true">⚙</span>
-          <span class="settings-label">API settings</span>
-        </button>
       </div>
     </header>
 
@@ -148,7 +143,10 @@
                 <div class="eyebrow"><span></span> HORIZON SUMMARY</div>
                 <h2>Where this path <em>leads.</em></h2>
               </div>
-              <button class="text-button" id="back-to-top" type="button">↑ Back to top</button>
+              <div class="summary-head-actions">
+                <button class="ghost-button" id="download-run" type="button" title="Save every input and result of this run so it can be replayed exactly with scripts/reproduce.py">Download run file <span aria-hidden="true">⤓</span></button>
+                <button class="text-button" id="back-to-top" type="button">↑ Back to top</button>
+              </div>
             </div>
 
             <div class="summary-layout">
@@ -251,23 +249,6 @@
         <button class="confirm-cancel" value="cancel" autofocus>Cancel</button>
         <button class="confirm-danger" value="confirm" id="confirm-ok">Delete</button>
       </div>
-    </form>
-  </dialog>
-
-  <dialog id="settings-dialog">
-    <form method="dialog" id="settings-form">
-      <div class="dialog-top">
-        <span class="card-kicker">SETTINGS</span>
-        <button class="close-button" value="cancel" aria-label="Close settings">×</button>
-      </div>
-      <h2>Connect AI</h2>
-      <p>Add your API key to analyze your story. You can also configure <code>AI_API_KEY</code> in the server environment.</p>
-      <label for="api-key">API key</label>
-      <input type="password" id="api-key" autocomplete="off" placeholder="Paste your API key">
-      <p class="key-note" id="api-status-note">A key entered here stays in this browser session.</p>
-      <button type="submit" class="primary-button wide" value="save">
-        <span class="btn-label">Save settings</span>
-      </button>
     </form>
   </dialog>
 
