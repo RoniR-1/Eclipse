@@ -21,7 +21,13 @@ const state = {
   openDetails: new Set(['branch-info']),
   presets: [],
   spineRaf: null,
+  spineLastMs: 0,
   spineNodesMeta: [],
+  forkHover: null,
+  forkHoverSuppressPos: null,
+  forkArcAnim: new Map(),
+  justSwitchedFromMonth: null,
+  branchSwap: null,
   astralRaf: null,
   treeHoverId: null,
   treeRenderData: null,
@@ -258,6 +264,16 @@ function drawOrganicOrb(ctx, x, y, t, seed, { selected, isFork, isShortfall, tin
   ctx.fill();
 }
 
+function evalCubicBezier(p0, p1, p2, p3, u) {
+  const m = 1 - u;
+  return (
+    m * m * m * p0 +
+    3 * m * m * u * p1 +
+    3 * m * u * u * p2 +
+    u * u * u * p3
+  );
+}
+
 function drawSpineFrame(nowMs) {
   const shell = byId('vtimeline-shell');
   const canvas = byId('vtimeline-canvas');
@@ -273,7 +289,7 @@ function drawSpineFrame(nowMs) {
   }
 
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
-  const cssW = canvas.clientWidth || 136;
+  const cssW = canvas.clientWidth || 150;
   const cssH = shell.scrollHeight;
   const targetW = Math.round(cssW * dpr);
   const targetH = Math.round(cssH * dpr);
@@ -287,8 +303,10 @@ function drawSpineFrame(nowMs) {
   ctx.clearRect(0, 0, cssW, cssH);
 
   const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const dt = state.spineLastMs ? Math.min(0.06, Math.max(0.004, (nowMs - state.spineLastMs) * 0.001)) : 0.016;
+  state.spineLastMs = nowMs;
   const t = reduced ? 2.1 : nowMs * 0.001;
-  const baseCenterX = cssW * 0.44;
+  const baseCenterX = cssW > 110 ? 60 : cssW * 0.40;
   const shellRect = shell.getBoundingClientRect();
 
   // Gently meandering, free-moving orb positions along the vertical journey
@@ -297,27 +315,70 @@ function drawSpineFrame(nowMs) {
     const meta = state.spineNodesMeta[i];
     if (!meta) return;
     const baseY = li.offsetTop + 32;
-    const meanderX = Math.sin(i * 0.85 + 0.4) * Math.min(14, cssW * 0.11);
+    const meanderX = Math.sin(i * 0.85 + 0.4) * Math.min(14, cssW * 0.10);
     const driftX = organicWave(t * 0.46, meta.seed) * 4.5;
     const driftY = organicWave(t * 0.39, meta.seed + 5.7) * 2.6;
-    const forkEl = li.querySelector('.vnode-fork .fork-destinations');
-    const forkTargetY = forkEl ? (forkEl.getBoundingClientRect().top - shellRect.top + 26) : null;
+    const forkTargets = [...li.querySelectorAll('.vnode-fork .fork-dest-btn')].map(btn => {
+      const rect = btn.getBoundingClientRect();
+      return {
+        branchId: btn.dataset.branchId || '',
+        colorHex: btn.dataset.branchColor || '#ffa159',
+        isCurrent: btn.classList.contains('is-current'),
+        endX: Math.min(cssW - 2, Math.max(baseCenterX + 36, rect.left - shellRect.left + 1)),
+        endY: rect.top - shellRect.top + rect.height / 2,
+      };
+    });
 
     points.push({
       x: baseCenterX + meanderX + driftX,
       y: baseY + driftY,
       meta,
       selected: meta.id === state.selectedId,
-      forkTargetY,
+      forkTargets,
     });
   });
 
-  // 1. Undulating lava-lamp filament connecting consecutive orbs (shifts smoothly to branch hue once diverged)
+  // Active choreographed branch-swap animation state (if a fork swap is playing)
+  let swap = state.branchSwap;
+  let swapP = 1;
+  if (swap) {
+    const rawP = reduced ? 1 : (nowMs - swap.startMs) / swap.duration;
+    if (rawP >= 1) {
+      // Seed resting weights cleanly so handoff to steady arcs has zero pop
+      const doneAnim = state.forkArcAnim.get(swap.forkNodeId);
+      if (doneAnim) {
+        doneAnim.weights.set(swap.fromBranchId, 0.84);
+        doneAnim.weights.set(swap.toBranchId, 0);
+      }
+      state.branchSwap = null;
+      swap = null;
+    } else {
+      const u = Math.max(0, rawP);
+      // Smooth easeOutCubic matching the CSS FLIP cubic-bezier(0.22, 1, 0.36, 1) so curves and sliding cards move in lockstep
+      swapP = 1 - Math.pow(1 - u, 3);
+    }
+  }
+  const swapForkIndex = swap ? points.findIndex(pt => pt.meta.id === swap.forkNodeId) : -1;
+  const swapFromRgb = swap ? hexToRgb(swap.fromColor) : null;
+  const swapToRgb = swap ? hexToRgb(swap.toColor) : null;
+
+  // 1. Undulating lava-lamp filament connecting consecutive orbs (with live color-wave transition during branch swap!)
   if (points.length > 1) {
+    const topY = points[0].y;
+    const botY = points[points.length - 1].y;
+    const swapForkPt = swapForkIndex >= 0 ? points[swapForkIndex] : null;
+    const waveSpan = swapForkPt ? Math.max(220, Math.min(680, botY - swapForkPt.y)) : 0;
+    const waveY = swapForkPt ? swapForkPt.y + swapP * waveSpan : 0;
+
     for (let i = 0; i < points.length - 1; i++) {
       const a = points[i];
       const b = points[i + 1];
-      const segRgb = hexToRgb(b.meta.tintHex || '#ffa159');
+      let segRgb = hexToRgb(b.meta.tintHex || '#ffa159');
+      if (swap && swapForkIndex >= 0 && i >= swapForkIndex) {
+        const segMidY = (a.y + b.y) * 0.5;
+        const blend = Math.max(0, Math.min(1, (waveY - (segMidY - 90)) / 180));
+        segRgb = mixRgb(swapFromRgb, swapToRgb, blend);
+      }
       const segMid = mixRgb(segRgb, [255, 244, 232], 0.45);
       const span = Math.max(1, b.y - a.y);
       const steps = Math.max(10, Math.ceil(span / 10));
@@ -349,8 +410,30 @@ function drawSpineFrame(nowMs) {
       ctx.stroke();
     }
 
-    const topY = points[0].y;
-    const botY = points[points.length - 1].y;
+    // Bright color-wave surge racing down the spine during a branch swap
+    if (swap && swapForkPt && waveY <= botY) {
+      let wx = swapForkPt.x;
+      for (let i = swapForkIndex; i < points.length - 1; i++) {
+        const a = points[i];
+        const b = points[i + 1];
+        if (waveY >= a.y && waveY <= b.y) {
+          const u = (waveY - a.y) / Math.max(1, b.y - a.y);
+          const env = Math.sin(Math.PI * u);
+          wx = a.x + (b.x - a.x) * u + organicWave(t * 0.68 - waveY * 0.0048, i * 2.93 + 0.6) * 11 * env;
+          break;
+        }
+      }
+      const surgeFade = Math.sin(Math.PI * swapP);
+      const surgeGrad = ctx.createRadialGradient(wx, waveY, 0, wx, waveY, 32);
+      surgeGrad.addColorStop(0, `rgba(255, 252, 246, ${0.98 * surgeFade})`);
+      surgeGrad.addColorStop(0.35, `rgba(${swapToRgb.join(',')}, ${0.78 * surgeFade})`);
+      surgeGrad.addColorStop(1, `rgba(${swapToRgb.join(',')}, 0)`);
+      ctx.fillStyle = surgeGrad;
+      ctx.beginPath();
+      ctx.arc(wx, waveY, 32, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
     // Subtle slow lava-lamp warm light droplets drifting down the filament
     if (!reduced) {
       const totalSpan = Math.max(1, botY - topY);
@@ -383,40 +466,241 @@ function drawSpineFrame(nowMs) {
     }
   }
 
-  // 2. Sweeping luminous branch arcs physically curving from each fork orb into its divergence block!
+  // 2. Sweeping animated side-branch arcs curving from each fork orb directly to every alternative option
+  const damp = reduced ? 1 : Math.min(1, dt * 10.5);
   for (const pt of points) {
-    if (!pt.meta.isFork || pt.forkTargetY === null) continue;
-    const endX = cssW + 2;
-    const endY = pt.forkTargetY;
-    const midY = pt.y + (endY - pt.y) * 0.58;
-    const sway = organicWave(t * 0.55, pt.meta.seed + 9.2) * 5;
+    if (!pt.meta.isFork || !pt.forkTargets.length) continue;
+    const hoveredBranch = state.forkHover?.nodeId === pt.meta.id ? state.forkHover.branchId : null;
+    const isSwappingHere = Boolean(swap && swap.forkNodeId === pt.meta.id);
+    let anim = state.forkArcAnim.get(pt.meta.id);
+    if (!anim) {
+      anim = { weights: new Map(), glideX: null, glideY: null, glideAlpha: 0, glideRgb: [255, 161, 89] };
+      state.forkArcAnim.set(pt.meta.id, anim);
+    }
 
-    const cp1x = pt.x + 8;
-    const cp1y = midY + sway;
-    const cp2x = pt.x + (endX - pt.x) * 0.45;
-    const cp2y = endY - 4 - sway * 0.5;
+    let hoveredTarget = null;
+    for (const [idx, tgt] of pt.forkTargets.entries()) {
+      const isHovered = Boolean(hoveredBranch && tgt.branchId === hoveredBranch);
+      if (isHovered) hoveredTarget = tgt;
 
-    const arcGrad = ctx.createLinearGradient(pt.x, pt.y, endX, endY);
-    arcGrad.addColorStop(0, 'rgba(255, 224, 190, 0.78)');
-    arcGrad.addColorStop(0.65, 'rgba(255, 154, 77, 0.58)');
-    arcGrad.addColorStop(1, 'rgba(255, 138, 61, 0.32)');
+      // During a swap at this fork, let the choreographed peel-out / pull-in curves handle the two swapping branches
+      if (isSwappingHere && (tgt.branchId === swap.fromBranchId || tgt.branchId === swap.toBranchId)) {
+        continue;
+      }
 
-    // Wide soft branch glow
-    ctx.beginPath();
-    ctx.moveTo(pt.x, pt.y);
-    ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, endX, endY);
-    ctx.strokeStyle = 'rgba(255, 146, 68, 0.16)';
-    ctx.lineWidth = 8;
-    ctx.lineCap = 'round';
-    ctx.stroke();
+      // At rest, side branches connect strictly to alternative (non-current) options; hovering smoothly spotlights any option
+      const targetW = hoveredBranch
+        ? (isHovered ? 1 : (tgt.isCurrent ? 0 : 0.22))
+        : (tgt.isCurrent ? 0 : 0.84);
+      const prevW = anim.weights.has(tgt.branchId) ? anim.weights.get(tgt.branchId) : targetW;
+      const w = prevW + (targetW - prevW) * damp;
+      anim.weights.set(tgt.branchId, w);
+      if (w < 0.015) continue;
 
-    // Crisp glowing branch stream
-    ctx.beginPath();
-    ctx.moveTo(pt.x, pt.y);
-    ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, endX, endY);
-    ctx.strokeStyle = arcGrad;
-    ctx.lineWidth = 1.9;
-    ctx.stroke();
+      const rgb = hexToRgb(tgt.colorHex);
+      const hiRgb = mixRgb(rgb, [255, 244, 232], 0.45);
+      const dy = tgt.endY - pt.y;
+      const sway = organicWave(t * 0.55, pt.meta.seed + 9.2 + idx * 2.1) * 3.5;
+
+      const cp1x = pt.x + 2 + sway * 0.5;
+      const cp1y = pt.y + dy * 0.62;
+      const cp2x = pt.x + (tgt.endX - pt.x) * 0.36;
+      const cp2y = tgt.endY - sway * 0.35;
+
+      const arcGrad = ctx.createLinearGradient(pt.x, pt.y, tgt.endX, tgt.endY);
+      arcGrad.addColorStop(0, `rgba(${hiRgb.join(',')}, ${0.86 * w})`);
+      arcGrad.addColorStop(0.6, `rgba(${rgb.join(',')}, ${0.76 * w})`);
+      arcGrad.addColorStop(1, `rgba(${hiRgb.join(',')}, ${0.88 * w})`);
+
+      // Wide soft branch aura
+      ctx.beginPath();
+      ctx.moveTo(pt.x, pt.y);
+      ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, tgt.endX, tgt.endY);
+      ctx.strokeStyle = `rgba(${rgb.join(',')}, ${0.22 * w})`;
+      ctx.lineWidth = 7 + 4.5 * w;
+      ctx.lineCap = 'round';
+      ctx.stroke();
+
+      // Crisp glowing branch stream
+      ctx.beginPath();
+      ctx.moveTo(pt.x, pt.y);
+      ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, tgt.endX, tgt.endY);
+      ctx.strokeStyle = arcGrad;
+      ctx.lineWidth = 1.6 + 0.85 * w;
+      ctx.stroke();
+
+      // Luminous docking pearl where the branch kisses this exact option card
+      const pearlGrad = ctx.createRadialGradient(tgt.endX, tgt.endY, 0, tgt.endX, tgt.endY, 10 * w);
+      pearlGrad.addColorStop(0, `rgba(255, 246, 236, ${0.95 * w})`);
+      pearlGrad.addColorStop(0.45, `rgba(${rgb.join(',')}, ${0.55 * w})`);
+      pearlGrad.addColorStop(1, `rgba(${rgb.join(',')}, 0)`);
+      ctx.fillStyle = pearlGrad;
+      ctx.beginPath();
+      ctx.arc(tgt.endX, tgt.endY, 10 * w, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Flowing star-droplet gliding from the fork orb straight along the curve into the option
+      if (!reduced && w > 0.35) {
+        const flowSpeed = isHovered ? 0.62 : 0.28;
+        const u = (t * flowSpeed + idx * 0.39) % 1;
+        const dx = evalCubicBezier(pt.x, cp1x, cp2x, tgt.endX, u);
+        const dyPos = evalCubicBezier(pt.y, cp1y, cp2y, tgt.endY, u);
+        const fade = Math.sin(Math.PI * u) * w;
+        const radius = isHovered ? 11 : 8;
+        const cometGrad = ctx.createRadialGradient(dx, dyPos, 0, dx, dyPos, radius);
+        cometGrad.addColorStop(0, `rgba(255, 250, 242, ${0.92 * fade})`);
+        cometGrad.addColorStop(0.45, `rgba(${rgb.join(',')}, ${0.55 * fade})`);
+        cometGrad.addColorStop(1, `rgba(${rgb.join(',')}, 0)`);
+        ctx.fillStyle = cometGrad;
+        ctx.beginPath();
+        ctx.arc(dx, dyPos, radius, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    // Choreographed branch swap: old path peels OUTWARD to its sliding card while chosen path pulls INWARD into the main spine!
+    if (isSwappingHere) {
+      // Suppress hover spotlight completely during swap so nothing blocks the animation
+      hoveredTarget = null;
+      anim.glideAlpha = 0;
+      anim.glideY = null;
+
+      const fromTgt = pt.forkTargets.find(item => item.branchId === swap.fromBranchId);
+      const toTgt = pt.forkTargets.find(item => item.branchId === swap.toBranchId);
+
+      // 1) Double expanding astral ripple ring at the fork orb
+      const rippleAlpha = (1 - swapP) * 0.85;
+      ctx.beginPath();
+      ctx.arc(pt.x, pt.y, 10 + swapP * 52, 0, Math.PI * 2);
+      ctx.strokeStyle = `rgba(${swapToRgb.join(',')}, ${rippleAlpha})`;
+      ctx.lineWidth = 2.8 * (1 - swapP * 0.45);
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.arc(pt.x, pt.y, 6 + swapP * 30, 0, Math.PI * 2);
+      ctx.strokeStyle = `rgba(255, 248, 240, ${rippleAlpha * 0.72})`;
+      ctx.lineWidth = 1.8 * (1 - swapP * 0.45);
+      ctx.stroke();
+
+      // 2) Chosen branch sweeps boldly INWARD from its clicked spot into the vertical spine
+      if (toTgt) {
+        const pullAlpha = Math.max(0, 1 - Math.pow(swapP, 1.5) * 0.94);
+        const startX = swap.toStartX ?? toTgt.endX;
+        const startY = swap.toStartY ?? toTgt.endY;
+        const curEndX = startX + (pt.x - startX) * swapP;
+        const curEndY = startY + Math.min(110, Math.max(36, (startY - pt.y) * 0.42)) * swapP;
+        const dy = curEndY - pt.y;
+        const hiTo = mixRgb(swapToRgb, [255, 248, 240], 0.6);
+
+        ctx.beginPath();
+        ctx.moveTo(pt.x, pt.y);
+        ctx.bezierCurveTo(pt.x + 2, pt.y + dy * 0.62, pt.x + (curEndX - pt.x) * 0.36, curEndY, curEndX, curEndY);
+        ctx.strokeStyle = `rgba(${swapToRgb.join(',')}, ${0.42 * pullAlpha})`;
+        ctx.lineWidth = 18 * pullAlpha;
+        ctx.lineCap = 'round';
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.moveTo(pt.x, pt.y);
+        ctx.bezierCurveTo(pt.x + 2, pt.y + dy * 0.62, pt.x + (curEndX - pt.x) * 0.36, curEndY, curEndX, curEndY);
+        ctx.strokeStyle = `rgba(${hiTo.join(',')}, ${0.98 * pullAlpha})`;
+        ctx.lineWidth = 3.5;
+        ctx.stroke();
+
+        // Blazing star-comet riding the inward-pulling tip straight into the spine
+        const tipGrad = ctx.createRadialGradient(curEndX, curEndY, 0, curEndX, curEndY, 18 * pullAlpha);
+        tipGrad.addColorStop(0, `rgba(255, 252, 246, ${0.98 * pullAlpha})`);
+        tipGrad.addColorStop(0.42, `rgba(${swapToRgb.join(',')}, ${0.72 * pullAlpha})`);
+        tipGrad.addColorStop(1, `rgba(${swapToRgb.join(',')}, 0)`);
+        ctx.fillStyle = tipGrad;
+        ctx.beginPath();
+        ctx.arc(curEndX, curEndY, 18 * pullAlpha, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      // 3) Previous branch peels boldly OUTWARD from the spine and live-tracks its card sliding into place
+      if (fromTgt) {
+        const peelW = 0.25 + 0.59 * swapP; // lands cleanly at 0.84 to match steady-state curve
+        const curEndX = pt.x + (fromTgt.endX - pt.x) * swapP;
+        const curEndY = fromTgt.endY;
+        const dy = curEndY - pt.y;
+        const hiFrom = mixRgb(swapFromRgb, [255, 244, 232], 0.5);
+
+        const peelGrad = ctx.createLinearGradient(pt.x, pt.y, curEndX, curEndY);
+        peelGrad.addColorStop(0, `rgba(${hiFrom.join(',')}, ${0.92 * peelW})`);
+        peelGrad.addColorStop(0.6, `rgba(${swapFromRgb.join(',')}, ${0.84 * peelW})`);
+        peelGrad.addColorStop(1, `rgba(${hiFrom.join(',')}, ${0.94 * peelW})`);
+
+        ctx.beginPath();
+        ctx.moveTo(pt.x, pt.y);
+        ctx.bezierCurveTo(pt.x + 2, pt.y + dy * 0.62, pt.x + (curEndX - pt.x) * 0.36, curEndY, curEndX, curEndY);
+        ctx.strokeStyle = `rgba(${swapFromRgb.join(',')}, ${0.30 * peelW})`;
+        ctx.lineWidth = 9 + 6 * peelW;
+        ctx.lineCap = 'round';
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.moveTo(pt.x, pt.y);
+        ctx.bezierCurveTo(pt.x + 2, pt.y + dy * 0.62, pt.x + (curEndX - pt.x) * 0.36, curEndY, curEndX, curEndY);
+        ctx.strokeStyle = peelGrad;
+        ctx.lineWidth = 2.1 + 1.0 * peelW;
+        ctx.stroke();
+
+        // Bright unfolding comet head that settles smoothly into the docking pearl (radius 10 * 0.84)
+        const pearlR = (10 + 7 * Math.sin(Math.PI * swapP)) * peelW;
+        const pearlGrad = ctx.createRadialGradient(curEndX, curEndY, 0, curEndX, curEndY, pearlR);
+        pearlGrad.addColorStop(0, `rgba(255, 248, 240, ${0.98 * peelW})`);
+        pearlGrad.addColorStop(0.45, `rgba(${swapFromRgb.join(',')}, ${0.65 * peelW})`);
+        pearlGrad.addColorStop(1, `rgba(${swapFromRgb.join(',')}, 0)`);
+        ctx.fillStyle = pearlGrad;
+        ctx.beginPath();
+        ctx.arc(curEndX, curEndY, pearlR, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    // Smooth gliding spotlight filament that sweeps effortlessly between options as you hover across them
+    if (hoveredTarget) {
+      const rgb = hexToRgb(hoveredTarget.colorHex);
+      if (anim.glideY === null) {
+        anim.glideX = hoveredTarget.endX;
+        anim.glideY = hoveredTarget.endY;
+        anim.glideRgb = rgb;
+      } else {
+        const glideDamp = reduced ? 1 : Math.min(1, dt * 13);
+        anim.glideX += (hoveredTarget.endX - anim.glideX) * glideDamp;
+        anim.glideY += (hoveredTarget.endY - anim.glideY) * glideDamp;
+        anim.glideRgb = [
+          anim.glideRgb[0] + (rgb[0] - anim.glideRgb[0]) * glideDamp,
+          anim.glideRgb[1] + (rgb[1] - anim.glideRgb[1]) * glideDamp,
+          anim.glideRgb[2] + (rgb[2] - anim.glideRgb[2]) * glideDamp,
+        ];
+      }
+      anim.glideAlpha += (1 - anim.glideAlpha) * damp;
+    } else {
+      anim.glideAlpha += (0 - anim.glideAlpha) * damp;
+      if (anim.glideAlpha < 0.02) anim.glideY = null;
+    }
+
+    if (anim.glideY !== null && anim.glideAlpha > 0.03) {
+      const gRgb = anim.glideRgb.map(Math.round);
+      const gHi = mixRgb(gRgb, [255, 248, 240], 0.55);
+      const dy = anim.glideY - pt.y;
+      ctx.beginPath();
+      ctx.moveTo(pt.x, pt.y);
+      ctx.bezierCurveTo(
+        pt.x + 2,
+        pt.y + dy * 0.62,
+        pt.x + (anim.glideX - pt.x) * 0.36,
+        anim.glideY,
+        anim.glideX,
+        anim.glideY
+      );
+      ctx.strokeStyle = `rgba(${gHi.join(',')}, ${0.52 * anim.glideAlpha})`;
+      ctx.lineWidth = 2.6;
+      ctx.lineCap = 'round';
+      ctx.stroke();
+    }
   }
 
   // 3. Draw glowing morphing orbs at each milestone
@@ -454,11 +738,28 @@ function stopSpineAnimation() {
    STAGE, VIEW & DRAWER NAVIGATION
    ========================================================================== */
 
+function setPathsPanelOpen(open) {
+  const panel = byId('tree-controls-panel');
+  const btn = byId('toggle-paths-panel');
+  if (!panel || !btn) return;
+  panel.hidden = !open;
+  btn.setAttribute('aria-expanded', String(open));
+  if (open) setDrawerOpen(false);
+}
+
 function setDrawerOpen(open) {
   state.drawerOpen = open;
-  const active = open && state.stage === 'results' && state.resultsView === 'timeline';
+  const inResults = state.stage === 'results';
+  const active = open && inResults;
   document.body.classList.toggle('drawer-open', active);
-  byId('drawer-backdrop').hidden = !active;
+  // Backdrop dims only in Timeline mode (in Full Tree mode, you can keep panning/clicking nodes directly!)
+  byId('drawer-backdrop').hidden = !(active && state.resultsView === 'timeline');
+  if (active && state.resultsView === 'tree') {
+    const panel = byId('tree-controls-panel');
+    const btn = byId('toggle-paths-panel');
+    if (panel) panel.hidden = true;
+    if (btn) btn.setAttribute('aria-expanded', 'false');
+  }
 }
 
 function mountInspectorForView() {
@@ -485,7 +786,10 @@ function setResultsView(mode, { focusNodeId = null } = {}) {
   byId('timeline-view').hidden = isTree;
   byId('tree-view').hidden = !isTree;
   document.body.classList.toggle('world-mode', state.stage === 'results' && isTree);
-  if (isTree) setDrawerOpen(false);
+  if (isTree) {
+    setDrawerOpen(false);
+    setPathsPanelOpen(false);
+  }
   mountInspectorForView();
 
   if (focusNodeId && state.nodes.has(focusNodeId)) {
@@ -494,8 +798,9 @@ function setResultsView(mode, { focusNodeId = null } = {}) {
 
   if (isTree) {
     stopSpineAnimation();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
     requestAnimationFrame(() => {
-      renderTreeGraph({ focusId: focusNodeId || state.selectedId, fit: !focusNodeId });
+      renderTreeGraph({ focusId: focusNodeId, fit: true });
       if (state.selectedId) {
         const selected = state.nodes.get(state.selectedId);
         renderInspector(selected);
@@ -604,6 +909,9 @@ function buildTreeIndex() {
     }
     chain.reverse();
 
+    const byMonth = new Map();
+    for (const item of chain) byMonth.set(item.month, item);
+
     branchMeta.set(bid, {
       id: bid,
       label,
@@ -611,8 +919,20 @@ function buildTreeIndex() {
       tipNode: tip,
       forkMonth: first.parent_id ? state.nodes.get(first.parent_id)?.month ?? 0 : 0,
       forkParentId: first.parent_id,
+      parentBranchId: null,
       chain,
+      byMonth,
     });
+  }
+
+  for (const meta of branchMeta.values()) {
+    if (meta.id === 'main' || meta.id === 'root' || !meta.forkParentId) continue;
+    const rawParent = state.nodes.get(meta.forkParentId)?.branch_id || null;
+    if (!rawParent || rawParent === meta.id) continue;
+    const resolvedParent = rawParent === 'root' ? (branchMeta.has('main') ? 'main' : null) : rawParent;
+    if (resolvedParent && branchMeta.has(resolvedParent)) {
+      meta.parentBranchId = resolvedParent;
+    }
   }
 
   const forkNodeIds = new Set();
@@ -625,6 +945,28 @@ function buildTreeIndex() {
   for (const node of mainChain) baselineByMonth.set(node.month, node);
 
   return { root, childrenByParent, nodesByBranch, branchIds, branchMeta, forkNodeIds, baselineByMonth };
+}
+
+function shortBranchLabel(label, max = 26) {
+  const text = String(label || 'parent path');
+  return text.length > max ? `${text.slice(0, max - 1).trim()}…` : text;
+}
+
+function getParentComparison(branchId, month, index) {
+  const meta = index.branchMeta.get(branchId);
+  const parentMeta = meta?.parentBranchId ? index.branchMeta.get(meta.parentBranchId) : null;
+  if (!parentMeta) return { parentMeta: null, parentNode: null };
+  return { parentMeta, parentNode: parentMeta.byMonth.get(month) || null };
+}
+
+const shortMonthFmt = new Intl.DateTimeFormat('en-GB', { month: 'short', year: 'numeric' });
+const fullDateFmt = new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+
+function formatNiceDate(isoDate, { includeDay = false } = {}) {
+  const parts = String(isoDate || '').split('-').map(Number);
+  if (parts.length !== 3 || parts.some(Number.isNaN)) return String(isoDate || '');
+  const d = new Date(Date.UTC(parts[0], parts[1] - 1, parts[2]));
+  return (includeDay ? fullDateFmt : shortMonthFmt).format(d);
 }
 
 function formatMonthTime(month) {
@@ -640,7 +982,6 @@ function milestoneTitle(node) {
   if (node.event_summary && node.event_summary !== 'Monthly update') return node.event_summary;
   if (node.month % 12 === 0) return `Year ${node.month / 12}`;
   if (node.month % 6 === 0) return node.month === 6 ? '6 months' : `Year ${(node.month / 12).toFixed(1)}`;
-  if (node.state.cash_chf < 0) return 'Cash shortfall';
   return `Month ${node.month}`;
 }
 
@@ -686,20 +1027,12 @@ function buildMilestoneProse(node, prevNode) {
 function getPathMilestones(chain, index) {
   if (!chain.length) return [];
   const tip = chain[chain.length - 1];
-  let firstBreachId = null;
-  for (let i = 1; i < chain.length; i++) {
-    if (chain[i].state.cash_chf < 0 && chain[i - 1].state.cash_chf >= 0) {
-      firstBreachId = chain[i].id;
-      break;
-    }
-  }
 
   return chain.filter(node => {
     if (node.month === 0 || node.id === tip.id) return true;
     if (node.month % 6 === 0) return true;
     if (index.forkNodeIds.has(node.id)) return true;
     if (node.event_summary && node.event_summary !== 'Monthly update') return true;
-    if (node.id === firstBreachId) return true;
     const parent = node.parent_id ? state.nodes.get(node.parent_id) : null;
     if (parent && parent.branch_id !== node.branch_id) return true;
     return false;
@@ -900,9 +1233,7 @@ function renderTimelineView() {
     state.activeBranchId = index.branchIds[0];
   }
   const activeMeta = index.branchMeta.get(state.activeBranchId);
-  const chain = activeMeta.id === 'main' || activeMeta.id === 'root'
-    ? activeMeta.chain
-    : index.nodesByBranch.get(activeMeta.id);
+  const chain = activeMeta.chain;
   const milestones = getPathMilestones(chain, index);
 
   if (!state.selectedId || !chain.some(n => n.id === state.selectedId)) {
@@ -916,23 +1247,18 @@ function renderTimelineView() {
   const parentLabel = parentBid ? index.branchMeta.get(parentBid === 'root' ? 'main' : parentBid)?.label : 'Original path';
 
   const horizonYears = (activeMeta.tipNode.month / 12).toFixed(activeMeta.tipNode.month % 12 ? 1 : 0);
-  byId('active-path-kicker').textContent = isAlternate ? `ALTERNATE PATH · ${activeMeta.label.toUpperCase()}` : 'ORIGINAL PATH';
+  byId('active-path-kicker').textContent = isAlternate ? activeMeta.label.toUpperCase() : 'ORIGINAL PATH';
   const dotEl = byId('active-path-dot');
   if (dotEl) {
     dotEl.style.background = activeColor;
     dotEl.style.boxShadow = `0 0 10px ${activeColor}`;
   }
   byId('active-path-subtitle').textContent = isAlternate
-    ? `Diverged from ${parentLabel} at ${formatMonthTime(activeMeta.forkMonth)} · compared against your Original path.`
+    ? `Branched from ${parentLabel} · ${horizonYears}-year projection.`
     : `Your ${horizonYears}-year baseline projection.`;
 
-  const banner = byId('branch-banner');
-  banner.hidden = !isAlternate;
-  if (isAlternate) {
-    banner.style.setProperty('--branch-accent', activeColor);
-    byId('branch-banner-title').textContent = `Following alternate path: ${activeMeta.label}`;
-    byId('branch-banner-origin').textContent = `Branched from ${parentLabel} at ${formatMonthTime(activeMeta.forkMonth)}`;
-  }
+  const returnBtn = byId('return-to-original');
+  if (returnBtn) returnBtn.hidden = !isAlternate;
 
   renderVerticalTimeline(milestones, activeMeta, index, layout);
   renderTreeMinimap(index);
@@ -979,27 +1305,19 @@ function renderVerticalTimeline(milestones, activeMeta, index, layout) {
     const content = document.createElement('div');
     content.className = 'vnode-content';
 
-    if (isBranchEntry) {
-      const marker = document.createElement('div');
-      marker.className = 'vnode-branch-marker';
-      const bLabel = index.branchMeta.get(node.branch_id)?.label || 'Alternate path';
-      marker.textContent = `⑂ Alternate path begins · ${bLabel}`;
-      content.append(marker);
-    }
-
     const eyebrow = document.createElement('div');
     eyebrow.className = 'vnode-eyebrow';
     const dateEl = document.createElement('span');
-    dateEl.textContent = `${node.date} · ${formatMonthTime(node.month)}`;
+    dateEl.textContent = formatNiceDate(node.date, { includeDay: true });
     eyebrow.append(dateEl);
 
     if (isBranch && node.branch_id !== 'root' && node.branch_id !== 'main') {
-      const base = index.baselineByMonth.get(node.month);
-      if (base) {
-        const delta = node.state.net_worth_chf - base.state.net_worth_chf;
+      const { parentMeta, parentNode } = getParentComparison(node.branch_id, node.month, index);
+      if (parentMeta && parentNode) {
+        const delta = node.state.net_worth_chf - parentNode.state.net_worth_chf;
         const deltaEl = document.createElement('span');
         deltaEl.className = `vnode-delta ${delta > 0.5 ? 'is-pos' : delta < -0.5 ? 'is-neg' : 'is-flat'}`;
-        deltaEl.textContent = `${moneySigned(delta)} vs. original`;
+        deltaEl.textContent = `${moneySigned(delta)} vs. ${shortBranchLabel(parentMeta.label)}`;
         eyebrow.append(deltaEl);
       }
     }
@@ -1029,13 +1347,6 @@ function renderVerticalTimeline(milestones, activeMeta, index, layout) {
     `;
 
     content.append(eyebrow, heading, prose, figures);
-
-    if (isShortfall) {
-      const warn = document.createElement('p');
-      warn.className = 'vnode-shortfall';
-      warn.textContent = `Cash shortfall of ${money(Math.abs(s.cash_chf))} under current assumptions.`;
-      content.append(warn);
-    }
 
     const links = document.createElement('div');
     links.className = 'vnode-links';
@@ -1086,19 +1397,37 @@ function renderVerticalTimeline(milestones, activeMeta, index, layout) {
       const destList = document.createElement('div');
       destList.className = 'fork-destinations';
 
-      for (const child of directChildren) {
+      const currentForkChild = directChildren.find(c => activeMeta.chain.some(n => n.id === c.id));
+      const activeSwapHere = state.branchSwap?.forkNodeId === node.id ? state.branchSwap : null;
+      // Place Current path on top so switching visibly FLIP-swaps the chosen branch up into the lead slot!
+      const orderedChildren = [...directChildren].sort((a, b) => {
+        const aCur = activeMeta.chain.some(n => n.id === a.id);
+        const bCur = activeMeta.chain.some(n => n.id === b.id);
+        if (aCur !== bCur) return aCur ? -1 : 1;
+        return 0;
+      });
+
+      for (const child of orderedChildren) {
         const bMeta = index.branchMeta.get(child.branch_id);
         if (!bMeta) continue;
         const isCurrent = activeMeta.chain.some(n => n.id === child.id);
+        const destColor = layout.branchColors.get(child.branch_id) || BRANCH_PALETTE[0];
         const tipWorth = bMeta.tipNode.state.net_worth_chf;
-        const baseTip = index.baselineByMonth.get(bMeta.tipNode.month);
-        const diffNote = bMeta.id !== 'main' && bMeta.id !== 'root' && baseTip
-          ? ` · ${moneySigned(tipWorth - baseTip.state.net_worth_chf)} vs. original`
+        const isContinuingHere = child.branch_id === node.branch_id || (node.branch_id === 'root' && child.branch_id === 'main');
+        const { parentMeta, parentNode } = isContinuingHere
+          ? { parentMeta: null, parentNode: null }
+          : getParentComparison(bMeta.id, bMeta.tipNode.month, index);
+        const diffNote = parentMeta && parentNode
+          ? ` · ${moneySigned(tipWorth - parentNode.state.net_worth_chf)} vs. ${shortBranchLabel(parentMeta.label)}`
           : '';
 
+        const swapCls = activeSwapHere && child.branch_id === activeSwapHere.toBranchId ? ' is-swap-in' : '';
         const btn = document.createElement('button');
         btn.type = 'button';
-        btn.className = `fork-dest-btn${isCurrent ? ' is-current' : ''}`;
+        btn.className = `fork-dest-btn${isCurrent ? ' is-current' : ''}${swapCls}`;
+        btn.dataset.branchId = child.branch_id;
+        btn.dataset.branchColor = destColor;
+        btn.style.setProperty('--dest-color', destColor);
         btn.innerHTML = `
           <span class="fork-dest-left">
             <span class="fork-dest-orb" aria-hidden="true"></span>
@@ -1109,9 +1438,45 @@ function renderVerticalTimeline(milestones, activeMeta, index, layout) {
           </span>
           <span class="fork-dest-action">${isCurrent ? 'Current path' : 'Follow →'}</span>
         `;
+        const enterFork = () => {
+          if (isCurrent) return;
+          if (state.branchSwap?.forkNodeId === node.id) return;
+          if (state.forkHoverSuppressPos) return;
+          state.forkHover = { nodeId: node.id, branchId: child.branch_id };
+          if (!state.spineRaf) startSpineAnimation();
+        };
+        const leaveFork = () => {
+          if (state.forkHover?.nodeId === node.id && state.forkHover?.branchId === child.branch_id) {
+            state.forkHover = null;
+            if (!state.spineRaf) startSpineAnimation();
+          }
+        };
+        btn.addEventListener('pointerenter', enterFork);
+        btn.addEventListener('pointerleave', leaveFork);
+        btn.addEventListener('focus', enterFork);
+        btn.addEventListener('blur', leaveFork);
         btn.addEventListener('click', event => {
           event.stopPropagation();
-          switchActivePath(child.branch_id, { focusNodeId: child.id });
+          if (isCurrent) return;
+          state.forkHover = null;
+          state.forkHoverSuppressPos = { x: event.clientX, y: event.clientY };
+          state.justSwitchedFromMonth = node.month;
+          const fromBid = currentForkChild?.branch_id || state.activeBranchId;
+          const shellRect = byId('vtimeline-shell')?.getBoundingClientRect();
+          const btnRect = btn.getBoundingClientRect();
+          state.branchSwap = {
+            forkNodeId: node.id,
+            forkMonth: node.month,
+            fromBranchId: fromBid,
+            toBranchId: child.branch_id,
+            fromColor: layout.branchColors.get(fromBid) || BRANCH_PALETTE[0],
+            toColor: destColor,
+            toStartX: shellRect ? Math.min(148, btnRect.left - shellRect.left + 1) : 138,
+            toStartY: shellRect ? (btnRect.top - shellRect.top + btnRect.height / 2) : null,
+            startMs: performance.now(),
+            duration: 680,
+          };
+          switchActivePath(child.branch_id, { focusNodeId: child.id, anchorNodeId: node.id });
         });
         destList.append(btn);
       }
@@ -1120,9 +1485,15 @@ function renderVerticalTimeline(milestones, activeMeta, index, layout) {
       content.append(forkBlock);
     }
 
+    if (state.justSwitchedFromMonth !== null && node.month > state.justSwitchedFromMonth) {
+      li.classList.add('is-switching');
+      li.style.animationDelay = `${Math.min(idx, 8) * 40}ms`;
+    }
+
     li.append(dotBtn, content);
     list.append(li);
   });
+  state.justSwitchedFromMonth = null;
 }
 
 function buildPlanarTreeLayout(milestones, index) {
@@ -1305,8 +1676,8 @@ function renderTreeMinimap(index) {
     path.setAttribute('d', d);
     path.setAttribute('fill', 'none');
     path.setAttribute('stroke', edge.color);
-    path.setAttribute('stroke-width', edge.isActiveEdge ? '2.2' : '1.4');
-    path.setAttribute('stroke-opacity', edge.isActiveEdge ? '0.96' : '0.48');
+    path.setAttribute('stroke-width', edge.isActiveEdge ? '2.4' : '1.75');
+    path.setAttribute('stroke-opacity', edge.isActiveEdge ? '1' : '0.76');
     path.setAttribute('stroke-linecap', 'round');
     path.setAttribute('class', 'minimap-edge-hit');
     path.addEventListener('click', event => {
@@ -1321,8 +1692,8 @@ function renderTreeMinimap(index) {
   const applyMinimapHighlight = hoveredId => {
     if (!hoveredId) {
       for (const { el, edge } of edgeEls.values()) {
-        el.setAttribute('stroke-opacity', edge.isActiveEdge ? '0.96' : '0.48');
-        el.setAttribute('stroke-width', edge.isActiveEdge ? '2.2' : '1.4');
+        el.setAttribute('stroke-opacity', edge.isActiveEdge ? '1' : '0.76');
+        el.setAttribute('stroke-width', edge.isActiveEdge ? '2.4' : '1.75');
       }
       for (const { dot, isActive, isSelected } of nodeEls.values()) {
         dot.setAttribute('opacity', isSelected || isActive ? '1' : '0.68');
@@ -1407,8 +1778,7 @@ function renderEndSummary(activeMeta, index) {
 
   const chain = activeMeta.chain;
   const tip = activeMeta.tipNode;
-  const baseTip = index.baselineByMonth.get(tip.month);
-  const isBranch = activeMeta.id !== 'main' && activeMeta.id !== 'root';
+  const { parentMeta, parentNode: parentTip } = getParentComparison(activeMeta.id, tip.month, index);
 
   let minCashNode = chain[0];
   let shortfallMonths = 0;
@@ -1417,8 +1787,9 @@ function renderEndSummary(activeMeta, index) {
     if (n.state.cash_chf < 0) shortfallMonths += 1;
   }
 
-  const nwDelta = isBranch && baseTip ? tip.state.net_worth_chf - baseTip.state.net_worth_chf : null;
-  const cashDelta = isBranch && baseTip ? tip.state.cash_chf - baseTip.state.cash_chf : null;
+  const nwDelta = parentMeta && parentTip ? tip.state.net_worth_chf - parentTip.state.net_worth_chf : null;
+  const cashDelta = parentMeta && parentTip ? tip.state.cash_chf - parentTip.state.cash_chf : null;
+  const parentName = parentMeta ? shortBranchLabel(parentMeta.label) : '';
   const yr = (tip.month / 12).toFixed(tip.month % 12 ? 1 : 0);
 
   const stats = [
@@ -1426,7 +1797,7 @@ function renderEndSummary(activeMeta, index) {
       label: `Ending net worth (Year ${yr})`,
       value: money(tip.state.net_worth_chf),
       sub: nwDelta !== null
-        ? `${moneySigned(nwDelta)} vs. Original path (${money(baseTip.state.net_worth_chf)})`
+        ? `${moneySigned(nwDelta)} vs. ${parentName} (${money(parentTip.state.net_worth_chf)})`
         : `${moneySigned(tip.state.net_worth_chf - chain[0].state.net_worth_chf)} from starting point`,
     },
     {
@@ -1434,9 +1805,9 @@ function renderEndSummary(activeMeta, index) {
       value: money(tip.state.cash_chf),
       danger: minCashNode.state.cash_chf < 0,
       sub: minCashNode.state.cash_chf < 0
-        ? `Cash dips to ${money(minCashNode.state.cash_chf)} (${shortfallMonths} mo in shortfall)`
+        ? `Lowest point: ${money(minCashNode.state.cash_chf)} (${shortfallMonths} mo below CHF 0)`
         : cashDelta !== null
-          ? `${moneySigned(cashDelta)} vs. Original · lowest ${money(minCashNode.state.cash_chf)}`
+          ? `${moneySigned(cashDelta)} vs. ${parentName} · lowest ${money(minCashNode.state.cash_chf)}`
           : `Lowest point: ${money(minCashNode.state.cash_chf)} (${minCashNode.date})`,
     },
     {
@@ -1474,8 +1845,9 @@ function renderTrajectoryChart(activeMeta, index) {
   byId('trajectory-title').textContent = metric === 'cash_chf' ? 'LIQUID CASH OVER TIME' : 'NET WORTH OVER TIME';
 
   const activeChain = activeMeta.chain;
-  const baseChain = index.branchMeta.get('main')?.chain || [];
-  const isBranch = activeMeta.id !== 'main' && activeMeta.id !== 'root' && baseChain.length > 0;
+  const parentMeta = activeMeta.parentBranchId ? index.branchMeta.get(activeMeta.parentBranchId) : null;
+  const baseChain = parentMeta?.chain || [];
+  const isBranch = Boolean(parentMeta && baseChain.length > 0);
 
   const allValues = activeChain.map(n => n.state[metric]);
   if (isBranch) allValues.push(...baseChain.map(n => n.state[metric]));
@@ -1548,25 +1920,82 @@ function renderTrajectoryChart(activeMeta, index) {
   legend.innerHTML = `
     <div class="legend-items">
       <span class="legend-item"><i class="legend-swatch is-active"></i> ${escapeHtml(activeMeta.label)}</span>
-      ${isBranch ? '<span class="legend-item"><i class="legend-swatch is-baseline"></i> Original path</span>' : ''}
+      ${isBranch ? `<span class="legend-item"><i class="legend-swatch is-baseline"></i> ${escapeHtml(parentMeta.label)}</span>` : ''}
     </div>
     <span>${activeChain[0].date} → ${activeChain[activeChain.length - 1].date}</span>
   `;
 }
 
-function switchActivePath(branchId, { focusNodeId = null } = {}) {
+function switchActivePath(branchId, { focusNodeId = null, anchorNodeId = null } = {}) {
   const index = buildTreeIndex();
   if (!index.branchMeta.has(branchId)) return;
+
+  // Snapshot the fork node & its option button positions BEFORE re-rendering for scroll anchoring + FLIP card swap!
+  const beforeForkEl = anchorNodeId
+    ? document.querySelector(`.vnode[data-node-id="${CSS.escape(anchorNodeId)}"]`)
+    : null;
+  const beforeAnchorTop = beforeForkEl ? beforeForkEl.getBoundingClientRect().top : null;
+  const beforeBtnRelTops = new Map();
+  if (beforeForkEl && beforeAnchorTop !== null) {
+    for (const btn of beforeForkEl.querySelectorAll('.vnode-fork .fork-dest-btn')) {
+      beforeBtnRelTops.set(btn.dataset.branchId, btn.getBoundingClientRect().top - beforeAnchorTop);
+    }
+  }
+
   state.activeBranchId = branchId;
   const meta = index.branchMeta.get(branchId);
-  const targetId = focusNodeId && meta.chain.some(n => n.id === focusNodeId)
-    ? focusNodeId
-    : (meta.firstNode.month > 0 ? meta.firstNode.id : meta.chain[0].id);
+  const newMilestones = getPathMilestones(meta.chain, index);
+  const focusNode = focusNodeId ? state.nodes.get(focusNodeId) : null;
+  let targetId;
+  if (focusNodeId && newMilestones.some(n => n.id === focusNodeId)) {
+    targetId = focusNodeId;
+  } else if (focusNode) {
+    targetId = newMilestones.find(n => n.month >= focusNode.month)?.id || anchorNodeId || newMilestones[0]?.id;
+  } else {
+    targetId = meta.firstNode.month > 0 ? meta.firstNode.id : meta.chain[0].id;
+  }
 
   state.selectedId = targetId;
   renderTimelineView();
-  selectNode(targetId, { openDrawer: false });
-  if (focusNodeId) scrollMilestoneIntoView(targetId);
+  selectNode(targetId, { openDrawer: false, skipTimelineRender: true });
+
+  if (anchorNodeId && beforeAnchorTop !== null) {
+    const afterEl = document.querySelector(`.vnode[data-node-id="${CSS.escape(anchorNodeId)}"]`);
+    if (afterEl) {
+      const afterTop = afterEl.getBoundingClientRect().top;
+      const deltaScroll = afterTop - beforeAnchorTop;
+      if (Math.abs(deltaScroll) > 0.5) window.scrollBy(0, deltaScroll);
+
+      // Smooth FLIP glide: chosen card slides cleanly up into the lead slot, previous slides down into side branch
+      const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      if (!reduced && beforeBtnRelTops.size) {
+        const anchoredTop = afterEl.getBoundingClientRect().top;
+        const swap = state.branchSwap;
+        for (const btn of afterEl.querySelectorAll('.vnode-fork .fork-dest-btn')) {
+          const prevRel = beforeBtnRelTops.get(btn.dataset.branchId);
+          if (prevRel === undefined) continue;
+          const nextRel = btn.getBoundingClientRect().top - anchoredTop;
+          const dy = prevRel - nextRel;
+          if (Math.abs(dy) < 1) continue;
+          const isOutgoing = swap && btn.dataset.branchId === swap.fromBranchId;
+          btn.animate(
+            isOutgoing
+              ? [
+                  { transform: `translateY(${dy}px)`, opacity: 0.86 },
+                  { transform: 'translateY(0)', opacity: 1 },
+                ]
+              : [
+                  { transform: `translateY(${dy}px)` },
+                  { transform: 'translateY(0)' },
+                ],
+            { duration: 600, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' }
+          );
+        }
+      }
+    }
+  } else if (focusNodeId) {
+    scrollMilestoneIntoView(targetId);
+  }
 }
 
 function scrollMilestoneIntoView(nodeId) {
@@ -1620,24 +2049,119 @@ function resolveTreeFocusId(focusId, visible, index) {
   return null;
 }
 
-function applyTreeEdgeHighlight(focusNodeId) {
+function applyTreeEdgeHighlight(hoverNodeId) {
   if (!state.graphEdges || !state.treeRenderData) return;
   const { edges, activeSet } = state.treeRenderData;
-  const lineage = focusNodeId ? getLineageIds(focusNodeId, edges) : null;
+  const lineage = hoverNodeId ? getLineageIds(hoverNodeId, edges) : null;
   const updates = edges.map(edge => {
-    const isLit = lineage ? lineage.edgeIds.has(edge.id) : (activeSet.has(edge.from) && activeSet.has(edge.to));
-    const isDimmed = Boolean(lineage && !isLit);
+    const isActiveEdge = activeSet.has(edge.from) && activeSet.has(edge.to);
+    if (!lineage) {
+      // Resting state: every branch path stays crisp, luminous, and unmistakably connected as a tree
+      return {
+        id: edge.id,
+        width: isActiveEdge ? 5.8 : 4.6,
+        color: {
+          color: edge.baseColor,
+          highlight: edge.baseColor,
+          hover: edge.baseColor,
+        },
+        shadow: { enabled: true, color: edge.glowColor, size: isActiveEdge ? 14 : 10, x: 0, y: 0 },
+      };
+    }
+    const isLit = lineage.edgeIds.has(edge.id);
     return {
       id: edge.id,
-      width: isLit ? 3.2 : isDimmed ? 1.2 : 2,
+      width: isLit ? 6.8 : 2.6,
       color: {
-        color: isDimmed ? 'rgba(138, 90, 60, 0.25)' : edge.baseColor,
+        color: isLit ? edge.baseColor : 'rgba(186, 130, 92, 0.34)',
         highlight: edge.baseColor,
         hover: edge.baseColor,
       },
+      shadow: isLit
+        ? { enabled: true, color: edge.glowColor, size: 18, x: 0, y: 0 }
+        : false,
     };
   });
   state.graphEdges.update(updates);
+}
+
+const TREE_COL_STEP = 360;
+const TREE_ROW_STEP = 195;
+
+function fitTreeView({ animate = false } = {}) {
+  if (!state.network || !state.graphNodes) return;
+  const ids = state.graphNodes.getIds();
+  if (!ids.length) return;
+  const graphEl = byId('timeline-graph');
+  const vpW = graphEl?.clientWidth || 1200;
+  const vpH = graphEl?.clientHeight || 720;
+
+  let minLeft = Infinity;
+  let maxRight = -Infinity;
+  let minTop = Infinity;
+  let maxBottom = -Infinity;
+  for (const id of ids) {
+    const box = state.network.getBoundingBox(id);
+    const pos = state.network.getPosition(id);
+    const hasBox = box && Number.isFinite(box.left) && box.right > box.left;
+    const left = hasBox ? box.left : pos.x - 140;
+    const right = hasBox ? box.right : pos.x + 140;
+    const top = hasBox ? box.top : pos.y - 68;
+    const bottom = hasBox ? box.bottom : pos.y + 68;
+    if (left < minLeft) minLeft = left;
+    if (right > maxRight) maxRight = right;
+    if (top < minTop) minTop = top;
+    if (bottom > maxBottom) maxBottom = bottom;
+  }
+
+  const axisOffset = 58;
+  const padX = 40;
+  const padTop = 76;
+  const padBottom = 68;
+  const contentW = Math.max(240, maxRight - minLeft);
+  const contentH = Math.max(180, (maxBottom + axisOffset) - minTop);
+  const scale = Math.min(
+    1.15,
+    Math.max(0.18, Math.min((vpW - padX * 2) / contentW, (vpH - padTop - padBottom) / contentH))
+  );
+  const centerX = (minLeft + maxRight) / 2;
+  const centerY = (minTop + maxBottom + axisOffset) / 2;
+  const offsetY = (padTop - padBottom) / 2;
+
+  state.network.moveTo({
+    position: { x: centerX, y: centerY },
+    scale,
+    offset: { x: 0, y: offsetY },
+    animation: animate ? { duration: 380, easingFunction: 'easeInOutQuad' } : false,
+  });
+}
+
+const EVENT_STYLES = {
+  positive: { border: '#6fc99e', borderSelected: '#9ee8c4', bg: '#1b3428', bgSelected: '#254a38', glow: 'rgba(111, 201, 158, 0.40)', glowSelected: 'rgba(111, 201, 158, 0.72)' },
+  property: { border: '#f5c258', borderSelected: '#ffe099', bg: '#3b2b12', bgSelected: '#543d18', glow: 'rgba(245, 194, 88, 0.40)', glowSelected: 'rgba(245, 194, 88, 0.72)' },
+  education: { border: '#cf8de6', borderSelected: '#e5bbf4', bg: '#311b3a', bgSelected: '#462654', glow: 'rgba(207, 141, 230, 0.40)', glowSelected: 'rgba(207, 141, 230, 0.72)' },
+  shock: { border: '#ff6f61', borderSelected: '#ffa49a', bg: '#401b18', bgSelected: '#5c2622', glow: 'rgba(255, 111, 97, 0.42)', glowSelected: 'rgba(255, 111, 97, 0.74)' },
+  life: { border: '#67bed4', borderSelected: '#9eddf0', bg: '#183038', bgSelected: '#224652', glow: 'rgba(103, 190, 212, 0.40)', glowSelected: 'rgba(103, 190, 212, 0.72)' },
+  amber: { border: '#ff9a4d', borderSelected: '#ffc794', bg: '#3f2212', bgSelected: '#5a3018', glow: 'rgba(255, 154, 77, 0.40)', glowSelected: 'rgba(255, 154, 77, 0.72)' },
+};
+
+function eventStyleFor(node) {
+  const text = `${node.event_summary || ''} ${node.event_narrative || ''}`.toLowerCase();
+  if (/crash|loss|layoff|drop|debt|emergency|crisis|cut/.test(text)) return EVENT_STYLES.shock;
+  if (/promot|raise|bonus|salary|job|career|income/.test(text)) return EVENT_STYLES.positive;
+  if (/flat|house|home|mortgage|apartment|property|car|loan|buy/.test(text)) return EVENT_STYLES.property;
+  if (/master|study|degree|school|uni|sabbatical|part-time|part time|break/.test(text)) return EVENT_STYLES.education;
+  if (/move|zurich|lausanne|child|baby|family|holiday|travel|wedding|relocat/.test(text)) return EVENT_STYLES.life;
+  return EVENT_STYLES.amber;
+}
+
+function isTreeEventNode(node) {
+  return Boolean(node.month > 0 && node.event_summary && node.event_summary !== 'Monthly update');
+}
+
+function treeNodeTitle(node) {
+  const raw = milestoneTitle(node);
+  return raw.length > 36 ? `${raw.slice(0, 34).trim()}…` : raw;
 }
 
 function renderTreeGraph({ fit = false, focusId = null } = {}) {
@@ -1648,53 +2172,74 @@ function renderTreeGraph({ fit = false, focusId = null } = {}) {
   const activeSet = new Set(index.branchMeta.get(state.activeBranchId)?.chain.map(n => n.id) || []);
 
   const layout = buildPlanarTreeLayout(milestones, index);
-  const { dates, laneOffsets, branchColors, parentBranchOf } = layout;
+  const { dates, laneOffsets, branchColors } = layout;
 
   const rows = new Map();
   const graphNodes = milestones.map(node => {
-    const status = nodeHealth(node);
     const isSelected = node.id === state.selectedId;
     const isActive = activeSet.has(node.id);
-    const bColor = branchColors.get(node.branch_id) || BRANCH_PALETTE[0];
+    const isEvent = isTreeEventNode(node);
     const rowKey = `${node.branch_id}:${node.date}`;
     const rowOffset = rows.get(rowKey) || 0;
     rows.set(rowKey, rowOffset + 1);
 
-    // On the first node of a non-main branch, show a quiet origin cue so parentage is immediately clear
-    const isBranchOrigin = index.branchMeta.get(node.branch_id)?.firstNode?.id === node.id && node.branch_id !== 'main' && node.branch_id !== 'root';
-    const parentBid = parentBranchOf.get(node.branch_id);
-    const parentLabel = parentBid ? index.branchMeta.get(parentBid === 'root' ? 'main' : parentBid)?.label : null;
-    const originLine = isBranchOrigin && parentLabel
-      ? `↳ from ${parentLabel.length > 24 ? `${parentLabel.slice(0, 22).trim()}…` : parentLabel}\n`
-      : '';
-
-    const flags = [
-      node.state.cash_chf < 0 ? 'Negative cash' : '',
-      node.state.net_worth_chf < 0 ? 'Negative net worth' : '',
-      status.level === 'warn' ? 'Low cash reserve' : '',
-    ].filter(Boolean);
-    const statusSuffix = flags.length ? `\n● ${status.label}\n${flags.join('\n')}` : '';
-
-    const phase = node.state.active_variables?.phase;
-    const initialValues = node.parent_id === null
-      ? `\nCash ${money(node.state.cash_chf)}${phase ? `\nIncome ${money(phase.monthly_income_chf)}/mo\nExpenses ${money(node.state.active_variables.expense_terms?.monthly_expenses_chf ?? phase.monthly_expenses_chf)}/mo` : ''}`
-      : '';
+    const style = isEvent ? eventStyleFor(node) : null;
+    const displayTitle = treeNodeTitle(node);
+    const titleHtml = isEvent
+      ? `<b>✦ ${escapeHtml(displayTitle)}</b>`
+      : `<b>${escapeHtml(displayTitle)}</b>`;
+    const bg = isEvent
+      ? (isSelected ? style.bgSelected : style.bg)
+      : (isSelected ? '#382013' : isActive ? '#26160e' : '#1f120b');
+    const selectedBorder = isEvent ? style.borderSelected : '#f2be85';
+    const border = isSelected
+      ? selectedBorder
+      : isEvent
+        ? style.border
+        : (isActive ? 'rgba(204, 144, 98, 0.82)' : 'rgba(142, 96, 65, 0.72)');
 
     return {
       id: node.id,
-      label: `${originLine}${milestoneTitle(node)}\n${money(node.state.net_worth_chf)}${initialValues}${statusSuffix}`,
-      x: dates.indexOf(node.date) * 310,
-      y: (laneOffsets.get(node.branch_id) + rowOffset) * 165,
+      label: `${titleHtml}\n${escapeHtml(money(node.state.net_worth_chf))}`,
+      x: dates.indexOf(node.date) * TREE_COL_STEP,
+      y: (laneOffsets.get(node.branch_id) + rowOffset) * TREE_ROW_STEP,
       color: {
-        background: isSelected ? '#4a2614' : isActive ? '#341e13' : '#27160e',
-        border: status.issues ? status.color : isSelected ? '#fff0de' : bColor,
-        highlight: { background: '#4a2614', border: status.issues ? status.color : '#fff0de' },
+        background: bg,
+        border,
+        highlight: { background: isEvent ? style.bgSelected : '#382013', border: selectedBorder },
       },
-      font: { color: '#f6e9dc', size: 14, face: 'DM Sans', multi: false },
-      borderWidth: isSelected ? 3 : isBranchOrigin ? 2.2 : 1.6,
+      font: {
+        color: isEvent || isSelected ? '#faece0' : '#dec7b3',
+        size: 23,
+        face: 'DM Sans',
+        multi: 'html',
+        bold: {
+          color: isEvent ? '#ffffff' : (isSelected ? '#fcead8' : '#f7e5d4'),
+          size: isEvent ? 25 : 25,
+          face: 'DM Sans',
+          mod: 'bold',
+        },
+      },
+      borderWidth: isSelected ? (isEvent ? 4 : 3.4) : isEvent ? 3.5 : 2.2,
       shape: 'box',
-      margin: 16,
-      widthConstraint: { minimum: 175, maximum: 220 },
+      shapeProperties: { borderRadius: isEvent ? 15 : 12 },
+      margin: isEvent
+        ? { top: 22, right: 24, bottom: 22, left: 24 }
+        : { top: 18, right: 18, bottom: 18, left: 18 },
+      widthConstraint: isEvent
+        ? { minimum: 255, maximum: 295 }
+        : { minimum: 230, maximum: 255 },
+      shadow: isSelected
+        ? {
+            enabled: true,
+            color: isEvent ? style.glowSelected : 'rgba(255, 174, 102, 0.56)',
+            size: isEvent ? 38 : 34,
+            x: 0,
+            y: 0,
+          }
+        : isEvent
+          ? { enabled: true, color: style.glow, size: 24, x: 0, y: 0 }
+          : false,
     };
   });
 
@@ -1710,16 +2255,20 @@ function renderTreeGraph({ fit = false, focusId = null } = {}) {
     const child = positions.get(node.id);
     const isSameLane = Math.abs(parent.y - child.y) < 1;
     const baseColor = branchColors.get(node.branch_id) || BRANCH_PALETTE[0];
+    const [gr, gg, gb] = hexToRgb(baseColor);
+    const glowColor = `rgba(${gr}, ${gg}, ${gb}, 0.45)`;
     const isActiveEdge = activeSet.has(node.id) && activeSet.has(parentId);
 
     edges.push({
       id: `${parentId}>${node.id}`,
       from: parentId,
       to: node.id,
-      arrows: { to: { enabled: true, scaleFactor: 0.75 } },
+      arrows: { to: { enabled: true, scaleFactor: 1.1 } },
       baseColor,
-      width: isActiveEdge ? 3 : 2,
+      glowColor,
+      width: isActiveEdge ? 5.8 : 4.6,
       color: { color: baseColor, highlight: baseColor, hover: baseColor },
+      shadow: { enabled: true, color: glowColor, size: isActiveEdge ? 14 : 10, x: 0, y: 0 },
       smooth: isSameLane
         ? false
         : { type: 'cubicBezier', forceDirection: 'horizontal', roundness: 0.48 },
@@ -1743,7 +2292,12 @@ function renderTreeGraph({ fit = false, focusId = null } = {}) {
       }
     );
     state.network.on('click', params => {
-      if (state.nodes.has(params.nodes[0])) selectNode(params.nodes[0]);
+      if (state.nodes.has(params.nodes[0])) {
+        selectNode(params.nodes[0], { openDrawer: true });
+      } else {
+        setDrawerOpen(false);
+        setPathsPanelOpen(false);
+      }
     });
     state.network.on('hoverNode', params => {
       if (state.nodes.has(params.node)) {
@@ -1753,38 +2307,98 @@ function renderTreeGraph({ fit = false, focusId = null } = {}) {
     });
     state.network.on('blurNode', () => {
       state.treeHoverId = null;
-      const focus = state.graphNodes?.get(state.selectedId) ? state.selectedId : null;
-      applyTreeEdgeHighlight(focus);
+      applyTreeEdgeHighlight(null);
     });
-    // Time axis drawn along the bottom of the date columns
+    // Luminous warm astral time axis drawn along the bottom of the date columns (dates only)
     state.network.on('afterDrawing', ctx => {
       const nodes = getAllGraphMilestones(buildTreeIndex()).filter(node => state.graphNodes?.get(node.id));
       if (!nodes.length) return;
       const columns = [...new Set(nodes.map(node => node.date))].sort();
+      const monthCounts = new Map();
+      for (const d of columns) {
+        const ym = d.slice(0, 7);
+        monthCounts.set(ym, (monthCounts.get(ym) || 0) + 1);
+      }
+
       const scale = state.network.getScale();
-      const bottom = Math.max(...nodes.map(node => state.network.getBoundingBox(node.id).bottom));
-      const axisY = bottom + 28;
+      const boxes = new Map(nodes.map(n => [n.id, state.network.getBoundingBox(n.id)]));
+      const bottom = Math.max(...[...boxes.values()].map(b => b.bottom));
+      const axisY = bottom + 58;
+      const startX = -155;
+      const endX = (columns.length - 1) * TREE_COL_STEP + 155;
 
       ctx.save();
-      ctx.strokeStyle = 'rgba(246, 233, 220, 0.38)';
-      ctx.lineWidth = 1 / scale;
+
+      // Subtle vertical hairlines anchoring each date column up to its lowest card
+      ctx.strokeStyle = 'rgba(255, 174, 108, 0.14)';
+      ctx.lineWidth = 1.2 / scale;
+      ctx.setLineDash([4 / scale, 5 / scale]);
       ctx.beginPath();
-      ctx.moveTo(-115, axisY);
-      ctx.lineTo((columns.length - 1) * 310 + 115, axisY);
-      for (const colIdx of columns.keys()) {
-        ctx.moveTo(colIdx * 310, axisY);
-        ctx.lineTo(colIdx * 310, axisY + 6 / scale);
+      for (const [colIdx, date] of columns.entries()) {
+        const colNodes = nodes.filter(item => item.date === date);
+        const colBottom = Math.max(...colNodes.map(n => boxes.get(n.id).bottom));
+        const cx = colIdx * TREE_COL_STEP;
+        ctx.moveTo(cx, colBottom + 8);
+        ctx.lineTo(cx, axisY - 8 / scale);
       }
       ctx.stroke();
+      ctx.setLineDash([]);
 
+      // Soft ambient amber glow rail
+      const glowGrad = ctx.createLinearGradient(startX, axisY, endX, axisY);
+      glowGrad.addColorStop(0, 'rgba(255, 138, 61, 0)');
+      glowGrad.addColorStop(0.08, 'rgba(255, 148, 70, 0.30)');
+      glowGrad.addColorStop(0.92, 'rgba(255, 148, 70, 0.30)');
+      glowGrad.addColorStop(1, 'rgba(255, 138, 61, 0)');
+      ctx.strokeStyle = glowGrad;
+      ctx.lineWidth = 10 / scale;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(startX, axisY);
+      ctx.lineTo(endX, axisY);
+      ctx.stroke();
+
+      // Luminous warm ivory-amber core filament
+      const railGrad = ctx.createLinearGradient(startX, axisY, endX, axisY);
+      railGrad.addColorStop(0, 'rgba(255, 161, 89, 0.12)');
+      railGrad.addColorStop(0.08, 'rgba(255, 224, 192, 0.78)');
+      railGrad.addColorStop(0.92, 'rgba(255, 224, 192, 0.78)');
+      railGrad.addColorStop(1, 'rgba(255, 161, 89, 0.12)');
+      ctx.strokeStyle = railGrad;
+      ctx.lineWidth = 2.4 / scale;
+      ctx.beginPath();
+      ctx.moveTo(startX, axisY);
+      ctx.lineTo(endX, axisY);
+      ctx.stroke();
+
+      // Glowing astral orb marker + crisp date label per column (stays ~15px on screen in Fit view)
+      const fontSize = Math.min(38, Math.max(20, 15 / scale));
       ctx.textAlign = 'center';
       ctx.textBaseline = 'top';
-      ctx.fillStyle = '#d2b8a3';
-      ctx.font = `${Math.min(14, 14 / scale)}px DM Sans`;
+      ctx.font = `600 ${fontSize}px DM Sans`;
+
       for (const [colIdx, date] of columns.entries()) {
-        const node = nodes.find(item => item.date === date);
-        ctx.fillText(`${date} · ${formatMonthTime(node.month)}`, colIdx * 310, axisY + 10 / scale);
+        const cx = colIdx * TREE_COL_STEP;
+        const haloR = 14 / scale;
+        const orbGrad = ctx.createRadialGradient(cx, axisY, 0, cx, axisY, haloR);
+        orbGrad.addColorStop(0, 'rgba(255, 240, 222, 0.92)');
+        orbGrad.addColorStop(0.42, 'rgba(255, 154, 77, 0.45)');
+        orbGrad.addColorStop(1, 'rgba(255, 138, 61, 0)');
+        ctx.fillStyle = orbGrad;
+        ctx.beginPath();
+        ctx.arc(cx, axisY, haloR, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = '#fff3e4';
+        ctx.beginPath();
+        ctx.arc(cx, axisY, 4.4 / scale, 0, Math.PI * 2);
+        ctx.fill();
+
+        const includeDay = (monthCounts.get(date.slice(0, 7)) || 0) > 1;
+        ctx.fillStyle = '#f8e7d6';
+        ctx.fillText(formatNiceDate(date, { includeDay }), cx, axisY + 18 / scale);
       }
+
       ctx.restore();
     });
   } else {
@@ -1803,41 +2417,35 @@ function renderTreeGraph({ fit = false, focusId = null } = {}) {
   if (!milestones.length) {
     const option = document.createElement('option');
     option.value = '';
-    option.textContent = 'No events to display';
+    option.textContent = 'No points to display';
     select.append(option);
   }
   for (const node of milestones) {
     const option = document.createElement('option');
     option.value = node.id;
-    const status = nodeHealth(node);
     const bLabel = index.branchMeta.get(node.branch_id === 'root' ? 'main' : node.branch_id)?.label || 'Original path';
-    option.textContent = `${bLabel} · ${node.date} — ${milestoneTitle(node)} — ${money(node.state.net_worth_chf)}${status.issues ? ` — ${status.label}` : ''}`;
+    option.textContent = `${bLabel} · ${formatNiceDate(node.date, { includeDay: true })}`;
     select.append(option);
   }
 
   const resolvedFocus = resolveTreeFocusId(focusId, visible, index);
   const selectedInTree = visible.has(state.selectedId) ? state.selectedId : (resolvedFocus || null);
   select.value = selectedInTree || '';
-  applyTreeEdgeHighlight(state.treeHoverId || selectedInTree);
+  applyTreeEdgeHighlight(state.treeHoverId);
 
   state.network.redraw();
-  if (resolvedFocus && visible.has(resolvedFocus)) {
-    const pos = state.network.getPosition(resolvedFocus);
-    const width = byId('timeline-graph').clientWidth || 1000;
-    state.network.moveTo({
-      position: pos,
-      scale: 0.8,
-      offset: { x: -width * 0.25, y: 0 },
-      animation: { duration: 360, easingFunction: 'easeInOutQuad' },
-    });
-  } else if (fit && milestones.length) {
-    const first = graphNodes.find(node => node.id === milestones[0].id);
-    const width = byId('timeline-graph').clientWidth || 1000;
-    state.network.moveTo({
-      position: { x: first?.x ?? 0, y: first?.y ?? 0 },
-      scale: 0.8,
-      offset: { x: -width * 0.25, y: 0 },
-    });
+  if (graphNodes.length) {
+    if (fit) {
+      fitTreeView({ animate: false });
+    } else if (resolvedFocus && visible.has(resolvedFocus)) {
+      const pos = state.network.getPosition(resolvedFocus);
+      state.network.moveTo({
+        position: pos,
+        scale: 0.78,
+        offset: { x: 0, y: 0 },
+        animation: { duration: 360, easingFunction: 'easeInOutQuad' },
+      });
+    }
   }
 }
 
@@ -1914,16 +2522,16 @@ function renderInspector(node, { focusBranchInput = false } = {}) {
   const index = buildTreeIndex();
   const s = node.state;
   const f = s.cash_flow;
-  const baseNode = node.branch_id !== 'root' && node.branch_id !== 'main'
-    ? index.baselineByMonth.get(node.month)
-    : null;
+  const { parentMeta, parentNode: baseNode } = node.branch_id !== 'root' && node.branch_id !== 'main'
+    ? getParentComparison(node.branch_id, node.month, index)
+    : { parentMeta: null, parentNode: null };
 
   const header = document.createElement('div');
   header.className = 'inspector-header';
 
   const kicker = document.createElement('span');
   kicker.className = 'card-kicker';
-  kicker.textContent = `${node.date} · ${formatMonthTime(node.month).toUpperCase()}`;
+  kicker.textContent = formatNiceDate(node.date, { includeDay: true }).toUpperCase();
 
   const title = document.createElement('h2');
   title.textContent = milestoneTitle(node);
@@ -1949,12 +2557,12 @@ function renderInspector(node, { focusBranchInput = false } = {}) {
     header.append(issues);
   }
 
-  if (baseNode) {
+  if (baseNode && parentMeta) {
     const nwDiff = s.net_worth_chf - baseNode.state.net_worth_chf;
     const cashDiff = s.cash_chf - baseNode.state.cash_chf;
     const compare = document.createElement('div');
     compare.className = 'inspector-compare';
-    compare.textContent = `Vs. Original path: ${moneySigned(nwDiff)} net worth · ${moneySigned(cashDiff)} cash`;
+    compare.textContent = `Vs. ${parentMeta.label}: ${moneySigned(nwDiff)} net worth · ${moneySigned(cashDiff)} cash`;
     header.append(compare);
   }
 
@@ -2002,102 +2610,111 @@ function renderInspector(node, { focusBranchInput = false } = {}) {
   appendDetails(breakdown, node.state);
   acctSec.append(breakdown);
 
-  const editForm = document.createElement('form');
-  editForm.className = 'branch-form node-edit-form';
+  let editDetails = null;
   const editMonth = Math.max(0, node.month - 1);
-  const editPhase = node.scenario.phases.find(phase => phase.start_month <= editMonth && (phase.end_month === null || editMonth < phase.end_month));
-  const editCost = node.scenario.one_off_costs.filter(cost => cost.month === editMonth).reduce((sum, cost) => sum + cost.amount_chf, 0);
-  const terms = s.active_variables.expense_terms || {};
-  const startingExpense = terms.monthly_expenses_chf ?? editPhase.monthly_expenses_chf;
-  const fields = [
-    ...(node.month === 0 ? [{ name: 'cash_chf', label: 'Starting cash (CHF)', value: s.cash_chf }] : []),
-    { name: 'monthly_income_chf', label: 'Monthly income (CHF)', value: editPhase.monthly_income_chf },
-    { name: 'monthly_expenses_chf', label: 'Monthly expenses at start of year (CHF)', value: startingExpense },
-    { name: 'yearly_expenses_chf', label: 'Annual expenses at start of year (CHF)', value: startingExpense * 12 },
-    ...(node.month === 0 ? [{ name: 'annual_inflation', label: 'Default annual inflation (%)', value: node.scenario.annual_inflation, percent: true }] : []),
-    { name: 'year_inflation', label: `Inflation for ${terms.year ?? node.date.slice(0, 4)} (%)`, value: terms.year_inflation ?? null, percent: true, optional: true, placeholder: 'Use default annual inflation' },
-    { name: 'inflation_exempt', label: 'Fixed by contract, unaffected by inflation', value: terms.inflation_exempt ?? false, type: 'checkbox' },
-    { name: 'duration_months', label: 'Expense duration (months)', value: terms.duration_months ?? null, optional: true, placeholder: 'Ongoing' },
-    { name: 'one_off_cost_chf', label: 'One-time cost (CHF)', value: editCost },
-    { name: 'date', label: 'Date', value: node.date, type: 'date' },
-  ];
-  const editTitle = document.createElement('h3');
-  editTitle.textContent = 'Edit this point';
-  editForm.append(editTitle);
-  for (const field of fields) {
-    const label = document.createElement('label');
-    const input = document.createElement('input');
-    input.type = field.type || 'number';
-    input.name = field.name;
-    if (field.type === 'checkbox') {
-      input.checked = field.value;
-      label.className = 'node-edit-check';
-      label.append(input, document.createTextNode(field.label));
-      editForm.append(label);
-      continue;
-    }
-    label.textContent = field.label;
-    input.value = field.value === null ? '' : field.percent ? Number((field.value * 100).toFixed(8)) : field.value;
-    input.required = !field.optional;
-    if (field.placeholder) input.placeholder = field.placeholder;
-    if (input.type === 'number') {
-      input.step = field.name === 'duration_months' ? '1' : 'any';
-      if (field.name === 'duration_months') input.min = '1';
-      else if (field.percent) input.min = '-99.999999';
-      else if (field.name !== 'cash_chf') input.min = '0';
-    }
-    label.append(input);
-    editForm.append(label);
-  }
-  const monthlyExpenses = editForm.elements.monthly_expenses_chf;
-  const yearlyExpenses = editForm.elements.yearly_expenses_chf;
-  monthlyExpenses.addEventListener('input', () => { yearlyExpenses.value = Number(monthlyExpenses.value) * 12; });
-  yearlyExpenses.addEventListener('input', () => { monthlyExpenses.value = Number(yearlyExpenses.value) / 12; });
-  const editError = document.createElement('p');
-  editError.className = 'form-error';
-  editError.setAttribute('role', 'alert');
-  const editButton = document.createElement('button');
-  editButton.type = 'submit';
-  editButton.className = 'primary-button wide';
-  editButton.textContent = 'Save changes';
-  editForm.append(editError, editButton);
-  editForm.addEventListener('submit', async event => {
-    event.preventDefault();
-    const edits = {};
-    for (const field of fields) {
-      if (field.name === 'yearly_expenses_chf') continue;
-      const input = editForm.elements[field.name];
-      let value;
-      if (input.type === 'checkbox') value = input.checked;
-      else if (input.type === 'number') value = input.value === '' ? null : Number(input.value) / (field.percent ? 100 : 1);
-      else value = input.value;
-      if (value !== field.value && !(field.percent && value !== null && field.value !== null && Math.abs(value - field.value) < 1e-10)) edits[field.name] = value;
-    }
-    if (!Object.keys(edits).length) return;
-    editError.textContent = '';
-    editButton.disabled = true;
-    const revision = state.revision;
-    try {
-      const result = await request('/api/edit-nodes', { nodes: [...state.nodes.values()], node_id: node.id, edits });
-      if (revision !== state.revision) return;
-      state.revision += 1;
-      state.narratives.clear();
-      for (const updated of result.nodes) state.nodes.set(updated.id, updated);
-      if (state.resultsView === 'tree') renderTreeGraph({ focusId: node.id });
-      else renderTimelineView();
-      selectNode(node.id);
-      showToast('Changes saved');
-    } catch (error) {
-      editError.textContent = error.message;
-    } finally {
-      editButton.disabled = false;
-    }
-  });
+  const editPhase = node.scenario?.phases?.find(phase => phase.start_month <= editMonth && (phase.end_month === null || editMonth < phase.end_month));
+  if (editPhase) {
+    editDetails = document.createElement('details');
+    editDetails.className = 'inspector-section node-edit-details';
+    rememberOpen(editDetails, 'node-edit');
+    const editSummary = document.createElement('summary');
+    editSummary.textContent = 'Edit this point';
+    editDetails.append(editSummary);
 
-  panel.append(header, editForm, narrativeSec);
+    const editForm = document.createElement('form');
+    editForm.className = 'node-edit-form';
+    const editCost = (node.scenario.one_off_costs || []).filter(cost => cost.month === editMonth).reduce((sum, cost) => sum + cost.amount_chf, 0);
+    const terms = s.active_variables?.expense_terms || {};
+    const startingExpense = terms.monthly_expenses_chf ?? editPhase.monthly_expenses_chf;
+    const fields = [
+      ...(node.month === 0 ? [{ name: 'cash_chf', label: 'Starting cash (CHF)', value: s.cash_chf }] : []),
+      { name: 'monthly_income_chf', label: 'Monthly income (CHF)', value: editPhase.monthly_income_chf },
+      { name: 'monthly_expenses_chf', label: 'Monthly expenses at start of year (CHF)', value: startingExpense },
+      { name: 'yearly_expenses_chf', label: 'Annual expenses at start of year (CHF)', value: startingExpense * 12 },
+      ...(node.month === 0 ? [{ name: 'annual_inflation', label: 'Default annual inflation (%)', value: node.scenario.annual_inflation, percent: true }] : []),
+      { name: 'year_inflation', label: `Inflation for ${terms.year ?? node.date.slice(0, 4)} (%)`, value: terms.year_inflation ?? null, percent: true, optional: true, placeholder: 'Use default annual inflation' },
+      { name: 'inflation_exempt', label: 'Fixed by contract, unaffected by inflation', value: terms.inflation_exempt ?? false, type: 'checkbox' },
+      { name: 'duration_months', label: 'Expense duration (months)', value: terms.duration_months ?? null, optional: true, placeholder: 'Ongoing' },
+      { name: 'one_off_cost_chf', label: 'One-time cost (CHF)', value: editCost },
+      { name: 'date', label: 'Date', value: node.date, type: 'date' },
+    ];
+    for (const field of fields) {
+      const label = document.createElement('label');
+      const input = document.createElement('input');
+      input.type = field.type || 'number';
+      input.name = field.name;
+      if (field.type === 'checkbox') {
+        input.checked = field.value;
+        label.className = 'node-edit-check';
+        label.append(input, document.createTextNode(field.label));
+        editForm.append(label);
+        continue;
+      }
+      label.textContent = field.label;
+      input.value = field.value === null ? '' : field.percent ? Number((field.value * 100).toFixed(8)) : field.value;
+      input.required = !field.optional;
+      if (field.placeholder) input.placeholder = field.placeholder;
+      if (input.type === 'number') {
+        input.step = field.name === 'duration_months' ? '1' : 'any';
+        if (field.name === 'duration_months') input.min = '1';
+        else if (field.percent) input.min = '-99.999999';
+        else if (field.name !== 'cash_chf') input.min = '0';
+      }
+      label.append(input);
+      editForm.append(label);
+    }
+    const monthlyExpenses = editForm.elements.monthly_expenses_chf;
+    const yearlyExpenses = editForm.elements.yearly_expenses_chf;
+    monthlyExpenses.addEventListener('input', () => { yearlyExpenses.value = Number(monthlyExpenses.value) * 12; });
+    yearlyExpenses.addEventListener('input', () => { monthlyExpenses.value = Number(yearlyExpenses.value) / 12; });
+    const editError = document.createElement('p');
+    editError.className = 'form-error';
+    editError.setAttribute('role', 'alert');
+    const editButton = document.createElement('button');
+    editButton.type = 'submit';
+    editButton.className = 'primary-button wide';
+    editButton.textContent = 'Save changes';
+    editForm.append(editError, editButton);
+    editForm.addEventListener('submit', async event => {
+      event.preventDefault();
+      const edits = {};
+      for (const field of fields) {
+        if (field.name === 'yearly_expenses_chf') continue;
+        const input = editForm.elements[field.name];
+        let value;
+        if (input.type === 'checkbox') value = input.checked;
+        else if (input.type === 'number') value = input.value === '' ? null : Number(input.value) / (field.percent ? 100 : 1);
+        else value = input.value;
+        if (value !== field.value && !(field.percent && value !== null && field.value !== null && Math.abs(value - field.value) < 1e-10)) edits[field.name] = value;
+      }
+      if (!Object.keys(edits).length) return;
+      editError.textContent = '';
+      editButton.disabled = true;
+      const revision = state.revision;
+      try {
+        const result = await request('/api/edit-nodes', { nodes: [...state.nodes.values()], node_id: node.id, edits });
+        if (revision !== state.revision) return;
+        state.revision += 1;
+        state.narratives.clear();
+        for (const updated of result.nodes) state.nodes.set(updated.id, updated);
+        if (state.resultsView === 'tree') renderTreeGraph({ focusId: node.id });
+        else renderTimelineView();
+        selectNode(node.id, { openDrawer: true, skipTimelineRender: true });
+        showToast('Changes saved');
+      } catch (error) {
+        editError.textContent = error.message;
+      } finally {
+        editButton.disabled = false;
+      }
+    });
+    editDetails.append(editForm);
+  }
+
+  panel.append(header, narrativeSec);
   const info = renderBranchInfo(node);
   if (info) panel.append(info);
   panel.append(acctSec);
+  if (editDetails) panel.append(editDetails);
   const composer = el('div', { class: 'branch-form' });
   panel.append(composer);
   showComposer(composer, node);
@@ -2522,7 +3139,7 @@ async function deleteBranch(branchId) {
   showToast(`Deleted branch: ${label}`);
 }
 
-async function selectNode(id, { openDrawer = false, focusBranchInput = false } = {}) {
+async function selectNode(id, { openDrawer = false, focusBranchInput = false, skipTimelineRender = false } = {}) {
   const node = state.nodes.get(id);
   if (!node) return;
   state.selectedId = id;
@@ -2530,9 +3147,10 @@ async function selectNode(id, { openDrawer = false, focusBranchInput = false } =
   if (state.resultsView === 'tree') {
     renderTreeGraph();
     updateFollowPathButton(node);
+    if (openDrawer) setDrawerOpen(true);
   } else {
     const existingEl = document.querySelector(`#vertical-timeline .vnode[data-node-id="${CSS.escape(id)}"]`);
-    if (existingEl) syncVerticalSelection();
+    if (existingEl || skipTimelineRender) syncVerticalSelection();
     else renderTimelineView();
     if (openDrawer) setDrawerOpen(true);
   }
@@ -2606,7 +3224,9 @@ byId('switch-to-tree').addEventListener('click', () => setResultsView('tree'));
 byId('back-to-timeline').addEventListener('click', () => setResultsView('timeline', { focusNodeId: state.selectedId }));
 byId('return-to-original').addEventListener('click', () => {
   const index = buildTreeIndex();
+  const curMeta = index.branchMeta.get(state.activeBranchId);
   const baseId = index.branchMeta.has('main') ? 'main' : index.branchIds[0];
+  state.justSwitchedFromMonth = curMeta?.forkMonth ?? 0;
   switchActivePath(baseId);
   window.scrollTo({ top: 0, behavior: 'smooth' });
 });
@@ -2622,16 +3242,25 @@ minimapDock.addEventListener('keydown', event => {
 
 byId('close-drawer').addEventListener('click', () => setDrawerOpen(false));
 byId('drawer-backdrop').addEventListener('click', () => setDrawerOpen(false));
+byId('toggle-paths-panel').addEventListener('click', () => {
+  const panel = byId('tree-controls-panel');
+  setPathsPanelOpen(panel.hidden);
+});
+byId('close-paths-panel').addEventListener('click', () => setPathsPanelOpen(false));
 window.addEventListener('keydown', event => {
-  if (event.key === 'Escape' && state.drawerOpen) setDrawerOpen(false);
+  if (event.key === 'Escape') {
+    if (state.drawerOpen) setDrawerOpen(false);
+    setPathsPanelOpen(false);
+  }
 });
 
-byId('fit-graph').addEventListener('click', () => state.network?.fit({ animation: true }));
+byId('fit-graph').addEventListener('click', () => fitTreeView({ animate: true }));
 byId('milestone-select').addEventListener('change', event => {
   const id = event.target.value;
-  selectNode(id);
-  if (state.network && id) {
-    state.network.moveTo({ position: state.network.getPosition(id), scale: 0.85, animation: { duration: 350 } });
+  if (!id) return;
+  selectNode(id, { openDrawer: true });
+  if (state.network) {
+    state.network.moveTo({ position: state.network.getPosition(id), scale: 0.78, animation: { duration: 350 } });
   }
 });
 byId('follow-selected-path').addEventListener('click', () => {
@@ -2721,67 +3350,12 @@ byId('test-data').addEventListener('click', async () => {
   }
 });
 
-// Floating panel drag & minimize (Full Tree View)
-function keepPanelOnScreen(panel) {
-  if (!panel.style.left || !document.body.classList.contains('world-mode')) return;
-  const parent = panel.offsetParent || document.body;
-  const bounds = parent.getBoundingClientRect();
-  const box = panel.getBoundingClientRect();
-  const bar = panel.querySelector('.panel-bar')?.offsetHeight || 40;
-  panel.style.left = `${Math.min(Math.max(parseFloat(panel.style.left), 0), Math.max(0, bounds.width - box.width))}px`;
-  panel.style.top = `${Math.min(Math.max(parseFloat(panel.style.top), 0), Math.max(0, bounds.height - bar))}px`;
-  if (panel.id === 'inspector-panel') {
-    panel.style.maxHeight = `${Math.max(bounds.height - parseFloat(panel.style.top) - 14, bar)}px`;
+document.addEventListener('pointermove', event => {
+  const pos = state.forkHoverSuppressPos;
+  if (!pos) return;
+  if (Math.hypot(event.clientX - pos.x, event.clientY - pos.y) > 4) {
+    state.forkHoverSuppressPos = null;
   }
-}
-
-for (const panel of document.querySelectorAll('.floating-panel')) {
-  const bar = panel.querySelector('.panel-bar');
-  const toggle = panel.querySelector('.panel-toggle');
-  if (!bar || !toggle) continue;
-
-  toggle.addEventListener('click', () => {
-    const minimized = panel.classList.toggle('minimized');
-    toggle.textContent = minimized ? '+' : '–';
-    toggle.setAttribute('aria-expanded', String(!minimized));
-    toggle.setAttribute('aria-label', minimized ? 'Restore panel' : 'Minimize panel');
-  });
-
-  bar.addEventListener('pointerdown', event => {
-    if (!document.body.classList.contains('world-mode')) return;
-    if (event.button !== 0 || event.target.closest('button')) return;
-    const parent = panel.offsetParent || document.body;
-    const parentBox = parent.getBoundingClientRect();
-    const box = panel.getBoundingClientRect();
-    const offsetX = event.clientX - box.left;
-    const offsetY = event.clientY - box.top;
-    Object.assign(panel.style, {
-      left: `${box.left - parentBox.left}px`,
-      top: `${box.top - parentBox.top}px`,
-      right: 'auto',
-      bottom: 'auto',
-    });
-    bar.setPointerCapture(event.pointerId);
-    bar.classList.add('dragging');
-    const move = moveEvent => {
-      panel.style.left = `${moveEvent.clientX - parentBox.left - offsetX}px`;
-      panel.style.top = `${moveEvent.clientY - parentBox.top - offsetY}px`;
-      keepPanelOnScreen(panel);
-    };
-    const stop = () => {
-      bar.classList.remove('dragging');
-      bar.removeEventListener('pointermove', move);
-      bar.removeEventListener('pointerup', stop);
-      bar.removeEventListener('pointercancel', stop);
-    };
-    bar.addEventListener('pointermove', move);
-    bar.addEventListener('pointerup', stop);
-    bar.addEventListener('pointercancel', stop);
-  });
-}
-
-window.addEventListener('resize', () => {
-  document.querySelectorAll('.floating-panel').forEach(keepPanelOnScreen);
 });
 
 document.addEventListener('visibilitychange', () => {
