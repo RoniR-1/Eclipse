@@ -26,6 +26,22 @@ def full_profile(**overrides):
 
 
 class ProjectionTests(unittest.TestCase):
+    def test_cached_provenance_and_purchase_costs(self):
+        event = {"type": "housing_change", "in_months": 0,
+                 "params": {"moving_cost_chf": 0},
+                 "resolved_params": {"params": {"purchase_price_chf": 1000000,
+                                                "down_payment_share": 0.2,
+                                                "purchase_fees_share": 0.05},
+                                     "source": "database_cache",
+                                     "source_urls": ["https://example.org"], "note": "Estimate"}}
+        result = project(full_profile(), {"Home": [event]}, horizon_years=1)
+        assumptions = result["assumptions"]
+        purchase = next(item for item in assumptions if item["field"] == "Purchase price")
+        self.assertEqual(purchase["source"], "database_cache")
+        self.assertEqual(purchase["source_urls"], ["https://example.org"])
+        self.assertEqual(result["paths"]["Home"]["timeline"][1]["deposit_chf"], 200000)
+        self.assertEqual(result["paths"]["Home"]["timeline"][1]["one_off_chf"], 50000)
+
     def test_baseline_reconciles(self):
         result = project(full_profile(), horizon_years=1, start="2026-11")
         timeline = result["paths"][BASELINE]["timeline"]

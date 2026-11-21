@@ -842,7 +842,9 @@ function renderTimelineView() {
     state.activeBranchId = index.branchIds[0];
   }
   const activeMeta = index.branchMeta.get(state.activeBranchId);
-  const chain = activeMeta.chain;
+  const chain = activeMeta.id === 'main' || activeMeta.id === 'root'
+    ? activeMeta.chain
+    : index.nodesByBranch.get(activeMeta.id);
   const milestones = getPathMilestones(chain, index);
 
   if (!state.selectedId || !chain.some(n => n.id === state.selectedId)) {
@@ -1181,6 +1183,14 @@ function renderTreeMinimap(index) {
 
   const activeSet = new Set(index.branchMeta.get(state.activeBranchId)?.chain.map(n => n.id) || []);
 
+  // Follow the exact same event-only tree structure as the Full Tree View (falling back to start/end if no events)
+  let milestones = treeEventNodes();
+  if (milestones.length <= 1) {
+    for (const bid of index.branchIds) {
+      const tip = index.branchMeta.get(bid)?.tipNode;
+      if (tip && !milestones.some(n => n.id === tip.id)) milestones.push(tip);
+    }
+  }
   // Include all half-year intervals, events, and forks across every branch
   const milestones = getAllGraphMilestones(index);
 
@@ -1540,7 +1550,7 @@ function nodeHealth(node) {
 
 function treeEventNodes() {
   return [...state.nodes.values()].filter(
-    node => node.month !== 0 && node.event_summary && node.event_summary !== 'Monthly update'
+    node => node.parent_id === null || (node.event_summary && node.event_summary !== 'Monthly update')
   );
 }
 
@@ -1616,9 +1626,14 @@ function renderTreeGraph({ fit = false, focusId = null } = {}) {
     ].filter(Boolean);
     const statusSuffix = flags.length ? `\n● ${status.label}\n${flags.join('\n')}` : '';
 
+    const phase = node.state.active_variables?.phase;
+    const initialValues = node.parent_id === null
+      ? `\nCash ${money(node.state.cash_chf)}${phase ? `\nIncome ${money(phase.monthly_income_chf)}/mo\nExpenses ${money(phase.monthly_expenses_chf)}/mo` : ''}`
+      : '';
+
     return {
       id: node.id,
-      label: `${originLine}${milestoneTitle(node)}\n${money(node.state.net_worth_chf)}${statusSuffix}`,
+      label: `${originLine}${milestoneTitle(node)}\n${money(node.state.net_worth_chf)}${initialValues}${statusSuffix}`,
       x: dates.indexOf(node.date) * 310,
       y: (laneOffsets.get(node.branch_id) + rowOffset) * 165,
       color: {
@@ -2390,6 +2405,7 @@ byId('test-data').addEventListener('click', async () => {
   const button = byId('test-data');
   button.disabled = true;
   try {
+    state.years = Number(byId('years').value);
     const result = await request('/api/test', { years: state.years });
     state.years = result.years;
     state.extraction = result.extraction;
