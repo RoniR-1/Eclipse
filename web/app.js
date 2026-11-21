@@ -2098,10 +2098,7 @@ function renderEndSummary(activeMeta, index) {
       if (reportButton.isConnected) reportButton.disabled = false;
     }
   });
-  const link = document.createElement('a');
-  link.href = '/compare.html';
-  link.textContent = 'Open comparison workspace';
-  comparison.append(reportButton, reportContent, link);
+  comparison.append(reportButton, reportContent);
   container.append(comparison);
 }
 
@@ -2967,11 +2964,6 @@ function renderInspector(node, { focusBranchInput = false } = {}) {
       <span>${escapeHtml(value)}${detail ? ` · ${escapeHtml(detail)}` : ''}</span>`;
     provenance.append(row);
   }
-  const comparisonLink = document.createElement('p');
-  comparisonLink.className = 'inspector-note comparison-link';
-  comparisonLink.innerHTML = '<a href="/compare.html">Open separate comparison workspace →</a>';
-  provenance.append(comparisonLink);
-
   let editDetails = null;
 
   const editMonth = Math.max(0, node.month - 1);

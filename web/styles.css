@@ -25,15 +25,6 @@
   font-synthesis: none;
 }
 
-.comparison-link {
-  display: inline-block;
-  color: #ffb476;
-  font-weight: 700;
-  margin-top: 1rem;
-  text-decoration-thickness: 1px;
-  text-underline-offset: 4px;
-}
-
 * {
   box-sizing: border-box;
 }
@@ -1391,12 +1382,6 @@ body.world-mode #inspector-panel .panel-toggle {
 .summary-comparison-link {
   padding: 14px 0;
   overflow-wrap: anywhere;
-}
-
-.summary-comparison-link a,
-.comparison-link a {
-  color: #ffc89a;
-  font-weight: 700;
 }
 
 .goal-result,
