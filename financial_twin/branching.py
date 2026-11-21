@@ -95,15 +95,44 @@ def _list(raw, key, limit):
     return items
 
 
+def _node_phase(phases, month):
+    """The situation a node reflects: the phase active in the month before it (the first phase at month 0)."""
+    return next((p for p in phases if (p["start_month"] < month or month == 0 and p["start_month"] == 0)
+                 and (p["end_month"] is None or month <= p["end_month"])), None)
+
+
 def current_flows(parent):
-    """Monthly income and (inflation-adjusted) expenses active at the parent node."""
-    month = parent["month"]
-    phase = next((p for p in parent["scenario"]["phases"] if p["start_month"] <= month
-                  and (p["end_month"] is None or month < p["end_month"])), None)
+    """Monthly income and (inflation-adjusted) expenses of the situation at the parent node."""
+    phase = _node_phase(parent["scenario"]["phases"], parent["month"])
     if phase is None:
         raise ValueError("No phase covers the selected node.")
     factor = parent["state"]["active_variables"].get("price_factor", 1.0)
     return phase["monthly_income_chf"], phase["monthly_expenses_chf"] * factor
+
+
+def _fork_phases(phases, month):
+    """Keep the past, continue the node's situation open-ended, and drop the parent's later phases.
+
+    A branch explores one event from a node, so phases the original path planned after the node
+    are not inherited (see test_branch_excludes_events_after_fork).
+    """
+    result = []
+    for phase in phases:
+        end = phase["end_month"]
+        if end is not None and end < month:
+            result.append(deepcopy(phase))
+            continue
+        if phase["start_month"] >= month and month != 0:
+            break
+        if phase["start_month"] < month:
+            before = deepcopy(phase)
+            before["end_month"] = month
+            result.append(before)
+        current = deepcopy(phase)
+        current["start_month"], current["end_month"] = month, None
+        result.append(current)
+        break
+    return result
 
 
 def normalize_proposal(raw, parent=None):
@@ -254,7 +283,7 @@ def apply_proposal(parent, event, months, variables, proposal, catalogue):
                 "start": month + c["start_offset_months"],
                 "end": month + c["start_offset_months"] + c["duration_months"] if c["duration_months"] else None}
                for c in plan["changes"] if c["amount_chf"]]
-    costs = deepcopy(scenario["one_off_costs"])
+    costs = [deepcopy(cost) for cost in scenario["one_off_costs"] if cost["month"] < month]
     for item in plan["one_offs"]:
         at = month + item["offset_months"]
         if item["amount_chf"] > 0:
@@ -262,7 +291,7 @@ def apply_proposal(parent, event, months, variables, proposal, catalogue):
         elif item["amount_chf"] < 0:   # money received is one month of extra income
             changes.append({"kind": "income", "label": item["label"], "amount": -item["amount_chf"],
                             "start": at, "end": at + 1})
-    phases = _split_phases(scenario["phases"], month, changes, title)
+    phases = _split_phases(_fork_phases(scenario["phases"], month), month, changes, title)
     preferences, inflation = _apply_variables(variables, phases, month, scenario["annual_inflation"], catalogue)
 
     updated = deepcopy(parent)

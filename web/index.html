@@ -3,63 +3,300 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#1f120b">
+  <meta name="theme-color" content="#180d07">
   <title>Financial Twin — make room for your future</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
+  <!-- Subtle warm astral ambient field behind the whole page -->
+  <canvas id="astral-backdrop" class="astral-backdrop" aria-hidden="true"></canvas>
+
   <div class="page-shell">
     <header class="topbar">
-      <a class="brand" href="/" aria-label="Financial Twin home"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span><span>financial<span class="brand-light">twin</span></span></a>
-      <div class="topbar-actions"><button class="settings-button" id="test-data" type="button" title="Generate a random timeline without using AI"><span aria-hidden="true">⚄</span> <span class="settings-label">Test</span></button>
-      <button class="settings-button" id="open-settings" type="button" aria-label="Gemini API settings"><span aria-hidden="true">⚙</span> <span class="settings-label">API settings</span></button></div>
+      <a class="brand" href="/" aria-label="Financial Twin home">
+        <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+        <span>financial<span class="brand-light">twin</span></span>
+      </a>
+
+      <div class="topbar-actions">
+        <button class="settings-button" id="test-data" type="button" title="Generate a sample multi-branch timeline without using AI">
+          <span aria-hidden="true">⚄</span>
+          <span class="settings-label">Test</span>
+        </button>
+        <button class="settings-button" id="open-settings" type="button" aria-label="AI API settings">
+          <span class="api-dot" id="api-status-dot" aria-hidden="true"></span>
+          <span aria-hidden="true">⚙</span>
+          <span class="settings-label">API settings</span>
+        </button>
+      </div>
     </header>
+
     <main>
+      <!-- STAGE 1: INTAKE -->
       <section id="intake" class="hero">
         <div class="hero-copy">
           <div class="eyebrow"><span></span> A little clarity for what's next</div>
           <h1>Meet your<br><em>financial future.</em></h1>
-          <p class="hero-description">Big decisions deserve a clearer picture. Tell your AI Financial Twin where you are and where you want to go, then explore how your finances could evolve over time.</p>
+          <p class="hero-description">
+            Big decisions deserve a clearer picture. Tell your AI Financial Twin where you are and where you want to go, then explore how your finances could evolve over time.
+          </p>
         </div>
+
         <div class="intake-card">
           <div class="card-top"><span class="card-kicker">YOUR STARTING POINT</span></div>
           <h2>What’s on your mind?</h2>
           <p>Share your situation, your goals, and the decision you’d like to explore.</p>
+
           <form id="intake-form">
             <label for="statement">Your financial story</label>
             <textarea id="statement" name="statement" required minlength="10" placeholder="I have CHF 15,000 saved and earn CHF 5,000 a month. I’m thinking about going back to school in two years and want to understand what that could mean for my savings..."></textarea>
-            <div class="form-bottom"><div class="time-field"><label for="years">Look ahead</label><div class="select-wrap"><select id="years" name="years"><option value="5">5 years</option><option value="10" selected>10 years</option><option value="20">20 years</option></select></div></div><button class="primary-button" id="extract-button" type="submit">Explore my scenario <span aria-hidden="true">✳</span></button></div>
+
+            <div class="preset-chips">
+              <button type="button" class="preset-chip" data-years="5" data-story="I'm Alexia, a student in Lausanne with CHF 8,000 in cash. I'm deciding whether to start working right away earning CHF 4,800 net per month with CHF 2,400 in monthly expenses, or spend two years on a Master's degree costing CHF 8,000 per year while working part-time for CHF 1,500 a month before earning CHF 6,500 net afterwards.">Alexia · Master's vs. Work</button>
+              <button type="button" class="preset-chip" data-years="5" data-story="I live in Zurich with CHF 85,000 saved in cash and CHF 40,000 in ETFs. I earn CHF 7,600 net per month and spend CHF 4,300. I want to see how my finances evolve over 5 years and explore buying an apartment in 2 years.">Buying a flat</button>
+              <button type="button" class="preset-chip" data-years="5" data-story="I have CHF 32,000 in savings, CHF 12,000 left on a student loan at 3% paying CHF 350/month, earn CHF 6,200 net and spend CHF 3,900 monthly. I'm thinking about taking a 1-year sabbatical or going part-time.">Sabbatical</button>
+            </div>
+
+            <div class="form-bottom">
+              <div class="time-field">
+                <label for="years">Look ahead</label>
+                <div class="select-wrap">
+                  <select id="years" name="years">
+                    <option value="0">0 years</option>
+                    <option value="1">1 year</option>
+                    <option value="2">2 years</option>
+                    <option value="3">3 years</option>
+                    <option value="4">4 years</option>
+                    <option value="5" selected>5 years</option>
+                    <option value="6">6 years</option>
+                    <option value="7">7 years</option>
+                    <option value="8">8 years</option>
+                    <option value="9">9 years</option>
+                    <option value="10">10 years</option>
+                    <option value="11">11 years</option>
+                    <option value="12">12 years</option>
+                    <option value="13">13 years</option>
+                    <option value="14">14 years</option>
+                    <option value="15">15 years</option>
+                    <option value="16">16 years</option>
+                    <option value="17">17 years</option>
+                    <option value="18">18 years</option>
+                    <option value="19">19 years</option>
+                    <option value="20">20 years</option>
+                  </select>
+                </div>
+              </div>
+              <button class="primary-button" id="extract-button" type="submit">
+                <span class="btn-label">Explore my scenario</span>
+                <span class="btn-icon" aria-hidden="true">✳</span>
+              </button>
+            </div>
             <p class="form-error" id="intake-error" role="alert"></p>
           </form>
-          <div class="card-foot">Your story is sent to Google Gemini for analysis.</div>
+
+          <div class="card-foot">Your story is sent to AI to extract transparent starting assumptions.</div>
         </div>
       </section>
+
+      <!-- STAGE 2: TUNING -->
       <section id="tuning" class="stage" hidden>
-        <div class="stage-heading"><div><div class="eyebrow"><span></span> YOUR SCENARIO</div><h1>Make it <em>yours.</em></h1><p>Fine-tune the assumptions that matter to your story.</p></div><button class="text-button" id="edit-story" type="button">Edit your story</button></div>
-        <div class="tuning-grid"><div class="summary-card"><div class="card-kicker">THE PICTURE SO FAR</div><h2>Your starting point</h2><p id="scenario-summary"></p><div id="baseline" class="baseline"></div><div id="assumptions" class="assumptions"></div><p class="summary-note">Review these inferred figures before exploring your future.</p></div><div class="sliders-card"><div class="card-top"><span class="card-kicker">FINE-TUNE YOUR FUTURE</span></div><h2>Adjust your assumptions</h2><p>Move the controls to reflect what feels right for you.</p><form id="simulate-form"><div id="sliders"></div><p class="form-error" id="simulate-error" role="alert"></p><button class="primary-button wide" id="simulate-button" type="submit">Simulate future <span aria-hidden="true">✳</span></button></form></div></div>
+        <div class="stage-heading">
+          <div>
+            <div class="eyebrow"><span></span> YOUR SCENARIO</div>
+            <h1>Make it <em>yours.</em></h1>
+            <p>Fine-tune the assumptions that matter to your story.</p>
+          </div>
+          <button class="text-button" id="edit-story" type="button">Edit your story</button>
+        </div>
+
+        <div class="tuning-grid">
+          <div class="summary-card">
+            <div class="card-kicker">THE PICTURE SO FAR</div>
+            <h2>Your starting point</h2>
+            <p id="scenario-summary"></p>
+            <div id="baseline" class="baseline"></div>
+            <div id="assumptions" class="assumptions"></div>
+            <p class="summary-note">Review these inferred figures before exploring your future.</p>
+          </div>
+
+          <div class="sliders-card">
+            <div class="card-top"><span class="card-kicker">FINE-TUNE YOUR FUTURE</span></div>
+            <h2>Adjust your assumptions</h2>
+            <p>Move the controls to reflect what feels right for you.</p>
+            <form id="simulate-form">
+              <div id="sliders"></div>
+              <p class="form-error" id="simulate-error" role="alert"></p>
+              <button class="primary-button wide" id="simulate-button" type="submit">
+                <span class="btn-label">Simulate future</span>
+                <span class="btn-icon" aria-hidden="true">✳</span>
+              </button>
+            </form>
+          </div>
+        </div>
       </section>
-      <section id="results" class="stage" hidden>
-        <div id="timeline-graph" class="timeline-graph" aria-label="Interactive financial timeline graph"></div>
-        <div class="stage-heading"><div><div class="eyebrow"><span></span> YOUR FINANCIAL TIMELINE</div><h1>A look <em>ahead.</em></h1><p>Explore how your choices could shape your financial picture.</p></div><button class="text-button" id="adjust-scenario" type="button"><span aria-hidden="true">←</span> Adjust assumptions</button></div>
-        <div class="timeline-layout">
-          <div class="graph-card floating-panel">
-            <div class="panel-bar" title="Drag to move"><span class="card-kicker">YOUR PATHS</span><button class="panel-toggle" type="button" aria-label="Minimize panel" aria-expanded="true">–</button></div>
-            <div class="panel-body">
-            <div class="graph-heading"><div><h2>Explore your timeline</h2><p>Select a milestone to inspect it or imagine another path.</p></div><button class="secondary-button fit-button" id="fit-graph" type="button">Fit timeline</button></div>
-            <div class="graph-help">Drag to explore · Scroll to zoom · Select a milestone for details</div>
-            <label class="milestone-label" for="milestone-select">Select a milestone</label><select id="milestone-select"></select>
+
+      <!-- STAGE 3: RESULTS -->
+      <section id="results" class="stage results-stage" hidden>
+        <!-- MODE A: OPEN ASTRAL SINGLE-LINE TIMELINE -->
+        <div id="timeline-view" class="timeline-view">
+          <div class="results-header">
+            <div>
+              <div class="eyebrow"><span id="active-path-dot"></span> <span id="active-path-kicker">ORIGINAL PATH</span></div>
+              <h1>A look <em>ahead.</em></h1>
+              <p id="active-path-subtitle">Your 5-year projection.</p>
+            </div>
+            <div class="results-actions">
+              <button class="ghost-button" id="jump-to-summary" type="button">Summary <span aria-hidden="true">↓</span></button>
+              <button class="ghost-button" id="switch-to-tree" type="button">Full tree <span aria-hidden="true">⑂</span></button>
+              <button class="text-button" id="adjust-scenario" type="button"><span aria-hidden="true">←</span> Adjust assumptions</button>
             </div>
           </div>
-          <aside class="inspector floating-panel"><div class="panel-bar" title="Drag to move"><span class="card-kicker">MILESTONE DETAILS</span><button class="panel-toggle" type="button" aria-label="Minimize panel" aria-expanded="true">–</button></div><div class="panel-body" id="inspector" aria-live="polite"><div class="inspector-empty"><h2>Every future starts somewhere.</h2><p>Select a milestone to see the details and explore a different decision.</p></div></div></aside>
+
+          <!-- Clear indicator shown only when viewing an alternative branch -->
+          <div id="branch-banner" class="branch-banner" hidden>
+            <div class="branch-banner-left">
+              <span class="branch-banner-orb" id="branch-banner-orb" aria-hidden="true"></span>
+              <div>
+                <strong id="branch-banner-title">Alternate path</strong>
+                <span id="branch-banner-origin">Branched from Original path</span>
+              </div>
+            </div>
+            <button type="button" class="branch-return-btn" id="return-to-original">← Return to Original path</button>
+          </div>
+
+          <!-- Centered, Unobstructed Free-Moving Vertical Timeline -->
+          <div class="vtimeline-shell" id="vtimeline-shell">
+            <canvas id="vtimeline-canvas" class="vtimeline-canvas" aria-hidden="true"></canvas>
+            <ol id="vertical-timeline" class="vtimeline-list" aria-label="Financial journey along active path"></ol>
+          </div>
+
+          <!-- End-of-Timeline Summary -->
+          <section id="timeline-summary" class="timeline-summary" aria-label="Horizon summary">
+            <div class="summary-head">
+              <div>
+                <div class="eyebrow"><span></span> HORIZON SUMMARY</div>
+                <h2>Where this path <em>leads.</em></h2>
+              </div>
+              <button class="text-button" id="back-to-top" type="button">↑ Back to top</button>
+            </div>
+
+            <div class="summary-layout">
+              <div class="summary-numbers" id="path-kpis"></div>
+              <div class="trajectory-card">
+                <div class="trajectory-top">
+                  <span class="card-kicker" id="trajectory-title">NET WORTH OVER TIME</span>
+                  <div class="metric-toggle" role="group" aria-label="Chart metric">
+                    <button type="button" class="metric-btn is-active" data-metric="net_worth_chf">Net worth</button>
+                    <button type="button" class="metric-btn" data-metric="cash_chf">Cash</button>
+                  </div>
+                </div>
+                <div class="trajectory-chart-wrap" id="trajectory-chart"></div>
+                <div class="trajectory-legend" id="trajectory-legend"></div>
+              </div>
+            </div>
+          </section>
+
+          <!-- Floating Corner Tree Minimap (click block for full tree, click dot to jump) -->
+          <section class="minimap-dock" id="minimap-dock" role="button" tabindex="0" title="Open full tree view" aria-label="Decision tree minimap — click to open full tree view">
+            <div class="minimap-canvas" id="tree-minimap">
+              <div class="minimap-tooltip" id="minimap-tooltip" hidden></div>
+            </div>
+          </section>
         </div>
+
+        <!-- MODE B: FULL INTERACTIVE TREE VIEW (vis-network) -->
+        <div id="tree-view" class="tree-view" hidden>
+          <div id="timeline-graph" class="timeline-graph" aria-label="Interactive full decision tree graph"></div>
+
+          <div class="tree-topbar-overlay">
+            <button class="ghost-button" id="back-to-timeline" type="button">← Back to timeline</button>
+            <button class="text-button tree-adjust-link" id="tree-adjust-scenario" type="button">Adjust assumptions</button>
+          </div>
+
+          <div class="graph-card floating-panel" id="tree-controls-panel">
+            <div class="panel-bar" title="Drag to move">
+              <span class="card-kicker">YOUR PATHS</span>
+              <button class="panel-toggle" type="button" aria-label="Minimize panel" aria-expanded="true">–</button>
+            </div>
+            <div class="panel-body">
+              <div class="tree-controls-row">
+                <span class="tree-controls-hint">Drag · Scroll to zoom</span>
+                <button class="ghost-button" id="fit-graph" type="button">Fit</button>
+              </div>
+              <label class="milestone-label" for="milestone-select">Jump to point</label>
+              <div class="select-wrap">
+                <select id="milestone-select"></select>
+              </div>
+              <button class="primary-button wide compact" id="follow-selected-path" type="button" style="margin-top:12px">
+                <span class="btn-label">Follow path in timeline</span>
+                <span class="btn-icon" aria-hidden="true">→</span>
+              </button>
+            </div>
+          </div>
+
+          <div id="tree-inspector-slot"></div>
+        </div>
+
+        <!-- Drawer Backdrop (used only when the side sheet opens in Timeline mode) -->
+        <div id="drawer-backdrop" class="drawer-backdrop" hidden></div>
+
+        <!-- SINGLE SHARED MOMENT DRAWER / TREE INSPECTOR -->
+        <aside id="inspector-panel" class="inspector floating-panel" aria-label="Selected moment">
+          <div class="panel-bar" title="Drag to move in full tree view">
+            <span class="card-kicker">THIS MOMENT</span>
+            <div class="panel-bar-actions">
+              <button class="panel-toggle" type="button" aria-label="Minimize panel" aria-expanded="true">–</button>
+              <button class="drawer-close" id="close-drawer" type="button" aria-label="Close panel">×</button>
+            </div>
+          </div>
+          <div class="panel-body" id="inspector" aria-live="polite">
+            <div class="inspector-empty">
+              <h2>Every future starts somewhere.</h2>
+              <p>Select a glowing point along your path to inspect its numbers or explore a new decision.</p>
+            </div>
+          </div>
+        </aside>
       </section>
     </main>
+
     <footer><span>financialtwin</span></footer>
   </div>
-  <dialog id="settings-dialog"><form method="dialog" id="settings-form"><div class="dialog-top"><span class="card-kicker">SETTINGS</span><button class="close-button" value="cancel" aria-label="Close settings">×</button></div><h2>Connect AI</h2><p>Add your API key to analyze your story. You can also configure <code>AI_API_KEY</code> in the server environment.</p><label for="api-key">API key</label><input type="password" id="api-key" autocomplete="off" placeholder="Paste your API key"><p class="key-note">A key entered here stays in this browser session.</p><button type="submit" class="primary-button wide" value="save">Save settings</button></form></dialog>
+
+  <div id="toast-region" class="toast-region" aria-live="polite" aria-atomic="true"></div>
+
+  <dialog id="confirm-dialog" class="confirm-dialog" aria-labelledby="confirm-title" aria-describedby="confirm-message">
+    <form method="dialog">
+      <div class="confirm-icon" aria-hidden="true">!</div>
+      <span class="card-kicker" id="confirm-kicker">DELETE BRANCH</span>
+      <h2 id="confirm-title"></h2>
+      <p id="confirm-message"></p>
+      <div class="confirm-actions">
+        <button class="confirm-cancel" value="cancel" autofocus>Cancel</button>
+        <button class="confirm-danger" value="confirm" id="confirm-ok">Delete</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="settings-dialog">
+    <form method="dialog" id="settings-form">
+      <div class="dialog-top">
+        <span class="card-kicker">SETTINGS</span>
+        <button class="close-button" value="cancel" aria-label="Close settings">×</button>
+      </div>
+      <h2>Connect AI</h2>
+      <p>Add your API key to analyze your story. You can also configure <code>AI_API_KEY</code> in the server environment.</p>
+      <label for="api-key">API key</label>
+      <input type="password" id="api-key" autocomplete="off" placeholder="Paste your API key">
+      <p class="key-note" id="api-status-note">A key entered here stays in this browser session.</p>
+      <button type="submit" class="primary-button wide" value="save">
+        <span class="btn-label">Save settings</span>
+      </button>
+    </form>
+  </dialog>
+
   <script src="/vis-network.min.js" defer></script>
   <script src="/app.js" defer></script>
 </body>

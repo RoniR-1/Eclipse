@@ -52,8 +52,11 @@ class DatabaseTests(unittest.TestCase):
                         expected = sum(1 for _ in csv.reader(source)) - 1
                     count = connection.execute(sql.SQL("SELECT count(*) FROM {}").format(sql.Identifier(name))).fetchone()[0]
                     self.assertEqual(count, expected, name)
+                initial_events = connection.execute("SELECT count(*) FROM life_event_knowledge").fetchone()[0]
+                self.assertGreaterEqual(initial_events, 22)
             self.assertFalse(initialize_database(self.dsn, root))
             with psycopg.connect(self.dsn) as connection:
+                self.assertEqual(connection.execute("SELECT count(*) FROM life_event_knowledge").fetchone()[0], initial_events)
                 connection.execute("CREATE TEMP TABLE saved_profile AS SELECT * FROM profiles LIMIT 1")
                 names = sql.SQL(", ").join(sql.Identifier(name) for name, _, _ in TABLES)
                 connection.execute(sql.SQL("TRUNCATE {} CASCADE").format(names))
