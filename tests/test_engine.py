@@ -78,6 +78,54 @@ class SimulationTests(unittest.TestCase):
                 "monthly_income_chf": 0, "monthly_expenses_chf": 0}]})
         self.assertEqual(json.dumps(root, sort_keys=True), original)
 
+    def test_funding_gap_before_income_and_zero_income_ratio(self):
+        scenario = self.scenario()
+        scenario.update(opening_cash_chf=100, minimum_reserve_chf=50,
+                        one_off_costs=[{"month": 0, "amount_chf": 500}])
+        scenario["phases"][0].update(monthly_income_chf=1000, monthly_expenses_chf=0)
+        scenario["preferences"]["savings_rate"] = 0
+        state = simulate(create_root(scenario), 1)[0]["state"]
+        self.assertEqual(state["cash_chf"], 600)
+        self.assertEqual(state["funding_feasibility"]["maximum_funding_need_chf"], 400)
+        self.assertEqual(state["funding_feasibility"]["first_funding_gap_period_start"], "2025-01-31")
+        self.assertEqual(state["cash_flow"]["cash_change_after_transfers_chf"], 500)
+        scenario["phases"][0]["monthly_income_chf"] = 0
+        scenario["debts"] = [{"id": "loan", "principal_chf": 100, "monthly_payment_chf": 10}]
+        state = simulate(create_root(scenario), 1)[0]["state"]
+        self.assertIsNone(state["funding_feasibility"]["debt_service_ratio"])
+        self.assertIsNone(state["funding_feasibility"]["debt_service_affordable"])
+        self.assertEqual(state["funding_feasibility"]["debt_service_affordability_status"], "undefined_zero_income")
+        self.assertTrue(state["funding_feasibility"]["budget_breaches"])
+
+    def test_fixed_term_and_interest_breakdowns(self):
+        scenario = self.scenario()
+        scenario["debts"] = [
+            {"id": "zero", "principal_chf": 1200, "annual_interest_rate": 0.12, "monthly_payment_chf": 0},
+            {"id": "partial", "principal_chf": 1200, "annual_interest_rate": 0.12, "monthly_payment_chf": 5},
+            {"id": "term", "principal_chf": 1200, "annual_interest_rate": 0, "term_months": 12},
+            {"id": "early", "principal_chf": 10, "annual_interest_rate": 0, "monthly_payment_chf": 100},
+        ]
+        root = create_root(scenario)
+        nodes = simulate(root, 12)
+        by_name = {row["name"]: row for row in nodes[0]["state"]["cash_flow"]["debt_breakdown"]}
+        self.assertEqual(by_name["zero"]["capitalized_interest_chf"], 12)
+        self.assertEqual(by_name["partial"]["capitalized_interest_chf"], 7)
+        self.assertEqual(by_name["partial"]["interest_paid_chf"], 5)
+        self.assertEqual(by_name["term"]["principal_paid_chf"], 100)
+        self.assertEqual(by_name["early"]["payment_chf"], 10)
+        self.assertEqual(by_name["early"]["closing_balance_chf"], 0)
+        self.assertEqual(nodes[-1]["state"]["debts"][2]["principal_chf"], 0)
+        checkpoint = json.loads(json.dumps(nodes[4]))
+        self.assertEqual(nodes[5:], simulate(checkpoint, 7))
+
+    def test_tiny_rate_fixed_term(self):
+        scenario = self.scenario()
+        scenario["debts"] = [{"id": "tiny", "principal_chf": 1200,
+                              "annual_interest_rate": 1e-15, "term_months": 12}]
+        nodes = simulate(create_root(scenario), 12)
+        self.assertAlmostEqual(nodes[0]["state"]["cash_flow"]["debt_payments_chf"], 100)
+        self.assertEqual(nodes[-1]["state"]["total_debt_chf"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()

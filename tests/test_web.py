@@ -1,12 +1,13 @@
 from copy import deepcopy
+from email.message import Message
 import io
 import json
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from urllib.error import HTTPError, URLError
 
 from financial_twin import create_root, simulate
-from financial_twin.server import apply_branch_change, edit_nodes, extract, node_narrative, run_branch, run_simulation, run_projection, random_test, years_value
+from financial_twin.server import Handler, apply_branch_change, edit_nodes, extract, node_narrative, run_branch, run_simulation, run_projection, random_test, years_value
 
 
 class WebFlowTests(unittest.TestCase):
@@ -32,6 +33,23 @@ class WebFlowTests(unittest.TestCase):
         self.assertEqual(revised[branch[-1]["id"]]["state"]["cash_chf"], 25000)
         self.assertEqual(revised[branch[-1]["id"]]["state"]["assets"][0]["value_chf"], 20000)
         self.assertEqual(revised[branch[-1]["id"]]["scenario"]["opening_cash_chf"], 12000)
+
+    def test_borrowing_proceeds_replayed_on_edit(self):
+        scenario = {"start_date": "2025-01-01", "opening_cash_chf": 1000,
+                    "phases": [{"start_month": 0, "end_month": None, "monthly_income_chf": 0,
+                                "monthly_expenses_chf": 0}]}
+        root = create_root(scenario)
+        change = {"monthly_income_delta_chf": 0, "monthly_expenses_delta_chf": 0, "one_off_cost_chf": 0,
+                  "investment_multiplier": 1, "new_asset_chf": 0, "new_debt_chf": 500,
+                  "new_debt_annual_interest_rate": 0, "new_debt_monthly_payment_chf": 0,
+                  "borrowing_proceeds_chf": 500}
+        branch = apply_branch_change(root, "Loan", 1, {}, change)["nodes"]
+        self.assertEqual(branch[0]["state"]["cash_chf"], 1500)
+        self.assertEqual(branch[0]["state"]["cash_flow"]["cash_change_after_transfers_chf"], 500)
+        revised = edit_nodes({"nodes": [root, *branch], "node_id": root["id"],
+                              "edits": {"cash_chf": 2000}})["nodes"]
+        self.assertEqual(revised[-1]["state"]["cash_chf"], 2500)
+        self.assertEqual(revised[-1]["state"]["cash_flow"]["borrowing_proceeds_chf"], 500)
 
     def test_expense_inflation_override_and_fixed_duration(self):
         scenario = {"start_date": "2025-01-01", "opening_cash_chf": 50000, "annual_inflation": 0.12,
@@ -76,6 +94,34 @@ class WebFlowTests(unittest.TestCase):
             result = run_projection(data)
             resolver.assert_not_called()
             self.assertEqual(result["paths"]["Study"]["events"][0]["params"]["annual_tuition_chf"]["value"], 3000)
+
+    def test_projection_record_replays_without_resolution(self):
+        data = {"profile": {"age": 30, "cash_chf": 10000, "monthly_net_income_chf": 5000, "monthly_rent_chf": 1500},
+                "scenarios": {"Study": [{"type": "education", "description": "Master at Lausanne", "in_months": 0}]},
+                "start": "2026-01", "horizon_years": 1}
+        cached = {"params": {"annual_tuition_chf": 8000}, "source": "database_cache", "source_urls": [], "note": ""}
+        with patch.dict("os.environ", {"DATABASE_URL": "postgresql://test"}), patch("financial_twin.event_resolver.resolve_event", return_value=cached):
+            initial = run_projection(data)
+        with patch.dict("os.environ", {"DATABASE_URL": "postgresql://test"}), patch("financial_twin.event_resolver.resolve_event", side_effect=AssertionError("unexpected lookup")):
+            replay = run_projection({"scenario_record": initial["scenario_record"]})
+        self.assertEqual(replay["paths"], initial["paths"])
+        self.assertEqual(replay["scenario_record"], initial["scenario_record"])
+
+    def test_projection_http_accepts_large_frozen_record(self):
+        initial = run_projection({"profile": {"age": 30, "cash_chf": 10000,
+                                   "monthly_net_income_chf": 5000, "monthly_rent_chf": 1500},
+                                  "horizon_years": 1, "start": "2026-01"})
+        payload = json.dumps({"scenario_record": initial["scenario_record"]}).encode() + b" " * 100000
+        handler = Handler.__new__(Handler)
+        handler.path = "/api/project"
+        handler.headers = Message()
+        handler.headers["Content-Type"] = "application/json"
+        handler.headers["Content-Length"] = str(len(payload))
+        handler.rfile = io.BytesIO(payload)
+        handler.send_json = Mock()
+        handler.do_POST()
+        self.assertEqual(handler.send_json.call_args.args[0], 200)
+        self.assertEqual(handler.send_json.call_args.args[1]["paths"], initial["paths"])
 
     def test_year_selection_including_zero(self):
         for years in (0, 1, 20):
@@ -125,6 +171,39 @@ class WebFlowTests(unittest.TestCase):
         self.assertEqual(request.get_header("X-goog-api-key"), "test-key")
         self.assertEqual([item["id"] for item in result["variables"]], self.gemini_result()["variable_ids"])
         self.assertEqual(result["scenario"]["phases"][0]["end_month"], 12)
+
+    def test_interpreted_and_demo_inputs_are_assumptions_until_changed(self):
+        with patch("financial_twin.server.gemini_json", return_value=self.gemini_result()):
+            result = extract("I want to study and then work", 5, "test-key")
+        records = result["scenario"]["provenance"]
+        self.assertEqual(records["opening_cash_chf"]["source"], "assumption")
+        self.assertEqual(records["phases[0].monthly_income_chf"]["transformation"], "model interpretation of story")
+        variables = {item["id"]: item["value"] for item in result["variables"]}
+        variables["monthly_income_chf"] = 2000
+        projected = run_simulation({"years": 0, "scenario": result["scenario"], "variables": variables})
+        records = projected["scenario"]["provenance"]
+        self.assertEqual(records["phases[0].monthly_income_chf"]["source"], "user")
+        self.assertEqual(records["opening_cash_chf"]["source"], "assumption")
+        demo = random_test({"years": 0})
+        self.assertEqual(demo["extraction"]["scenario"]["provenance"]["opening_cash_chf"]["source"], "assumption")
+        self.assertEqual(demo["extraction"]["scenario"]["provenance"]["opening_cash_chf"]["transformation"], "random demonstration input")
+
+    def test_model_interpreted_branch_changes_keep_lineage_on_replay(self):
+        root = create_root({"opening_cash_chf": 10000, "phases": [{"start_month": 0, "end_month": None,
+                            "monthly_income_chf": 5000, "monthly_expenses_chf": 2000}]})
+        change = {"monthly_income_delta_chf": 1000, "monthly_expenses_delta_chf": 200,
+                  "one_off_cost_chf": 500, "investment_multiplier": 1, "new_asset_chf": 0,
+                  "new_debt_chf": 0, "new_debt_annual_interest_rate": 0, "new_debt_monthly_payment_chf": 0}
+        with patch("financial_twin.server.gemini_json", return_value=change):
+            branch = run_branch({"parent": root, "event": "New work", "months": 2,
+                                 "variables": {"monthly_expenses_chf": 3000}}, "key")
+        first, second = branch["nodes"]
+        records = first["scenario"]["provenance"]
+        self.assertEqual(records["phases[0].monthly_income_chf"]["transformation"], "model interpretation of branch event")
+        self.assertEqual(records["phases[0].monthly_expenses_chf"]["source"], "user")
+        self.assertEqual(records["one_off_costs[0].amount_chf"]["source"], "assumption")
+        replay = simulate(json.loads(json.dumps(first)), 1, branch_id=second["branch_id"])[0]
+        self.assertEqual(replay["id"], second["id"])
 
     def test_configured_openai_endpoint_and_model_fallback(self):
         data = self.gemini_result()
