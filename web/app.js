@@ -12,6 +12,7 @@ const state = {
   years: 5,
   nodes: new Map(),
   narratives: new Map(),
+  pathReports: new Map(),
   activeBranchId: 'main',
   selectedId: null,
   network: null,
@@ -1781,9 +1782,12 @@ function renderEndSummary(activeMeta, index) {
   const { parentMeta, parentNode: parentTip } = getParentComparison(activeMeta.id, tip.month, index);
 
   let minCashNode = chain[0];
+  let minLiquidityNode = chain[0];
   let shortfallMonths = 0;
   for (const n of chain) {
     if (n.state.cash_chf < minCashNode.state.cash_chf) minCashNode = n;
+    if ((n.state.funding_feasibility?.low_point_chf ?? n.state.cash_chf) <
+        (minLiquidityNode.state.funding_feasibility?.low_point_chf ?? minLiquidityNode.state.cash_chf)) minLiquidityNode = n;
     if (n.state.cash_chf < 0) shortfallMonths += 1;
   }
 
@@ -1791,6 +1795,10 @@ function renderEndSummary(activeMeta, index) {
   const cashDelta = parentMeta && parentTip ? tip.state.cash_chf - parentTip.state.cash_chf : null;
   const parentName = parentMeta ? shortBranchLabel(parentMeta.label) : '';
   const yr = (tip.month / 12).toFixed(tip.month % 12 ? 1 : 0);
+  const liquidity = minLiquidityNode.state.funding_feasibility?.low_point_chf ?? minLiquidityNode.state.cash_chf;
+  const funding = tip.state.funding_feasibility;
+  const gapPeriod = funding?.first_funding_gap_period_start;
+  const reserveBreaches = funding?.minimum_reserve_breaches || [];
 
   const stats = [
     {
@@ -1809,6 +1817,21 @@ function renderEndSummary(activeMeta, index) {
         : cashDelta !== null
           ? `${moneySigned(cashDelta)} vs. ${parentName} · lowest ${money(minCashNode.state.cash_chf)}`
           : `Lowest point: ${money(minCashNode.state.cash_chf)} (${minCashNode.date})`,
+    },
+    {
+      label: 'Lowest liquidity',
+      value: money(liquidity),
+      danger: liquidity < 0 || reserveBreaches.length > 0,
+      sub: liquidity < 0
+        ? `Funding needed ${money(funding?.maximum_funding_need_chf ?? Math.max(0, -liquidity))} · first gap ${gapPeriod || 'during this path'}`
+        : reserveBreaches.length
+          ? `Minimum reserve ${money(funding.minimum_reserve_chf)} breached ${reserveBreaches.length} times · first ${reserveBreaches[0].date}`
+          : `Lowest point through ${minLiquidityNode.date} · includes upfront costs`,
+    },
+    {
+      label: `Cash in ${tip.state.cpi_base_date || chain[0].date} purchasing power`,
+      value: money(tip.state.real_cash_chf ?? tip.state.cash_chf),
+      sub: `Nominal ${money(tip.state.cash_chf)} · real net worth ${money(tip.state.real_net_worth_chf ?? tip.state.net_worth_chf)}`,
     },
     {
       label: 'Investments',
@@ -1836,6 +1859,49 @@ function renderEndSummary(activeMeta, index) {
     `;
     container.append(el);
   }
+  const comparison = document.createElement('div');
+  comparison.className = 'summary-comparison-link';
+  const reportButton = document.createElement('button');
+  reportButton.type = 'button';
+  reportButton.className = 'ghost-button';
+  reportButton.textContent = 'Inspect sensitivity and checks';
+  const reportContent = document.createElement('div');
+  reportContent.className = 'path-report';
+  reportContent.setAttribute('aria-live', 'polite');
+  reportButton.addEventListener('click', async () => {
+    reportButton.disabled = true;
+    reportContent.textContent = 'Calculating this path…';
+    const revision = state.revision;
+    try {
+      let bundle = state.pathReports.get(tip.id);
+      if (!bundle) {
+        const result = await request('/api/path-report', { nodes: chain });
+        bundle = result.comparison_bundle;
+        state.pathReports.set(tip.id, bundle);
+      }
+      if (revision !== state.revision || !reportContent.isConnected) return;
+      const report = bundle.paths[bundle.baseline_path];
+      const formatValue = value => value === null || value === undefined ? 'Unavailable' : String(value);
+      const exactMoney = value => value == null ? 'Unavailable' : `CHF ${new Intl.NumberFormat('en-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value)}`;
+      const drivers = report.sensitivity_summary.drivers;
+      const rows = drivers.map(driver => {
+        const goals = (driver.goal_impacts || []).map(goal => `${goal.name}: deadline gap change ${goal.deadline_gap_delta_chf == null ? 'unavailable' : exactMoney(goal.deadline_gap_delta_chf)}`).join(', ');
+        return `<tr><td>${escapeHtml(driver.label || driver.field)}<br><small>${escapeHtml(driver.source || 'unknown')}</small></td><td>${escapeHtml(formatValue(driver.base_value))} → ${escapeHtml(formatValue(driver.perturbed_value))} ${escapeHtml(driver.unit || '')}</td><td>${escapeHtml(exactMoney(driver.terminal_cash_delta_chf))}</td><td>${escapeHtml(exactMoney(driver.minimum_liquidity_delta_chf))}</td><td>${escapeHtml(goals || 'No goal')}</td></tr>`;
+      }).join('');
+      const checks = report.sanity_checks.map(check => `<li>${escapeHtml(check.name.replaceAll('_', ' '))}: ${check.passed === null ? 'unavailable' : check.passed ? 'passed' : 'needs review'}</li>`).join('');
+      const limitations = bundle.limitations.map(item => `<li>${escapeHtml(item)}</li>`).join('');
+      reportContent.innerHTML = `<h3>One-at-a-time sensitivity</h3><div class="path-report-table"><table><thead><tr><th>Input</th><th>Change</th><th>Terminal cash</th><th>Minimum liquidity</th><th>Goal effect</th></tr></thead><tbody>${rows || '<tr><td colspan="5">No sensitivity drivers available.</td></tr>'}</tbody></table></div><h3>Model checks</h3><ul>${checks}</ul><h3>Model context</h3><ul>${limitations}</ul>`;
+    } catch (error) {
+      if (reportContent.isConnected) reportContent.textContent = error.message;
+    } finally {
+      if (reportButton.isConnected) reportButton.disabled = false;
+    }
+  });
+  const link = document.createElement('a');
+  link.href = '/compare.html';
+  link.textContent = 'Open comparison workspace';
+  comparison.append(reportButton, reportContent, link);
+  container.append(comparison);
 }
 
 function renderTrajectoryChart(activeMeta, index) {
@@ -2610,7 +2676,85 @@ function renderInspector(node, { focusBranchInput = false } = {}) {
   appendDetails(breakdown, node.state);
   acctSec.append(breakdown);
 
+  const feasibility = document.createElement('section');
+  feasibility.className = 'inspector-section';
+  const funding = s.funding_feasibility;
+  const low = funding?.low_point_chf ?? s.cash_chf;
+  const need = funding?.maximum_funding_need_chf ?? Math.max(0, -low);
+  const gap = funding?.first_funding_gap_period_start;
+  const baseDate = s.cpi_base_date || node.scenario.start_date;
+  feasibility.innerHTML = `
+    <h3>Liquidity and purchasing power</h3>
+    <div class="acct-row"><span>Period low including upfront costs</span><strong class="${low < 0 ? 'is-neg' : ''}">${escapeHtml(money(low))}</strong></div>
+    <div class="acct-row"><span>Maximum funding needed so far</span><strong class="${need > 0 ? 'is-neg' : ''}">${escapeHtml(money(need))}</strong></div>
+    <p class="inspector-note">${escapeHtml(gap ? `First funding gap in the period starting ${gap}.` : 'No funding gap recorded so far.')}</p>
+    <div class="acct-row"><span>Cash, nominal</span><strong>${escapeHtml(money(s.cash_chf))}</strong></div>
+    <div class="acct-row"><span>Cash, ${escapeHtml(baseDate)} purchasing power</span><strong>${escapeHtml(money(s.real_cash_chf ?? s.cash_chf))}</strong></div>
+    <div class="acct-row"><span>Net worth, nominal</span><strong>${escapeHtml(money(s.net_worth_chf))}</strong></div>
+    <div class="acct-row"><span>Net worth, ${escapeHtml(baseDate)} purchasing power</span><strong>${escapeHtml(money(s.real_net_worth_chf ?? s.net_worth_chf))}</strong></div>
+  `;
+  if (funding?.minimum_reserve_breaches?.length) {
+    const warning = document.createElement('p');
+    warning.className = 'inspector-note is-danger';
+    warning.textContent = `Minimum reserve breached in ${funding.minimum_reserve_breaches.length} recorded periods. Reserve ${money(funding.minimum_reserve_chf)}.`;
+    feasibility.append(warning);
+  }
+
+  const commitmentSec = document.createElement('details');
+  commitmentSec.className = 'inspector-section';
+  if (node.branch_commitments) {
+    const heading = document.createElement('summary');
+    heading.textContent = 'Fork commitments';
+    commitmentSec.append(heading);
+    appendDetails(commitmentSec, node.branch_commitments);
+  }
+
+  const goalSec = document.createElement('section');
+  goalSec.className = 'inspector-section';
+  if (s.goals?.length) {
+    const heading = document.createElement('h3');
+    heading.textContent = 'Goal commitments';
+    goalSec.append(heading);
+    for (const goal of s.goals) {
+      const item = document.createElement('div');
+      item.className = 'goal-result';
+      const statusText = goal.met === null ? 'Beyond this horizon' : goal.met ? 'Met at deadline' : 'Not met at deadline';
+      item.innerHTML = `<strong>${escapeHtml(goal.name)}</strong><span>${escapeHtml(statusText)} · ${escapeHtml(goal.target_date)}</span>
+        <span>Target ${escapeHtml(money(goal.target_chf))} · reserved ${escapeHtml(money(goal.reserved_cash_chf || 0))}</span>
+        <span>${goal.deadline_gap_chf === null ? 'Deadline gap unavailable' : `Deadline gap ${escapeHtml(money(goal.deadline_gap_chf))}`} · ${goal.first_attainment_date ? `first attained ${escapeHtml(goal.first_attainment_date)}` : 'not yet attained'}</span>
+        ${goal.failure_reason ? `<span>Reason ${escapeHtml(goal.failure_reason.replaceAll('_', ' '))}</span>` : ''}`;
+      goalSec.append(item);
+    }
+  }
+
+  const provenance = document.createElement('details');
+  provenance.className = 'inspector-section provenance-details';
+  const provenanceTitle = document.createElement('summary');
+  provenanceTitle.textContent = 'Inputs and assumption sources';
+  provenance.append(provenanceTitle);
+  const records = Object.entries(node.scenario.provenance || {});
+  if (!records.length) {
+    const empty = document.createElement('p');
+    empty.className = 'inspector-note';
+    empty.textContent = 'Source details are unavailable for this saved scenario.';
+    provenance.append(empty);
+  }
+  for (const [field, record] of records) {
+    const row = document.createElement('div');
+    row.className = 'provenance-row';
+    const value = record.value === null ? 'Open-ended' : String(record.value);
+    const detail = [record.unit, record.frequency, record.as_of_date, record.file, record.row, record.transformation].filter(Boolean).join(' · ');
+    row.innerHTML = `<div><strong>${escapeHtml(field)}</strong><span class="source-badge">${escapeHtml(record.source || 'unknown')}</span></div>
+      <span>${escapeHtml(value)}${detail ? ` · ${escapeHtml(detail)}` : ''}</span>`;
+    provenance.append(row);
+  }
+  const comparisonLink = document.createElement('p');
+  comparisonLink.className = 'inspector-note comparison-link';
+  comparisonLink.innerHTML = '<a href="/compare.html">Open separate comparison workspace →</a>';
+  provenance.append(comparisonLink);
+
   let editDetails = null;
+
   const editMonth = Math.max(0, node.month - 1);
   const editPhase = node.scenario?.phases?.find(phase => phase.start_month <= editMonth && (phase.end_month === null || editMonth < phase.end_month));
   if (editPhase) {
@@ -2649,6 +2793,7 @@ function renderInspector(node, { focusBranchInput = false } = {}) {
         label.append(input, document.createTextNode(field.label));
         editForm.append(label);
         continue;
+
       }
       label.textContent = field.label;
       input.value = field.value === null ? '' : field.percent ? Number((field.value * 100).toFixed(8)) : field.value;
@@ -2696,6 +2841,7 @@ function renderInspector(node, { focusBranchInput = false } = {}) {
         if (revision !== state.revision) return;
         state.revision += 1;
         state.narratives.clear();
+        state.pathReports.clear();
         for (const updated of result.nodes) state.nodes.set(updated.id, updated);
         if (state.resultsView === 'tree') renderTreeGraph({ focusId: node.id });
         else renderTimelineView();
@@ -2713,7 +2859,7 @@ function renderInspector(node, { focusBranchInput = false } = {}) {
   panel.append(header, narrativeSec);
   const info = renderBranchInfo(node);
   if (info) panel.append(info);
-  panel.append(acctSec);
+  panel.append(acctSec, feasibility, commitmentSec, goalSec, provenance);
   if (editDetails) panel.append(editDetails);
   const composer = el('div', { class: 'branch-form' });
   panel.append(composer);
@@ -2978,6 +3124,9 @@ function renderReview(section, node, proposal, text, presetId = null) {
         state.run.branches.push(result.branch);
         state.run.next_sequence = Math.max(state.run.next_sequence, (result.branch.sequence ?? 0) + 1);
       }
+      if (revision === state.revision && state.nodes.has(node.id) && result.nodes.length && result.comparison_bundle) {
+        state.pathReports.set(result.nodes.at(-1).id, result.comparison_bundle);
+      }
       showNewBranch(node, result.nodes, revision);
     } catch (problem) {
       error.textContent = problem.message;
@@ -3171,8 +3320,10 @@ async function selectNode(id, { openDrawer = false, focusBranchInput = false, sk
   }
 }
 
-function renderResults(nodes) {
+function renderResults(nodes, bundle = null) {
   state.revision += 1;
+  state.pathReports = new Map();
+  if (bundle) state.pathReports.set(nodes.at(-1).id, bundle);
   state.nodes = new Map(nodes.map(node => [node.id, node]));
   state.narratives = new Map();
   state.activeBranchId = nodes.some(n => n.branch_id === 'main') ? 'main' : nodes[0].branch_id;
@@ -3319,7 +3470,8 @@ byId('simulate-form').addEventListener('submit', async event => {
       scenario: structuredClone(state.extraction.scenario), variables, branches: [], next_sequence: 0,
       environment: result.environment,
     };
-    renderResults(result.nodes);
+    renderResults(result.nodes, result.comparison_bundle);
+
   } catch (error) {
     byId('simulate-error').textContent = error.message;
   } finally {

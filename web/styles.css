@@ -25,6 +25,15 @@
   font-synthesis: none;
 }
 
+.comparison-link {
+  display: inline-block;
+  color: #ffb476;
+  font-weight: 700;
+  margin-top: 1rem;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 4px;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -1369,12 +1378,66 @@ body.world-mode #inspector-panel .panel-toggle {
   margin: 0 0 10px;
 }
 
+.inspector-note,
+.summary-comparison-link p {
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+  margin: 10px 0;
+}
+
+.inspector-note.is-danger { color: var(--danger); }
+
+.summary-comparison-link {
+  padding: 14px 0;
+  overflow-wrap: anywhere;
+}
+
+.summary-comparison-link a,
+.comparison-link a {
+  color: #ffc89a;
+  font-weight: 700;
+}
+
+.goal-result,
+.provenance-row {
+  display: grid;
+  gap: 4px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.goal-result strong,
+.provenance-row strong { color: var(--text-strong); }
+
+.provenance-details summary {
+  color: #ffc89a;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.source-badge {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 2px 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  color: #f8dfa0;
+  font-size: 10px;
+  font-weight: 700;
+}
+
 .node-edit-details summary {
   font-size: 13px;
   font-weight: 700;
   color: var(--accent-bright);
   cursor: pointer;
 }
+
 
 .node-edit-form {
   margin-top: 12px;
@@ -2067,6 +2130,30 @@ code {
 @keyframes confirm-in { from { opacity: 0; transform: translateY(8px) scale(0.96); } to { opacity: 1; transform: none; } }
 @keyframes confirm-fade { from { opacity: 0; } to { opacity: 1; } }
 
+.path-report {
+  margin: 1rem 0;
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+.path-report h3 {
+  margin: 1rem 0 0.5rem;
+  font-size: 1rem;
+}
+.path-report-table {
+  max-width: 100%;
+  overflow-x: auto;
+}
+.path-report table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+}
+.path-report th,
+.path-report td {
+  padding: 0.5rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.15);
+  vertical-align: top;
+}
 /* Branch composer, review card and branch assumptions */
 .composer-hint { font-size: 12px; color: var(--text-muted); line-height: 1.5; margin: -6px 0 14px; }
 .branch-form .preset-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 20px; }
