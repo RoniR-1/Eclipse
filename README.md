@@ -8,6 +8,8 @@ To configure the AI provider, copy `.env.example` to `.env`, set `AI_API_KEY`, `
 
 Describe your finances and the decision you want to explore, using CHF for monetary amounts. Select a 5-, 10- or 20-year horizon and submit. The server sends the statement to Google Gemini to extract a starting scenario and choose three to five relevant controls. Review the assumptions, adjust the sliders, and choose **Simulate Future** to project the monthly timeline with the Python engine.
 
+The server also exposes the [projection engine](#projection-engine-user-entered-profile), which projects a user's own starting numbers with rule-based decisions: `GET /api/schema` returns the input fields, event types, defaults and ranges, and `POST /api/project` returns the baseline and decision paths. The current web interface still uses the extraction flow above.
+
 ## PostgreSQL data
 
 The server requires `DATABASE_URL`. The provided Docker Compose database listens on localhost port 5433 and stores data in the `financial_twin_data` named volume, which survives application and database restarts. A local PostgreSQL instance or hosted PostgreSQL database can also be used by setting its URL in `.env`. Start the database before starting the server. The existing local PostgreSQL cluster in this workspace can instead be started with `/usr/lib/postgresql/16/bin/pg_ctl -D .local/postgres -l .local/postgres.log -o '-p 5433 -k /tmp' start` and stopped with `/usr/lib/postgresql/16/bin/pg_ctl -D .local/postgres stop`. Use either this local cluster or Compose at a time, since both use port 5433.
@@ -18,7 +20,12 @@ To run the PostgreSQL integration test against a disposable schema, set `TEST_DA
 
 ## Simulation engine
 
-This Python package models monthly financial decisions for the LauzHack challenge. Its inputs and checkpoint nodes are JSON-compatible so a web backend can persist them and a browser can render paths without reproducing financial calculations. It uses NumPy for asset and debt calculations.
+This Python package models monthly financial decisions for the LauzHack challenge. It contains two engines that share the same monthly cash recurrence:
+
+| Module | Purpose | Used by |
+| --- | --- | --- |
+| `financial_twin/engine.py` | Phase-based balance sheet with branching checkpoint nodes, inflation, investment allocation and debt. Its inputs and nodes are JSON-compatible so a web backend can persist them and a browser can render paths without reproducing financial calculations. It uses NumPy for asset and debt calculations. | `/api/simulate`, `/api/branch` |
+| `financial_twin/projection.py` | Projection of a user-entered profile with six rule-based decision types, dataset defaults, metrics, uncertainty bands and baseline comparisons. Standard library only. | `/api/schema`, `/api/project` |
 
 ## Challenge materials
 
@@ -26,7 +33,15 @@ Stefania Stan’s [challenge brief](ai-financial-twin-lauzhack-2026/README.md) a
 
 The [Data directory](ai-financial-twin-lauzhack-2026/Data) contains 1,200 synthetic profiles, 1,200 accounts, 2,399 asset snapshots, 283 liability snapshots, 1,500 goals and 28,800 monthly cash reconciliations. The 120 catalog entries describe decisions. The 240 scenario assumption rows cover only a subset of profile/scenario combinations. The transaction and life-event CSVs are also loaded. Net monthly transactions alone cannot identify the underlying income and expense categories.
 
-The [starter kit](ai-financial-twin-lauzhack-2026/starter-kit) supplies an independent cash-only reference with three ten-year paths. Its JSON assumptions differ from the CSV scenario assumptions. For example, the JSON charges Alexia CHF 2,500 at the beginning of each study year, whereas her S001 CSV assumption specifies CHF 8,000 per year. Select one set explicitly when comparing paths.
+Profiling the data showed three limits that shape the projection engine:
+
+- **Life events are placeholders.** The 600 rows in `life-events.csv` cover only profiles P00001–P00200, three events each, with types assigned at random and only three dates (2025-09-01, 2026-06-01, 2026-09-01). Every `cash_effect_chf` is empty and every status is `proposed_not_executed`, so the transaction ledger never reflects them. The file supplies the five event types, not their financial effects.
+- **Only S001 has parameters.** `scenario-assumptions.csv` holds `study_duration_years` and `annual_tuition_chf` for the master's scenario only, for P00001–P00120. Their medians (24 months, CHF 4,800 per year) are the education defaults.
+- **Spending barely depends on the profile.** Across all 1,200 profiles, other fixed costs are about CHF 709 per month (standard deviation about 29) and discretionary spending about CHF 745, almost regardless of income, household or employment. Income, household and employment explain about 4% of the variation in fixed costs and 17% in discretionary spending. Only the annual bonus follows income (about 2.8% for employed people). A model trained on this data would learn near-constants, so the engine uses medians and means as labelled defaults instead of a fitted model.
+
+The transactions reconcile exactly with `synthetic-cash-balances.csv`: opening cash plus each month's net transactions equals closing cash in all 28,800 rows.
+
+The [starter kit](ai-financial-twin-lauzhack-2026/starter-kit) supplies an independent cash-only reference with three ten-year paths. Its JSON assumptions differ from the CSV scenario assumptions. For example, the JSON charges Alexia CHF 2,500 at the beginning of each study year, whereas her S001 CSV assumption specifies CHF 8,000 per year. Her ledger also differs from the starter JSON: she averages CHF 1,176 of income and CHF 2,207 of spending per month, against CHF 1,200 and CHF 2,100 in the JSON. Select one set explicitly when comparing paths. The projection engine takes tuition from the CSV medians and uses the starter's CHF 4,800 graduate income and CHF 6,500 relocation cost only as labelled assumptions.
 
 ## Modelling choice
 
@@ -86,3 +101,79 @@ For a CSV-backed opening state, use `load_synthetic_profile(data_dir, profile_id
 ## Check the implementation
 
 Run `python3 -m unittest discover -s tests -v` from the workspace root with the challenge checkout present. The starter's original tests can also be run from `ai-financial-twin-lauzhack-2026/starter-kit` with `python3 -m unittest -v`.
+
+`tests/test_projection.py` runs without the challenge data, except for one ledger replay. That test feeds the monthly income and spending of profiles P00001–P00050 from `synthetic-transactions.csv` through the projection recurrence and requires every month to match `closing_cash_chf` in `synthetic-cash-balances.csv`. It looks for the data in `ai-financial-twin-lauzhack-2026-main/Data` or `ai-financial-twin-lauzhack-2026/Data` inside the repository, or in `../ai-financial-twin-lauzhack-2026-main/Data`, and is skipped when none exists.
+
+## Projection engine (user-entered profile)
+
+`financial_twin/projection.py` projects the user's own starting numbers rather than a dataset profile. The projection starts in the month of the request (month 0), and point *k* of a timeline is the state after *k* monthly transitions. The paths are conditional projections under stated assumptions, not forecasts.
+
+### Inputs
+
+Only four profile fields are required. Every other value is filled in when missing, and every resolved value carries `source: user | dataset | assumption` so the interface can show where each number came from.
+
+| Field | Default when missing | Source |
+| --- | --- | --- |
+| `age`, `cash_chf`, `monthly_net_income_chf`, `monthly_rent_chf` | Required | user |
+| `employment_status` | `employed`; selects the dataset defaults below | assumption |
+| `household_type` | `single`; context only, not used in calculations | assumption |
+| `other_fixed_costs_chf` (insurance, utilities, transport, telecom) | Median by employment status, about CHF 710 | dataset |
+| `discretionary_chf` (groceries, restaurants, retail, leisure, pharmacy, travel) | Median by employment status, CHF 629 for students to CHF 769 | dataset |
+| `irregular_costs_chf` | Mean monthly unexpected expenses, about CHF 66 | dataset |
+| `bonus_share_of_income` | Mean bonus share, 2.8% for employed and self-employed, 0 otherwise | dataset |
+| `investments_chf`, `investment_annual_return` | 0 | assumption |
+| `retirement_age` | 65 (Swiss AHV reference age) | assumption |
+| `pension_share_of_income` | 0.6 of the last income | assumption |
+| `debts[]` | `{name, principal_chf, annual_interest_rate, monthly_payment_chf}` | user |
+| `goals[]` | `{name, target_chf, in_months or date, priority: high, medium or low}` | user |
+
+The dataset defaults live in `financial_twin/defaults.json`, so the app never reads the CSVs at runtime. Regenerate the file with `python scripts/build_defaults.py path/to/Data` after unzipping `synthetic-transactions.zip`.
+
+### Decisions
+
+A scenario is a named list of events `{"type", "in_months" or "date": "YYYY-MM", "params"}`. Events are applied in date order and can be combined freely. Parameters left out take these defaults:
+
+| Type | Effect | Parameters and defaults |
+| --- | --- | --- |
+| `education` | Adds tuition/12 to fixed costs and scales income while studying, then sets the graduate income | `duration_months` 24 and `annual_tuition_chf` 4,800 (dataset); `income_share_while_studying` 1.0 for students, 0.2 otherwise; `income_after_chf` the larger of income +15% and CHF 4,800 |
+| `career_change` | Scales income during a gap, then applies a percentage change or a new absolute income | `gap_months` 3; `income_share_during_gap` 0; `income_change_pct` 0.15; `new_income_chf` none; `one_off_cost_chf` 0 |
+| `relocation` | One-off moving cost, then scales rent, income and other living costs | `moving_cost_chf` 6,500 (starter kit); `rent_change_pct`, `income_change_pct` and `cost_of_living_change_pct` 0 |
+| `housing_change` | Sets the new rent and moves the rent deposit from cash into a locked asset, so liquidity falls but net worth does not | `new_rent_chf` current rent; `deposit_months` 3 (the legal maximum); `moving_cost_chf` 1,500. The refund of an old deposit is not modelled. |
+| `unexpected_expense` | One-off cost | `amount_chf` CHF 958 (dataset median) |
+| `custom` | Adds monthly income and expense changes for a period, plus a one-off cost | All 0; `duration_months` 0 means permanent |
+
+Retirement is not a decision. When `age` reaches `retirement_age` within the horizon, income switches to `pension_share_of_income` × the last income in every path, including the baseline.
+
+### Calculation
+
+Each month *t*, with `E = rent + other fixed + discretionary + irregular` and income including the monthly bonus share before retirement:
+
+```text
+C(t+1) = C(t) + I(t) − E(t) − K(t) − debt payments(t) − deposits(t)
+net worth = cash + investments + deposits − debt
+```
+
+Debt accrues interest at `annual_interest_rate / 12` and is reduced by its monthly payment. Investments grow at `(1 + annual_return) ** (1/12) − 1`. The monthly low point is the cash left after one-off costs and deposits but before income.
+
+### Outputs
+
+`POST /api/project` takes `{"profile", "scenarios": {name: [events]}, "horizon_years", "start"}`. `horizon_years` defaults to 10 (maximum 50), `start` defaults to the current month, and there can be up to five scenarios with up to ten events each. The response contains:
+
+- `paths`: a `Baseline` without decisions plus each named scenario. Each has a monthly `timeline` (income, expenses, one-off costs, deposits, debt flows, cash, low point, investments, debt, net worth, runway and event labels) and `metrics`: closing cash and net worth, minimum cash and its month, first negative month, months in shortfall, average net cash flow, savings rate, closing runway and goal results. Goals share cash in priority order, so a met goal reduces the cash available for later ones.
+- `band`: pessimistic and optimistic cash and net-worth lines. They move dataset defaults and assumptions by ±15% in the unfavourable or favourable direction; values the user entered stay fixed.
+- `comparisons`: for each scenario against the baseline, the cash and net-worth difference at the end, the largest cash gap and its month, and the break-even month after which net worth stays at or above the baseline (`null` if not reached within the horizon).
+- `assumptions`: every value not entered by the user, with its source and note.
+
+Example for Alexia (age 20, CHF 8,000 cash, CHF 1,200 income, CHF 900 rent, student) with a master's degree starting in September 2027 and a ten-year horizon from November 2026: the baseline ends at about CHF −125,000 because she spends about CHF 1,100 more than she earns each month. The master's path falls up to CHF 9,600 behind the baseline while she studies, catches up three months after graduation, and ends at about CHF 175,000.
+
+```python
+from financial_twin.projection import project
+
+result = project(
+    {"age": 20, "cash_chf": 8000, "monthly_net_income_chf": 1200,
+     "monthly_rent_chf": 900, "employment_status": "student"},
+    {"Master's": [{"type": "education", "date": "2027-09"}]},
+    horizon_years=10, start="2026-11",
+)
+print(result["comparisons"]["Master's"]["break_even_date"])
+```
