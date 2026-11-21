@@ -332,8 +332,8 @@ def run_branch(data, api_key):
         raise ValueError("Invalid branch variables.")
     month = parent["month"]
     scenario = deepcopy(parent["scenario"])
-    active_phase = next((phase for phase in scenario["phases"] if phase["start_month"] <= month
-                         and (phase["end_month"] is None or month < phase["end_month"])), None)
+    active_phase = next((phase for phase in scenario["phases"] if (phase["start_month"] < month or month == 0 and phase["start_month"] == 0)
+                         and (phase["end_month"] is None or month <= phase["end_month"])), None)
     if active_phase is None:
         raise ValueError("No phase covers the selected node.")
     prompt = ("Translate the proposed financial event into changes applied immediately at the selected node. "
@@ -367,18 +367,22 @@ def apply_branch_change(parent, event, months, variables, change):
     phases = []
     for phase in scenario["phases"]:
         end = phase["end_month"]
-        if end is not None and end <= month:
+        if end is not None and end < month:
             phases.append(deepcopy(phase))
             continue
+        if phase["start_month"] >= month and month != 0:
+            break
         if phase["start_month"] < month:
             previous = deepcopy(phase)
             previous["end_month"] = month
             phases.append(previous)
         revised = deepcopy(phase)
-        revised["start_month"] = max(month, phase["start_month"])
+        revised["start_month"] = month
+        revised["end_month"] = None
         revised["monthly_income_chf"] = max(0, phase["monthly_income_chf"] + change["monthly_income_delta_chf"])
         revised["monthly_expenses_chf"] = max(0, phase["monthly_expenses_chf"] + change["monthly_expenses_delta_chf"])
         phases.append(revised)
+        break
     preferences = {}
     inflation = scenario["annual_inflation"]
     for variable_id, value in variables.items():
@@ -402,7 +406,7 @@ def apply_branch_change(parent, event, months, variables, change):
         updated_parent["state"]["assets"].append({"id": "event-asset-" + branch_id, "type": "other", "value_chf": change["new_asset_chf"], "annual_return": 0, "annual_volatility": 0})
     if change["new_debt_chf"]:
         updated_parent["state"]["debts"].append({"id": "event-debt-" + branch_id, "principal_chf": change["new_debt_chf"], "annual_interest_rate": change["new_debt_annual_interest_rate"], "monthly_payment_chf": change["new_debt_monthly_payment_chf"]})
-    costs = deepcopy(scenario["one_off_costs"])
+    costs = deepcopy([cost for cost in scenario["one_off_costs"] if cost["month"] < month])
     if change["one_off_cost_chf"]:
         costs.append({"month": month, "description": event.strip(), "amount_chf": change["one_off_cost_chf"]})
     nodes = simulate(updated_parent, months, preferences=preferences, branch_id=branch_id,

@@ -202,6 +202,34 @@ class WebFlowTests(unittest.TestCase):
         self.assertEqual(first[0]["event_narrative"], "Market crash")
         self.assertNotIn("narrative", first[0])
 
+    def test_branch_excludes_events_after_fork(self):
+        scenario = {
+            "start_date": "2025-01-01", "opening_cash_chf": 10000,
+            "phases": [
+                {"name": "B", "start_month": 0, "end_month": 3,
+                 "monthly_income_chf": 4000, "monthly_expenses_chf": 2000},
+                {"name": "C", "start_month": 3, "end_month": None,
+                 "monthly_income_chf": 6000, "monthly_expenses_chf": 2000},
+            ],
+            "one_off_costs": [{"description": "C cost", "month": 3, "amount_chf": 1000}],
+            "assets": [], "debts": [],
+        }
+        original = simulate(create_root(scenario), 5)
+        change = {"monthly_income_delta_chf": 500, "monthly_expenses_delta_chf": 0,
+                  "one_off_cost_chf": 0, "investment_multiplier": 1, "new_asset_chf": 0,
+                  "new_debt_chf": 0, "new_debt_annual_interest_rate": 0,
+                  "new_debt_monthly_payment_chf": 0}
+        with patch("financial_twin.server.gemini_json", return_value=change):
+            branch = run_branch({"parent": original[1], "event": "D", "months": 3}, "key")["nodes"]
+            boundary_branch = run_branch({"parent": original[2], "event": "D", "months": 2}, "key")["nodes"]
+        self.assertEqual(branch[0]["event_summary"], "D")
+        self.assertEqual(original[3]["event_summary"], "C; C cost")
+        self.assertEqual(branch[1]["event_summary"], "Monthly update")
+        self.assertEqual(branch[1]["state"]["cash_flow"]["income_chf"], 4500)
+        self.assertEqual(branch[1]["state"]["cash_flow"]["one_off_costs_chf"], 0)
+        self.assertEqual(boundary_branch[0]["state"]["cash_flow"]["income_chf"], 4500)
+        self.assertEqual(boundary_branch[0]["state"]["cash_flow"]["one_off_costs_chf"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()
