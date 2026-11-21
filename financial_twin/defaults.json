@@ -1,0 +1,75 @@
+{
+  "source": "LauzHack 2026 synthetic data: 1,200 profiles, 24-month transaction ledger",
+  "data_note": "Spending in the synthetic data is nearly independent of income and household; values are dataset medians (costs) and means (irregular costs, bonus share).",
+  "by_employment_status": {
+    "all": {
+      "profiles": 1200,
+      "other_fixed_costs_chf": 709.53,
+      "discretionary_chf": 744.5,
+      "irregular_costs_chf": 65.96,
+      "bonus_share_of_income": 0.0184
+    },
+    "employed": {
+      "profiles": 682,
+      "other_fixed_costs_chf": 710.0,
+      "discretionary_chf": 743.78,
+      "irregular_costs_chf": 63.98,
+      "bonus_share_of_income": 0.0279
+    },
+    "part_time": {
+      "profiles": 120,
+      "other_fixed_costs_chf": 710.25,
+      "discretionary_chf": 768.93,
+      "irregular_costs_chf": 67.11,
+      "bonus_share_of_income": 0.0
+    },
+    "retired": {
+      "profiles": 216,
+      "other_fixed_costs_chf": 706.15,
+      "discretionary_chf": 764.86,
+      "irregular_costs_chf": 72.2,
+      "bonus_share_of_income": 0.0
+    },
+    "self_employed": {
+      "profiles": 106,
+      "other_fixed_costs_chf": 706.67,
+      "discretionary_chf": 726.39,
+      "irregular_costs_chf": 60.46,
+      "bonus_share_of_income": 0.0285
+    },
+    "student": {
+      "profiles": 39,
+      "other_fixed_costs_chf": 713.62,
+      "discretionary_chf": 628.76,
+      "irregular_costs_chf": 69.65,
+      "bonus_share_of_income": 0.0
+    },
+    "unemployed": {
+      "profiles": 37,
+      "other_fixed_costs_chf": 718.38,
+      "discretionary_chf": 743.49,
+      "irregular_costs_chf": 74.19,
+      "bonus_share_of_income": 0.0
+    }
+  },
+  "category_medians_chf": {
+    "groceries": 334.0,
+    "health_insurance": 375.11,
+    "leisure": 85.97,
+    "pharmacy": 34.49,
+    "restaurants": 108.45,
+    "retail": 119.85,
+    "telecom": 62.57,
+    "transport": 132.78,
+    "travel": 57.93,
+    "utilities": 137.33
+  },
+  "median_rent_chf": 1941.18,
+  "unexpected_event_amount_chf": 958.16,
+  "unexpected_events_per_year": 0.833,
+  "education": {
+    "study_duration_months": 24,
+    "annual_tuition_chf": 4800.0,
+    "profiles_with_assumptions": 120
+  }
+}
