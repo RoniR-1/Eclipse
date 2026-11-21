@@ -2044,38 +2044,66 @@ function renderBranchInfo(node) {
   box.append(list);
   if (plan.assumptions) box.append(el('p', { class: 'proposal-assumptions', text: plan.assumptions }));
   if (plan.warnings?.length) box.append(el('ul', { class: 'proposal-warnings' }, ...plan.warnings.map(text => el('li', { text }))));
+  const sources = sourceLinks(plan.source_urls);
+  if (sources) box.append(sources);
   return box;
 }
 
-function showComposer(section, node, text = '') {
+function showComposer(section, node, text = '', presetId = null) {
   section.replaceChildren();
+  let selected = state.presets.some(preset => preset.id === presetId) ? presetId : null;
   const error = el('p', { class: 'form-error', role: 'alert' });
-  const chips = el('div', { class: 'preset-chips' });
-  const textarea = el('textarea', { id: 'branch-event', maxlength: 2000, placeholder: 'For example: I take a six-month sabbatical, or my parents give me CHF 20,000' });
+  const chips = el('div', { class: 'preset-chips', role: 'group', 'aria-label': 'Event type' });
+  const defaultHint = 'For example: I take a six-month sabbatical, or my parents give me CHF 20,000';
+  const textarea = el('textarea', { id: 'branch-event', maxlength: 2000 });
   textarea.value = text;
-  const submit = actionButton('Break it down', 'submit');
-  const run = async body => {
+  const label = el('label', { for: 'branch-event' });
+  const submit = actionButton('Get the numbers', 'submit');
+  const refresh = () => {
+    const kind = state.presets.find(preset => preset.id === selected);
+    for (const chip of chips.children) chip.setAttribute('aria-pressed', String(chip.dataset.id === selected));
+    label.textContent = kind ? `Details for “${kind.label}” (optional)` : 'Describe the event';
+    textarea.placeholder = kind ? kind.example : defaultHint;
+  };
+  for (const preset of state.presets) {
+    const chip = el('button', { type: 'button', class: 'chip', 'data-id': preset.id, 'aria-pressed': 'false', text: preset.label });
+    chip.addEventListener('click', () => { selected = selected === preset.id ? null : preset.id; refresh(); textarea.focus(); });
+    chips.append(chip);
+  }
+  refresh();
+  const form = el('form', {}, label, textarea, error, submit);
+  form.addEventListener('submit', async event => {
+    event.preventDefault();
+    const details = textarea.value.trim();
+    if (!selected && !details) { error.textContent = 'Choose an event type or describe the event.'; return; }
     error.textContent = '';
     const buttons = [...section.querySelectorAll('button')];
     buttons.forEach(button => { button.disabled = true; });
-    if (body.event) setButtonLoading(submit, true, 'Reading your event…', 'Break it down');
+    setButtonLoading(submit, true, 'Researching the numbers…', 'Get the numbers');
     const revision = state.revision;
     try {
-      const result = await request('/api/branch/propose', { parent: node, ...body, api_key: state.apiKey || undefined });
-      if (revision === state.revision && state.selectedId === node.id) renderReview(section, node, result.proposal, textarea.value);
+      const result = await request('/api/branch/propose', { parent: node, preset: selected || undefined, event: details || undefined, api_key: state.apiKey || undefined });
+      if (revision === state.revision && state.selectedId === node.id) renderReview(section, node, result.proposal, details, selected);
     } catch (problem) {
       error.textContent = problem.message;
     } finally {
       buttons.forEach(button => { button.disabled = false; });
-      setButtonLoading(submit, false, 'Reading your event…', 'Break it down');
+      setButtonLoading(submit, false, 'Researching the numbers…', 'Get the numbers');
     }
-  };
-  for (const preset of state.presets) chips.append(el('button', { type: 'button', class: 'chip', text: preset.label, onclick: () => run({ preset: preset.id }) }));
-  const form = el('form', { onsubmit: event => { event.preventDefault(); if (textarea.value.trim()) run({ event: textarea.value.trim() }); } },
-    el('label', { for: 'branch-event', text: 'Or describe it in your own words' }), textarea, error, submit);
+  });
   section.append(el('h3', { text: 'What if something changed?' }),
-    el('p', { class: 'composer-hint', text: 'Pick a common event or describe your own. You review every number before the branch is created.' }),
+    el('p', { class: 'composer-hint', text: 'Pick an event type, describe your own, or both. The AI sets the numbers; you review every one before the branch is created.' }),
     state.presets.length ? chips : null, form);
+}
+
+function sourceLinks(urls) {
+  if (!urls?.length) return null;
+  return el('div', { class: 'proposal-sources' }, el('span', { text: 'Sources' }),
+    el('ul', {}, ...urls.map(url => {
+      let host = url;
+      try { host = new URL(url).hostname.replace(/^www\./, ''); } catch { /* keep the raw URL */ }
+      return el('li', {}, el('a', { href: url, target: '_blank', rel: 'noopener noreferrer', text: host }));
+    })));
 }
 
 function blockEditor(key, item, onRemove) {
@@ -2155,7 +2183,7 @@ function showNewBranch(node, nodes, revision) {
   }
 }
 
-function renderReview(section, node, proposal, text) {
+function renderReview(section, node, proposal, text, presetId = null) {
   const plan = structuredClone(proposal);
   section.replaceChildren();
   const title = el('input', { type: 'text', id: 'branch-title', maxlength: 60 });
@@ -2165,6 +2193,8 @@ function renderReview(section, node, proposal, text) {
   if (plan.summary) section.append(el('p', { class: 'proposal-summary', text: plan.summary }));
   if (plan.assumptions) section.append(el('p', { class: 'proposal-assumptions', text: plan.assumptions }));
   if (plan.warnings?.length) section.append(el('ul', { class: 'proposal-warnings' }, ...plan.warnings.map(item => el('li', { text: item }))));
+  const sources = sourceLinks(plan.source_urls);
+  if (sources) section.append(sources);
   const lists = { changes: el('div'), one_offs: el('div'), assets: el('div') };
   const redraw = () => {
     for (const key of Object.keys(lists)) lists[key].replaceChildren(...plan[key].map((item, index) => blockEditor(key, item, () => { plan[key].splice(index, 1); redraw(); })));
@@ -2197,7 +2227,7 @@ function renderReview(section, node, proposal, text) {
     el('h4', { text: 'Purchases' }), lists.assets, addButton('assets', 'Add purchase'),
     el('h4', { text: 'Investments' }), el('label', { class: 'block-field', for: 'branch-shock' }, el('span', { text: 'Change in investment value (%)' }), shock),
     options.element, error, create,
-    el('button', { type: 'button', class: 'back-button', text: '← Choose a different event', onclick: () => showComposer(section, node, text) }));
+    el('button', { type: 'button', class: 'back-button', text: '← Choose a different event', onclick: () => showComposer(section, node, text, presetId) }));
 }
 
 function syncVerticalSelection() {

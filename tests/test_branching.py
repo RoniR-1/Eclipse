@@ -3,7 +3,7 @@ import unittest
 from unittest.mock import patch
 
 from financial_twin import create_root, simulate
-from financial_twin.branching import PRESETS, apply_proposal, normalize_proposal, preset_proposal
+from financial_twin.branching import PRESETS, SAMPLES, apply_proposal, normalize_proposal, sample_proposal
 from financial_twin.server import VARIABLES, apply_branch, propose_branch, random_test
 
 
@@ -79,11 +79,11 @@ class BranchingTests(unittest.TestCase):
         self.assertTrue(any("funding gap" in warning for warning in warnings))
         self.assertTrue(any("loan balance grows" in warning for warning in warnings))
 
-    def test_every_preset_applies_and_keeps_cash_reconciled(self):
+    def test_every_sample_applies_and_keeps_cash_reconciled(self):
         parent = parent_node(cash=150000)
-        for preset in PRESETS:
-            with self.subTest(preset=preset):
-                plan = preset_proposal(parent, preset)
+        for kind in SAMPLES:
+            with self.subTest(kind=kind):
+                plan = sample_proposal(parent, kind)
                 nodes = branch(parent, plan, 36)
                 previous = parent
                 for node in nodes:
@@ -91,9 +91,9 @@ class BranchingTests(unittest.TestCase):
                     self.assertAlmostEqual(previous["state"]["cash_chf"] + flow, node["state"]["cash_chf"], places=6)
                     previous = node
 
-    def test_property_preset_creates_no_free_equity(self):
+    def test_property_purchase_creates_no_free_equity(self):
         parent = parent_node(cash=150000, investments=0)
-        plan = preset_proposal(parent, "buy_property")
+        plan = sample_proposal(parent, "buy_property")
         home = plan["assets"][0]
         self.assertEqual(home["price_chf"], home["loan_chf"] + home["down_payment_chf"])
         first = branch(parent, plan, 1)[0]
@@ -116,22 +116,38 @@ class BranchingTests(unittest.TestCase):
             with self.subTest(plan=plan), self.assertRaises(ValueError):
                 normalize_proposal(plan)
 
-    def test_propose_uses_ai_only_for_text_and_apply_never(self):
+    def test_presets_and_text_are_filled_by_the_ai_and_apply_never_calls_it(self):
         parent = parent_node()
-        ai = proposal(title="Sabbatical", summary="Six months off.",
-                      changes=[change("income", -4000, 0, 6)])
+        ai = proposal(title="Master's at ETH", summary="Two years of study.",
+                      changes=[change("expenses", 120, 0, 24), change("income", -3200, 0, 24)])
+        ai["source_urls"] = ["https://ethz.ch/fees", "not a url", "https://ethz.ch/fees"]
         with patch("financial_twin.server.gemini_json", return_value=ai) as gemini:
-            result = propose_branch({"parent": parent, "event": "I take six months off"}, "key")
-        gemini.assert_called_once()
+            result = propose_branch({"parent": parent, "preset": "education", "event": "Master's at ETH Zurich"}, "key")
+        prompt = gemini.call_args.args[0]
+        self.assertTrue(gemini.call_args.kwargs.get("web_search"))
+        self.assertIn(PRESETS["education"]["guidance"], prompt)
+        self.assertIn("Master's at ETH Zurich", prompt)
         self.assertEqual(result["origin"], "ai")
-        self.assertEqual(result["proposal"]["changes"][0]["duration_months"], 6)
+        self.assertEqual(result["proposal"]["source_urls"], ["https://ethz.ch/fees"])
+        with patch("financial_twin.server.gemini_json", return_value=ai) as gemini:
+            propose_branch({"parent": parent, "preset": "market_shock"}, "key")
+        self.assertIn("No details given", gemini.call_args.args[0])
         with patch("financial_twin.server.gemini_json") as gemini:
-            preset = propose_branch({"parent": parent, "preset": "market_shock"}, "key")
-            applied = apply_branch({"parent": parent, "event": "Sabbatical", "months": 12,
-                                    "proposal": result["proposal"]})
+            applied = apply_branch({"parent": parent, "event": "Study", "months": 30, "proposal": result["proposal"]})
         gemini.assert_not_called()
-        self.assertEqual(preset["proposal"]["investment_multiplier"], 0.7)
-        self.assertEqual(applied["nodes"][6]["state"]["cash_flow"]["income_chf"], 4000)
+        self.assertEqual(applied["nodes"][24]["state"]["cash_flow"]["income_chf"], 4000)
+
+    def test_falls_back_without_web_search_when_search_fails(self):
+        ai = proposal(title="Repair", one_offs=[{"label": "Repair", "amount_chf": 900, "offset_months": 0, "source": "ai_estimate"}])
+        with patch("financial_twin.server.gemini_json", side_effect=[ValueError("search rejected"), ai]) as gemini:
+            result = propose_branch({"parent": parent_node(), "preset": "unexpected_expense"}, "key")
+        self.assertEqual([call.kwargs.get("web_search", False) for call in gemini.call_args_list], [True, False])
+        self.assertEqual(result["proposal"]["one_offs"][0]["amount_chf"], 900)
+
+    def test_propose_needs_a_known_type_or_a_description(self):
+        for body in ({}, {"event": "   "}, {"preset": "lottery"}):
+            with self.subTest(body=body), self.assertRaises(ValueError):
+                propose_branch({"parent": parent_node(), **body}, "key")
 
     def test_invalid_ai_output_gives_a_readable_error(self):
         with patch("financial_twin.server.gemini_json", return_value={"changes": "nope"}):

@@ -53,7 +53,7 @@ The model applies these rules once per month, in this order.
 
 | Quantity | Calculation and interpretation |
 | --- | --- |
-| Living costs | Base monthly expenses × opening price index. The index starts at 1 and grows by `(1 + annual_inflation) ** (1/12)` per month. Income and dated one-offs use explicit nominal CHF assumptions. |
+| Income and living costs | Base monthly income and base monthly expenses × the price index. The index starts at 1 and grows by `(1 + annual_inflation) ** (1/12)` per month, so phase amounts are in today's money and wages keep pace with prices. Dated one-off costs and loan payments are nominal CHF amounts and are not indexed. |
 | Debt | Interest = opening principal × nominal annual loan rate / 12. Payment is capped at principal plus interest. The remaining amount becomes next month's principal. |
 | Asset growth | Each opening holding earns `(1 + annual_return) ** (1/12) - 1`. New contributions start earning returns the following month. |
 | Operating cash flow | Net income − living costs − dated costs − debt payments. |
@@ -98,7 +98,7 @@ For a CSV-backed opening state, use `load_synthetic_profile(data_dir, profile_id
 
 ## Branching from a milestone
 
-Selecting a milestone opens **What if something changed?**. A user either picks a preset (no AI) or describes an event in their own words. The event is first turned into editable building blocks, shown in a review card, and only simulated after the user confirms.
+Selecting a milestone opens **What if something changed?**. A user picks an event type, describes the event in their own words, or both. The AI turns the request into editable building blocks and sets every number; they are shown in a review card and only simulated after the user confirms.
 
 | Block | Meaning |
 | --- | --- |
@@ -109,16 +109,16 @@ Selecting a milestone opens **What if something changed?**. A user either picks 
 
 Every block carries a source (`user`, `dataset`, `assumption` or `ai_estimate`), and editing a value marks it `user`. The server returns warnings when the down payment was corrected, a loan payment is below its interest, or upfront costs exceed the available cash.
 
-The presets in `financial_twin/branching.py` are Master's degree, Career change, Relocate, New home, Unexpected expense, Have a child, Buy property, Market shock and Go part-time. Tuition, study length, the unexpected-expense amount and the median rent come from `defaults.json`; the other values are labelled assumptions.
+The event types in `financial_twin/branching.py` (Study, Career change, Relocate, New home, Unexpected expense, Have a child, Buy property, Market shock, Go part-time) carry no numbers. Each one gives the AI guidance on what to model, for example tuition for the study period, reduced income while studying and the graduate salary afterwards, plus an example of useful details such as the programme and country. The AI first asks for web search, so it can look up current figures such as tuition or local rents, and returns the pages it used as `source_urls`; the review card links them. If the provider rejects search, the request is repeated without it. The prompt includes the dataset reference values (study length, tuition, unexpected-expense amount, median rent), which the AI marks with source `dataset` when it uses them.
 
 | Endpoint | Purpose |
 | --- | --- |
-| `GET /api/branch/presets` | Preset ids and labels |
-| `POST /api/branch/propose` | `{parent, preset}` or `{parent, event}` → `{proposal, origin}`. Only the text variant calls the AI. |
+| `GET /api/branch/presets` | Event types: id, label and an example of useful details |
+| `POST /api/branch/propose` | `{parent, preset?, event?}` with at least one of them → `{proposal, origin}`. Always calls the AI. |
 | `POST /api/branch/apply` | `{parent, event, months, variables, proposal}` → branch nodes. Deterministic; the first node stores the applied proposal as `branch_proposal`. |
 | `POST /api/branch` | One step (propose and apply without review), kept for compatibility |
 
-`/api/branch/apply` splits the engine's phases at every block boundary, so temporary changes end on time and their start and end appear as milestones. The random test scenario builds its branches from the presets. `tests/test_branching.py` checks durations, purchase accounting, money received, warnings, every preset and the AI and no-AI paths.
+`/api/branch/apply` splits the engine's phases at every block boundary, so temporary changes end on time and their start and end appear as milestones. The random test scenario, which must work without the AI, builds its branches from fixed sample events (`SAMPLES`); these are not offered to users. `tests/test_branching.py` checks durations, purchase accounting, money received, warnings, every preset and the AI and no-AI paths.
 
 A branch continues the situation at the selected node and does not inherit phases or one-off costs that the original path planned after that node, so each branch explores one event at a time.
 

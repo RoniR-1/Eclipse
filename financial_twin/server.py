@@ -14,8 +14,8 @@ from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
 from financial_twin import create_root, simulate
-from financial_twin.branching import (PRESETS, PROPOSAL_SCHEMA, apply_proposal, normalize_proposal,
-                                      preset_proposal, proposal_prompt)
+from financial_twin.branching import (PRESETS, PROPOSAL_SCHEMA, SAMPLES, apply_proposal, normalize_proposal,
+                                      proposal_prompt, sample_proposal)
 
 ROOT = Path(__file__).resolve().parent.parent
 WEB = ROOT / "web"
@@ -31,7 +31,7 @@ VARIABLES = {
     "safety_priority": ("Liquidity priority", "Higher priority keeps more money in cash instead of investing it.", 0, 1, 0.05, "%"),
     "emergency_months": ("Emergency reserve", "Months of living expenses used to set your cash reserve target.", 0, 24, 1, "months"),
     "investment_annual_return": ("Annual investment return", "Assumed yearly return on new investment contributions.", -0.2, 0.3, 0.01, "%"),
-    "annual_inflation": ("Annual inflation", "Annual growth in recurring living expenses.", 0, 0.15, 0.005, "%"),
+    "annual_inflation": ("Annual inflation", "Annual price growth. Monthly income and living costs both rise with it.", 0, 0.15, 0.005, "%"),
 }
 
 NUMBER = {"type": "number"}
@@ -307,15 +307,26 @@ def _branch_parent(data):
 
 
 def propose_branch(data, api_key):
-    """Turn a preset or a free-text event into editable building blocks, without simulating."""
+    """Turn an event kind and/or a description into editable building blocks, without simulating.
+
+    The AI sets every number. It first tries web search for current figures (returned as source
+    links) and falls back to a plain answer if the provider rejects search.
+    """
     parent = _branch_parent(data)
     preset = data.get("preset")
-    if preset is not None:
-        return {"proposal": preset_proposal(parent, preset), "origin": "preset"}
-    event = data.get("event")
-    if not isinstance(event, str) or not event.strip() or len(event) > 4000:
+    if preset is not None and preset not in PRESETS:
+        raise ValueError(f"Unknown event type; choose one of {list(PRESETS)}")
+    event = data.get("event") or ""
+    if not isinstance(event, str) or len(event) > 4000:
         raise ValueError("Describe the event in up to 4,000 characters.")
-    raw = gemini_json(proposal_prompt(event.strip(), parent), PROPOSAL_SCHEMA, api_key)
+    event = event.strip()
+    if not preset and not event:
+        raise ValueError("Choose an event type or describe the event.")
+    prompt = proposal_prompt(event, parent, preset)
+    try:
+        raw = gemini_json(prompt, PROPOSAL_SCHEMA, api_key, web_search=True)
+    except ValueError:
+        raw = gemini_json(prompt, PROPOSAL_SCHEMA, api_key)
     try:
         proposal = normalize_proposal(raw, parent)
     except ValueError as exc:
@@ -361,20 +372,20 @@ def random_test(data, rng=None):
     scenario = root["scenario"]
     main = [root, *simulate(root, years * 12)]
     nodes = list(main)
-    presets = rng.sample(list(PRESETS), 4)
+    samples = rng.sample(list(SAMPLES), 4)
     branch_years = rng.sample(range(1, years), min(3, max(0, years - 1)))
     branches = []
 
-    def branch_from(parent, preset, months):
-        proposal = preset_proposal(parent, preset)
+    def branch_from(parent, kind, months):
+        proposal = sample_proposal(parent, kind)
         return apply_proposal(parent, proposal["title"], months, {}, proposal, VARIABLES)["nodes"]
 
-    for preset, year in zip(presets, sorted(branch_years)):
-        branch = branch_from(main[year * 12], preset, (years - year) * 12)
+    for kind, year in zip(samples, sorted(branch_years)):
+        branch = branch_from(main[year * 12], kind, (years - year) * 12)
         branches.append(branch)
         nodes.extend(branch)
     if branches and len(branches[0]) > 24:
-        nodes.extend(branch_from(branches[0][23], presets[3], len(branches[0]) - 24))
+        nodes.extend(branch_from(branches[0][23], samples[3], len(branches[0]) - 24))
     variables = []
     for variable_id in ["opening_cash_chf", "monthly_income_chf", "monthly_expenses_chf", "savings_rate", "risk_tolerance"]:
         label, description, minimum, maximum, step, unit = VARIABLES[variable_id]
@@ -433,7 +444,8 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_GET(self):
         if self.path == "/api/branch/presets":
-            self.send_json(200, {"presets": [{"id": key, "label": label} for key, (label, _) in PRESETS.items()]})
+            self.send_json(200, {"presets": [{"id": key, "label": kind["label"], "example": kind["example"]}
+                                             for key, kind in PRESETS.items()]})
         elif self.path == "/api/config":
             self.send_json(200, {"has_api_key": bool((os.environ.get("AI_API_KEY") or os.environ.get("GEMINI_API_KEY")))})
         elif self.path == "/api/events/presets":
