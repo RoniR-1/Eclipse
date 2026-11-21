@@ -386,3 +386,22 @@ describe('display currency', () => {
     app.setCurrency('CHF');
   });
 });
+
+describe('theme switching', () => {
+  test('toggling light mode updates state and keeps unified branch palette colors', () => {
+    assert.equal(app.state.theme, 'dark');
+    const darkPalette = app.getBranchPalette();
+    app.setTheme('light');
+    assert.equal(app.state.theme, 'light');
+    const lightPalette = app.getBranchPalette();
+    assert.notEqual(lightPalette[0], darkPalette[0]);
+    const index = app.buildTreeIndex();
+    const leaves = app.getLeafPaths(index);
+    assert.equal(leaves[0].color, lightPalette[0]);
+    for (const leaf of leaves) {
+      assert.equal(leaf.color, index.branchMeta.get(leaf.id).color);
+    }
+    app.setTheme('dark');
+    assert.equal(app.state.theme, 'dark');
+  });
+});
