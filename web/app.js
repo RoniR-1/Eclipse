@@ -1334,7 +1334,7 @@ function fillRangeSection(section, node) {
   if (drivers.length) {
     section.append(el('h4', { text: 'What matters most (end of this path)' }),
       el('ul', { class: 'range-drivers' }, ...drivers.map(item => el('li', {}, el('span', { text: item.label }),
-        el('strong', { text: `${moneySigned(item.low)} / ${moneySigned(item.high)}` })))));
+        el('strong', { text: `${moneySigned(Math.min(item.low, item.high))} / ${moneySigned(Math.max(item.low, item.high))}` })))));
   }
   section.append(el('p', { class: 'range-note', text: range.note }));
 }
@@ -1470,8 +1470,9 @@ function renderVerticalTimeline(milestones, activeMeta, index, layout) {
     const span = rangeOf(range, node)?.net_worth;
     if (span && span[1] - span[0] >= 1) {
       const centre = node.state.net_worth_chf;
-      const pct = value => Math.abs(centre) >= 1000 ? ` (${value >= centre ? '+' : '−'}${Math.abs((value - centre) / centre * 100).toFixed(0)}%)` : '';
-      content.append(el('div', { class: 'vnode-range', text: `Range ${compactChf(span[0])} – ${compactChf(span[1])}${pct(span[0])}${pct(span[1])}` }));
+      const pct = value => `${value >= centre ? '+' : '−'}${Math.abs((value - centre) / centre * 100).toFixed(0)}%`;
+      const share = Math.abs(centre) >= 1000 ? ` (${pct(span[0])} / ${pct(span[1])})` : '';
+      content.append(el('div', { class: 'vnode-range', text: `Range ${compactChf(span[0])} – ${compactChf(span[1])}${share}` }));
     }
     content.append(prose, figures);
 

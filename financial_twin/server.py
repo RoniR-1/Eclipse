@@ -1104,6 +1104,14 @@ class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(WEB), **kwargs)
 
+    def end_headers(self):
+        # Pages, scripts and styles must not be served from a stale browser cache after a code update:
+        # "no-cache" makes the browser revalidate every time (cheap, via Last-Modified). API responses set
+        # their own "no-store".
+        if not self.path.startswith("/api/"):
+            self.send_header("Cache-Control", "no-cache")
+        super().end_headers()
+
     def send_json(self, status, data):
         body = json.dumps(data, allow_nan=False).encode()
         self._response_started = True
