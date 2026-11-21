@@ -1334,6 +1334,40 @@ body.world-mode #inspector-panel .drawer-close {
   margin: 0 0 10px;
 }
 
+.node-edit-form {
+  border-bottom: 1px solid var(--border);
+}
+
+.node-edit-form label {
+  display: block;
+  margin: 12px 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.node-edit-form input {
+  display: block;
+  width: 100%;
+  margin-top: 6px;
+  padding: 9px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--surface-elevated);
+  color: var(--text);
+  font: inherit;
+}
+
+.node-edit-form .node-edit-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.node-edit-form .node-edit-check input {
+  width: auto;
+  margin: 0;
+}
+
 .inspector-narrative {
   font-size: 13px;
   line-height: 1.65;

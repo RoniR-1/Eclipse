@@ -59,6 +59,26 @@ def _scenario(value):
     scenario["annual_inflation"] = _number(scenario.get("annual_inflation", 0), "annual_inflation", -1)
     if scenario["annual_inflation"] == -1:
         raise ValueError("annual_inflation must be greater than -1")
+    overrides = scenario.setdefault("inflation_by_year", {})
+    if not isinstance(overrides, dict):
+        raise ValueError("inflation_by_year must be an object")
+    for year, rate in overrides.items():
+        if not str(year).isdigit() or len(str(year)) != 4:
+            raise ValueError("inflation year must be a calendar year")
+        overrides[year] = _number(rate, "year inflation", -0.999999)
+    terms = scenario.setdefault("expense_terms", [])
+    if not isinstance(terms, list):
+        raise ValueError("expense_terms must be a list")
+    for term in terms:
+        _month(term["start_month"], "expense start")
+        if term.get("end_month") is not None:
+            _month(term["end_month"], "expense end")
+            if term["end_month"] <= term["start_month"]:
+                raise ValueError("expense duration must be positive")
+        term["monthly_expenses_chf"] = _number(term["monthly_expenses_chf"], "expense", 0)
+        term["phase_expenses_chf"] = _number(term["phase_expenses_chf"], "phase expense", 0)
+        if not isinstance(term.get("inflation_exempt"), bool):
+            raise ValueError("inflation_exempt must be a boolean")
     scenario["preferences"] = _preferences(scenario.get("preferences", {}))
     phases = scenario.get("phases", [])
     if not isinstance(phases, list) or not phases:
@@ -117,6 +137,44 @@ def is_investment_asset(asset):
     return asset_type in {"investment", "investment_portfolio", "portfolio", "stock", "stocks", "equity", "equities", "bond", "bonds", "fund", "funds", "etf", "etfs"}
 
 
+def _inflation_factor(scenario, start_index, end_index):
+    factor = 1.0
+    direction = 1 if end_index >= start_index else -1
+    for index in range(min(start_index, end_index), max(start_index, end_index)):
+        year = index // 12
+        rate = scenario.get("inflation_by_year", {}).get(str(year), scenario["annual_inflation"])
+        factor *= (1 + rate) ** (direction / 12)
+    return factor
+
+
+def expense_terms_at(scenario, month, price_factor=None):
+    phase = next(phase for phase in scenario["phases"] if phase["start_month"] <= month
+                 and (phase["end_month"] is None or month < phase["end_month"]))
+    current_date = date.fromisoformat(_date_at(scenario["start_date"], month))
+    start_date = date.fromisoformat(scenario["start_date"])
+    current_index = current_date.year * 12 + current_date.month - 1
+    start_index = start_date.year * 12 + start_date.month - 1
+    year_start = current_date.year * 12
+    active = [term for term in scenario.get("expense_terms", [])
+              if term["start_month"] <= month and (term["end_month"] is None or month < term["end_month"])]
+    term = max(enumerate(active), key=lambda entry: (entry[1]["start_month"], entry[0]))[1] if active else None
+    if term:
+        anchor = date.fromisoformat(_date_at(scenario["start_date"], term["start_month"]))
+        anchor_index = anchor.year * 12
+        amount = max(0, term["monthly_expenses_chf"] + phase["monthly_expenses_chf"] - term["phase_expenses_chf"])
+        exempt = term["inflation_exempt"]
+        beginning = amount if exempt else amount * _inflation_factor(scenario, anchor_index, year_start)
+        duration = None if term["end_month"] is None else term["end_month"] - month
+    else:
+        exempt = False
+        factor = _inflation_factor(scenario, start_index, current_index) if price_factor is None else price_factor
+        beginning = phase["monthly_expenses_chf"] * factor / _inflation_factor(scenario, year_start, current_index)
+        duration = None
+    amount = beginning if exempt else beginning * _inflation_factor(scenario, year_start, current_index)
+    return {"year": current_date.year, "monthly_expenses_chf": beginning, "year_inflation": scenario.get("inflation_by_year", {}).get(str(current_date.year)),
+            "inflation_exempt": exempt, "duration_months": duration, "actual_monthly_expenses_chf": amount}
+
+
 def _state(cash, assets, debts, flow, preferences, scenario, month, price_factor):
     asset_total = cash + sum(asset["value_chf"] for asset in assets)
     debt_total = sum(debt["principal_chf"] for debt in debts)
@@ -149,6 +207,7 @@ def create_root(scenario):
                     "investment_contribution_chf": 0.0, "operating_cash_flow_chf": 0.0,
                     "net_cash_flow_chf": 0.0},
                    scenario["preferences"], scenario, 0, 1.0)
+    state["active_variables"]["expense_terms"] = expense_terms_at(scenario, 0)
     state["active_variables"]["phase"] = next(
         (deepcopy(phase) for phase in scenario["phases"] if phase["start_month"] == 0), None)
     return {"id": _id(scenario), "parent_id": None, "branch_id": "root", "month": 0,
@@ -209,10 +268,11 @@ def simulate(node, months, *, preferences=None, branch_id="main", scenario_updat
         if not matching:
             raise ValueError(f"No phase covers month {month}")
         phase = matching[0]
-        # Phase amounts are in today's money: income and living costs both follow the price index,
-        # so inflation does not silently erode a salary. Dated one-offs and loan payments stay nominal.
+        # Phase income is in today's money and follows the price index like living costs, so inflation
+        # (including year-specific rates) does not silently erode a salary. One-offs and loan payments stay nominal.
         income = phase["monthly_income_chf"] * price_factor
-        expenses = phase["monthly_expenses_chf"] * price_factor
+        terms = expense_terms_at(scenario, month, price_factor)
+        expenses = terms["actual_monthly_expenses_chf"]
         costs = [item for item in scenario["one_off_costs"] if item["month"] == month]
         cost = sum(item["amount_chf"] for item in costs)
         accrued = debt_values * debt_rates / 12
@@ -243,10 +303,13 @@ def simulate(node, months, *, preferences=None, branch_id="main", scenario_updat
                 "debt_payments_chf": payments, "debt_interest_chf": interest,
                 "investment_return_chf": returns, "investment_contribution_chf": contribution,
                 "operating_cash_flow_chf": net_flow, "net_cash_flow_chf": net_flow - contribution}
-        price_factor *= (1 + scenario["annual_inflation"]) ** (1 / 12)
+        current_year = date.fromisoformat(_date_at(scenario["start_date"], month)).year
+        rate = scenario.get("inflation_by_year", {}).get(str(current_year), scenario["annual_inflation"])
+        price_factor *= (1 + rate) ** (1 / 12)
         state = _state(cash, deepcopy(assets), deepcopy(debts), flow, active_preferences, scenario,
                        month + 1, price_factor)
         state["active_variables"]["phase"] = deepcopy(phase)
+        state["active_variables"]["expense_terms"] = terms
         events = [str(item.get("description", item.get("name", "One-off cost"))) for item in costs]
         if phase["start_month"] == month:
             events.insert(0, str(phase.get("name", "Phase started")))

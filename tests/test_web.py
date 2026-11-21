@@ -6,7 +6,7 @@ from unittest.mock import patch
 from urllib.error import HTTPError, URLError
 
 from financial_twin import create_root, simulate
-from financial_twin.server import extract, node_narrative, run_branch, run_simulation, run_projection, random_test, years_value
+from financial_twin.server import apply_branch, edit_nodes, extract, node_narrative, run_branch, run_simulation, run_projection, random_test, years_value
 
 
 class WebFlowTests(unittest.TestCase):
@@ -14,6 +14,58 @@ class WebFlowTests(unittest.TestCase):
         self.cooldowns = patch.dict("financial_twin.server.MODEL_COOLDOWNS", {}, clear=True)
         self.cooldowns.start()
         self.addCleanup(self.cooldowns.stop)
+
+    def test_edit_propagates_through_fork_and_preserves_event(self):
+        scenario = {"start_date": "2025-01-01", "opening_cash_chf": 10000, "annual_inflation": 0,
+                    "phases": [{"start_month": 0, "end_month": None, "monthly_income_chf": 5000, "monthly_expenses_chf": 2000}],
+                    "one_off_costs": [], "assets": [], "debts": [], "preferences": {}}
+        root = create_root(scenario)
+        main = simulate(root, 3)
+        # The asset is financed by a 0% loan: building blocks never create an asset from nothing.
+        proposal = {"title": "New job", "summary": "", "assumptions": "", "investment_multiplier": 1,
+                    "changes": [{"kind": "income", "label": "New job", "amount_chf": 1000, "start_offset_months": 0,
+                                 "duration_months": 0, "source": "user"}],
+                    "one_offs": [{"label": "Fee", "amount_chf": 1000, "offset_months": 0, "source": "user"}],
+                    "assets": [{"label": "Car", "kind": "vehicle", "price_chf": 20000, "loan_chf": 20000,
+                                "down_payment_chf": 0, "transaction_costs_chf": 0, "annual_interest_rate": 0,
+                                "monthly_payment_chf": 0, "annual_value_change": 0, "source": "user"}]}
+        branch = apply_branch({"parent": main[0], "event": "New job", "months": 2, "proposal": proposal})["nodes"]
+        nodes = [root, *main, *branch]
+        changed = edit_nodes({"nodes": nodes, "node_id": root["id"], "edits": {"cash_chf": 12000, "monthly_income_chf": 6000}})["nodes"]
+        revised = {node["id"]: node for node in changed}
+        self.assertEqual(revised[main[-1]["id"]]["state"]["cash_chf"], 24000)
+        self.assertEqual(revised[branch[-1]["id"]]["state"]["cash_chf"], 25000)
+        self.assertEqual(revised[branch[-1]["id"]]["state"]["assets"][0]["value_chf"], 20000)
+        self.assertEqual(revised[branch[-1]["id"]]["scenario"]["opening_cash_chf"], 12000)
+
+    def test_expense_inflation_override_and_fixed_duration(self):
+        scenario = {"start_date": "2025-01-01", "opening_cash_chf": 50000, "annual_inflation": 0.12,
+                    "phases": [{"start_month": 0, "end_month": None, "monthly_income_chf": 0, "monthly_expenses_chf": 1000}],
+                    "one_off_costs": [], "assets": [], "debts": [], "preferences": {}}
+        root = create_root(scenario)
+        nodes = [root, *simulate(root, 25)]
+        edits = {"monthly_expenses_chf": 1200, "inflation_exempt": True,
+                 "duration_months": 14, "year_inflation": 0.24, "annual_inflation": 0.06}
+        changed = edit_nodes({"nodes": nodes, "node_id": root["id"], "edits": edits})["nodes"]
+        revised = {node["month"]: node for node in changed}
+        self.assertEqual(revised[0]["state"]["active_variables"]["expense_terms"]["year_inflation"], 0.24)
+        self.assertEqual(revised[1]["state"]["cash_flow"]["expenses_chf"], 1200)
+        self.assertEqual(revised[14]["state"]["cash_flow"]["expenses_chf"], 1200)
+        self.assertAlmostEqual(revised[15]["state"]["cash_flow"]["expenses_chf"],
+                               1000 * 1.24 * 1.06 ** (2 / 12))
+        self.assertEqual(revised[15]["state"]["active_variables"]["expense_terms"]["year"], 2026)
+        self.assertIsNone(revised[15]["state"]["active_variables"]["expense_terms"]["year_inflation"])
+
+    def test_year_inflation_override_applies_to_one_year(self):
+        scenario = {"start_date": "2025-01-01", "opening_cash_chf": 100000, "annual_inflation": 0.06,
+                    "phases": [{"start_month": 0, "end_month": None, "monthly_income_chf": 0, "monthly_expenses_chf": 1000}],
+                    "one_off_costs": [], "assets": [], "debts": [], "preferences": {}}
+        root = create_root(scenario)
+        nodes = [root, *simulate(root, 25)]
+        changed = edit_nodes({"nodes": nodes, "node_id": root["id"], "edits": {"year_inflation": 0.24}})["nodes"]
+        revised = {node["month"]: node for node in changed}
+        self.assertAlmostEqual(revised[13]["state"]["cash_flow"]["expenses_chf"], 1240)
+        self.assertAlmostEqual(revised[25]["state"]["cash_flow"]["expenses_chf"], 1240 * 1.06)
 
     def test_projection_resolves_description_and_preserves_user_amounts(self):
         data = {"profile": {"age": 30, "cash_chf": 10000, "monthly_net_income_chf": 5000, "monthly_rent_chf": 1500},

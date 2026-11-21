@@ -325,6 +325,10 @@ def apply_proposal(parent, event, months, variables, proposal, catalogue):
     nodes = simulate(updated, months, preferences=preferences, branch_id=branch_id,
                      scenario_updates={"phases": phases, "one_off_costs": costs, "annual_inflation": inflation})
     narrative = plan["summary"] or title
+    # Snapshot of the holdings this branch changed, so /api/edit-nodes can rebuild them when re-simulating.
+    nodes[0]["event_state"] = {"assets": deepcopy(updated["state"]["assets"]), "debts": deepcopy(updated["state"]["debts"]),
+                               "parent_assets": deepcopy(parent["state"]["assets"]),
+                               "parent_debts": deepcopy(parent["state"]["debts"])}
     nodes[0]["event_summary"] = title
     nodes[0]["branch_proposal"] = plan
     for node in nodes:
