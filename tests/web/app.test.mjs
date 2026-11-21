@@ -161,14 +161,15 @@ describe('adding an event to a path', () => {
 
   test('the recalculated points replace the old ones, and the run file records the event', () => {
     app.state.resultsView = 'tree';
-    app.state.run = { source: 'test', branches: [], next_sequence: 4 };
+    app.state.run = { source: 'test', branches: [], operations: [], next_sequence: 4 };
     const revision = app.state.revision;
     const recalculated = [{ ...app.state.nodes.get('a4'), event_summary: 'Raise' }, { ...app.state.nodes.get('a5'), state: { ...app.state.nodes.get('a5').state, cash_chf: 999 } }];
     app.showAppendedEvent(app.state.nodes.get('a3'), 'Raise', { nodes: recalculated, record: { kind: 'append', sequence: 4, node_id: 'a3' } }, revision);
     assert.equal(app.state.nodes.get('a4').event_summary, 'Raise');
     assert.equal(app.state.nodes.get('a5').state.cash_chf, 999);
     assert.equal(app.state.nodes.size, 13, 'no new branch');
-    assert.equal(app.state.run.branches.at(-1).kind, 'append');
+    assert.deepEqual(plain(app.state.run.operations.at(-1)), { type: 'append', append: { kind: 'append', sequence: 4, node_id: 'a3' } });
+    assert.equal(app.state.run.branches.length, 0, 'branches lists only branches');
     assert.equal(app.state.run.next_sequence, 5);
     assert.equal(app.state.selectedId, 'a4');
     assert.equal(app.state.activeBranchId, 'A');
@@ -198,6 +199,29 @@ describe('tree index', () => {
     const chain = index.branchMeta.get('A').chain;
     // m1 starts the Original path, m2 is a fork, a3 starts branch A, a4 is a fork, a5 is the first shortfall and the tip.
     assert.deepEqual(plain(app.getPathMilestones(chain, index).map(item => item.id)), ['root', 'm1', 'm2', 'a3', 'a4', 'a5']);
+  });
+
+  test('hiding recaps drops both 6-month and full-year recaps (including non-event fork recaps) while keeping starts, events and tips', () => {
+    // Extend main path past month 6 and month 12 to month 18 so m6 (6m) and m12 (Year 1) are pure recaps and m18 is the tip
+    let prev = 'm6';
+    for (let m = 7; m <= 18; m++) {
+      const id = `m${m}`;
+      app.state.nodes.set(id, node(id, prev, 'main', m));
+      prev = id;
+    }
+    const index = app.buildTreeIndex();
+    const mainChain = index.branchMeta.get('main').chain;
+    assert.ok(app.getPathMilestones(mainChain, index).some(n => n.id === 'm6'), 'm6 is shown by default');
+    assert.ok(app.getPathMilestones(mainChain, index).some(n => n.id === 'm12'), 'm12 (Year 1) is shown by default');
+    app.setHideRecaps(true);
+    const compactMain = app.getPathMilestones(mainChain, index).map(n => n.id);
+    // m2 and m4 are non-event fork recaps, m6 and m12 are periodic recaps — all hidden, leaving only root, m1 (branch start), and m18 (horizon end)
+    assert.deepEqual(plain(compactMain), ['root', 'm1', 'm18']);
+    const treeIds = app.getAllGraphMilestones(index).map(n => n.id);
+    assert.ok(!treeIds.includes('m6') && !treeIds.includes('m12') && !treeIds.includes('m2') && !treeIds.includes('m4'));
+    assert.ok(treeIds.includes('a3') && treeIds.includes('b5') && treeIds.includes('c5'), 'real event nodes stay visible');
+    app.setHideRecaps(false);
+    assert.ok(app.getAllGraphMilestones(index).some(n => n.id === 'm12'), 're-showing recaps brings yearly recaps back');
   });
 });
 
@@ -358,6 +382,13 @@ describe('assumption sliders with text boxes', () => {
 });
 
 describe('run file', () => {
+  test('preserves ordered edits and branches for replay', () => {
+    const operations = [{ type: 'edit', node_id: 'root', edits: { cash_chf: 12000 } },
+      { type: 'branch', branch: { sequence: 0, parent_id: 'root' } }];
+    app.state.run = { source: 'simulate', seed: null, start_date: '2026-01-01', years: 5,
+      scenario: {}, variables: {}, branches: [operations[1].branch], operations, environment: {} };
+    assert.deepEqual(plain(app.buildRunFile().operations), operations);
+  });
   test('records inputs, units and the values on screen, without deleted nodes', async () => {
     app.state.run = { source: 'test', seed: 42, start_date: '2026-01-01', years: 5, scenario: null, variables: {},
                       branches: [{ sequence: 4 }], next_sequence: 5, environment: { python: '3', numpy: '2' } };
@@ -372,6 +403,74 @@ describe('run file', () => {
     assert.deepEqual(plain(a5), { id: 'a5', branch_id: 'A', month: 5, date: '2026-06-01', cash_chf: -200, net_worth_chf: -200,
                            total_assets_chf: -200, total_debt_chf: 0, net_cash_flow_chf: 2000 });
   });
+});
+
+test('editing a goal updates its amount, deadline and priority for the next simulation', () => {
+  const document = fakeDocument();
+  const { app: tuningApp } = loadApp({ document });
+  const goal = { name: 'Reserve', target_chf: 10000, target_month: 12, target_date: '2027-01-01', priority: 'medium' };
+  tuningApp.renderTuning({ summary: '', assumptions: '', scenario: { opening_cash_chf: 100, phases: [], goals: [goal] }, variables: [] });
+  const editor = document.getElementById('goal-editor');
+  const inputs = [...editor.walk()].filter(item => item.tagName === 'INPUT');
+  const priority = editor.find(item => item.tagName === 'SELECT');
+  inputs[0].value = '15000'; inputs[0].dispatch('change');
+  inputs[1].value = '24'; inputs[1].dispatch('change');
+  priority.value = 'high'; priority.dispatch('change');
+  assert.equal(goal.target_chf, 15000);
+  assert.equal(goal.target_month, 24);
+  assert.equal(goal.target_date, undefined);
+  assert.equal(goal.priority, 'high');
+});
+
+test('input sources distinguish AI interpretation from ordinary assumptions', () => {
+  assert.equal(app.inputSource({ source: 'assumption', transformation: 'model interpretation of story' }), 'ai_estimate');
+  assert.equal(app.inputSource({ source: 'assumption', transformation: 'illustrative goal assumption' }), 'assumption');
+  assert.equal(app.inputSource({ source: 'dataset' }), 'dataset');
+  assert.equal(app.inputSource({ source: 'user' }), 'user');
+});
+
+test('goal edits recalculate and display the resulting outcome', async () => {
+  const document = fakeDocument();
+  const fetch = async path => ({ ok: true, json: async () => path === '/api/simulate'
+    ? { goals: [{ name: 'Reserve', met: false, deadline_gap_chf: 500 }] } : {} });
+  const { app: tuningApp } = loadApp({ document, fetch });
+  const goal = { name: 'Reserve', target_chf: 10000, target_month: 12, priority: 'medium' };
+  tuningApp.renderTuning({ summary: '', assumptions: '', scenario: { opening_cash_chf: 100, phases: [], goals: [goal] }, variables: [] });
+  const editor = document.getElementById('goal-editor');
+  const target = [...editor.walk()].find(item => item.tagName === 'INPUT');
+  target.value = '15000';
+  target.dispatch('change');
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.ok([...editor.walk()].some(item => /not met at deadline, gap CHF\s500/.test(item.textContent || '')));
+});
+
+test('structured comparison labels its baseline and reports signed cash differences', () => {
+  const document = fakeDocument();
+  const { app: comparisonApp } = loadApp({ document });
+  const container = document.getElementById('project-result');
+  comparisonApp.renderStructuredComparison(container, { horizon_months: 60, comparison_bundle: {
+    baseline_path: 'Work', paths: { Work: { metrics: { closing_cash_chf: 100, closing_net_worth_chf: 120, min_cash_chf: 10 } },
+      Study: { metrics: { closing_cash_chf: 80, closing_net_worth_chf: 90, min_cash_chf: -5 } } }, limitations: [] } });
+  assert.match(container.children[0].textContent, /Baseline: Work/);
+  assert.match(container.children[3].textContent, /cash difference CHF\s-20/);
+});
+
+test('comparison presents dated shortfall, sustained break-even and sensitivity drivers', () => {
+  const document = fakeDocument();
+  const { app: comparisonApp } = loadApp({ document });
+  const container = document.getElementById('project-result');
+  const rows = values => values.map(([date, cash_chf, net_worth_chf]) => ({ date, cash_chf, net_worth_chf }));
+  comparisonApp.renderStructuredComparison(container, { horizon_months: 3,
+    paths: { Work: { timeline: rows([['2026-01', 100, 100], ['2026-02', 120, 120], ['2026-03', 140, 140], ['2026-04', 160, 160]]) },
+      Study: { timeline: rows([['2026-01', 100, 100], ['2026-02', 80, 80], ['2026-03', 130, 145], ['2026-04', 170, 175]]) } },
+    comparison_bundle: { baseline_path: 'Work', comparisons: { Study: { largest_cash_gap_chf: -40,
+      largest_cash_gap_date: '2026-02', break_even_date: '2026-03' } }, paths: {
+      Work: { metrics: { closing_cash_chf: 160, closing_net_worth_chf: 160, min_cash_chf: 100 } },
+      Study: { metrics: { closing_cash_chf: 170, closing_net_worth_chf: 175, min_cash_chf: 80 },
+        sensitivity_summary: { drivers: [{ label: 'Tuition', unit: 'CHF', terminal_cash_delta_chf: -15 }] } } }, limitations: [] } });
+  assert.match(container.children[4].textContent, /CHF\s-40 on 2026-02/);
+  assert.match(container.children[4].textContent, /break-even 2026-03/);
+  assert.match(container.children[6].textContent, /Tuition \(input change unavailable\) changes terminal cash by CHF\s-15/);
 });
 
 describe('custom comparison graphs', () => {
@@ -455,5 +554,24 @@ describe('display currency', () => {
     assert.equal(run.units.currency, 'CHF');
     assert.deepEqual(plain(run.display_currency), { code: 'EUR', per_chf: 1.25, date: '2026-11-20', source: EUR.source });
     app.setCurrency('CHF');
+  });
+});
+
+describe('theme switching', () => {
+  test('toggling light mode updates state and keeps unified branch palette colors', () => {
+    assert.equal(app.state.theme, 'dark');
+    const darkPalette = app.getBranchPalette();
+    app.setTheme('light');
+    assert.equal(app.state.theme, 'light');
+    const lightPalette = app.getBranchPalette();
+    assert.notEqual(lightPalette[0], darkPalette[0]);
+    const index = app.buildTreeIndex();
+    const leaves = app.getLeafPaths(index);
+    assert.equal(leaves[0].color, lightPalette[0]);
+    for (const leaf of leaves) {
+      assert.equal(leaf.color, index.branchMeta.get(leaf.id).color);
+    }
+    app.setTheme('dark');
+    assert.equal(app.state.theme, 'dark');
   });
 });

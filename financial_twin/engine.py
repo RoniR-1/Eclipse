@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from calendar import monthrange
 from copy import deepcopy
+from contextvars import ContextVar
 from datetime import date
 from functools import reduce
 from hashlib import sha256
@@ -11,6 +12,8 @@ from operator import add
 import pickle
 import numpy as np
 from .debt import advance_loan, fixed_payment
+
+LEGACY_PROVENANCE_IDS = ContextVar("legacy_provenance_ids", default=False)
 
 
 def _number(value, name, minimum=None, maximum=None):
@@ -47,6 +50,8 @@ def _lineage(scenario, original):
             required = {"value", "source", "as_of_date", "unit", "frequency", "transformation"}
             if isinstance(previous, dict) and required <= previous.keys() and previous.get("value") == value:
                 records[path] = deepcopy(previous)
+                if not LEGACY_PROVENANCE_IDS.get():
+                    records[path]["value"] = value
             else:
                 name = path.rsplit(".", 1)[-1]
                 unit = ("CHF" if name.endswith("_chf") else

@@ -62,8 +62,12 @@ def main():
     if not args.run_file:
         parser.error("give a run file to check, or --write-sample PATH")
 
-    run = load(args.run_file)
-    report = verify(run)
+    try:
+        run = load(args.run_file)
+        report = verify(run)
+    except (ValueError, KeyError, TypeError, OSError) as exc:
+        print(f"Invalid run file: {exc}", file=sys.stderr)
+        return 1
     env = report["environment"]
     print(f"Run file:     {args.run_file}")
     print(f"Source:       {run['source']}" + (f" (seed {run['seed']}, start {run['start_date']})" if run["source"] == "test" else ""))
@@ -78,6 +82,13 @@ def main():
     print("Result:       NOT REPRODUCED")
     if report["missing_nodes"]:
         print(f"  {len(report['missing_nodes'])} recorded nodes were not produced, e.g. {report['missing_nodes'][:3]}")
+    for field, label in (("missing_expected_ids", "retained nodes missing an expected row"),
+                         ("unexpected_expected_ids", "expected rows not retained"),
+                         ("duplicate_expected_ids", "duplicate expected IDs"),
+                         ("duplicate_kept_ids", "duplicate retained IDs"),
+                         ("invalid_expected_rows", "rows with missing or extra fields")):
+        if report[field]:
+            print(f"  {label}: {report[field][:5]}")
     if report["mismatches"]:
         print(f"  {len(report['mismatches'])} values differ (largest difference {report['max_abs_diff']:.6g}), e.g.:")
         for item in report["mismatches"][:5]:

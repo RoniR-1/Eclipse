@@ -1,0 +1,3 @@
+account_id,profile_id,account_type,currency,opening_balance_chf,as_of_date
+A-P00001,P00001,cash,CHF,8000,2025-01-01
+A-P00013,P00013,cash,CHF,8139.79,2025-01-01

@@ -1,18 +1,20 @@
 import csv
+import os
 from copy import deepcopy
 from functools import lru_cache
 from pathlib import Path
 
 from .projection import _frequency, _month_key, resolve_profile
 
-DATA = Path(__file__).resolve().parent.parent / "ai-financial-twin-lauzhack-2026" / "Data"
+DATA = Path(__file__).resolve().parent.parent / "fixtures" / "demo" / "Data"
 
 
 @lru_cache(maxsize=1)
 def _data():
     tables = {}
+    data_root = Path(os.environ.get("FINANCIAL_TWIN_DATA_ROOT", "").strip() or DATA.parent) / "Data"
     for name in ("profiles", "assets", "liabilities", "goals"):
-        path = DATA / f"synthetic-{name}.csv"
+        path = data_root / f"synthetic-{name}.csv"
         with path.open(newline="", encoding="utf-8") as source:
             groups = {}
             for row in csv.DictReader(source):
@@ -68,7 +70,7 @@ def synthetic_projection(profile_id, overrides, start):
     def record(value, unit, frequency, file, row, column, transformation="identity", source_date=None):
         return {"value": value, "source": "dataset", "as_of_date": source_date, "unit": unit,
                 "frequency": frequency, "transformation": transformation,
-                "file": f"ai-financial-twin-lauzhack-2026/Data/synthetic-{file}.csv",
+                "file": str(Path(os.environ.get("FINANCIAL_TWIN_DATA_ROOT", "").strip() or "fixtures/demo") / "Data" / f"synthetic-{file}.csv"),
                 "row": row, "column": column}
     for key, column in profile_columns.items():
         if key not in supplied:

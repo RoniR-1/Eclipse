@@ -4,13 +4,12 @@ Pipeline:
     raw user input ──resolve_profile──► values tagged user / dataset / assumption
     decisions      ──resolve_event────► typed events with parameters and a start month
     _build()       ──────────────────► monthly arrays (income, costs, one-offs, deposits)
-    run_arrays()   ──────────────────► C(t+1) = C(t) + I(t) − E(t) − K(t) − debt payments
+    run_arrays()   ──────────────────► C(t+1) = C(t) + I(t) − E(t) − K(t) − debt payments − deposits
     _metrics() / _compare()        ──► liquidity, goals and trade-offs vs. the baseline
 
-Month 0 is the month the projection is requested. Point k of a timeline is the
-state after k monthly transitions. Every number is either supplied by the user,
-derived from the LauzHack synthetic data (financial_twin/defaults.json), or an
-explicit assumption the user can override. Nothing here is a forecast.
+Month 0 is the resolved start month. Point k of a timeline is the
+state after k monthly transitions. Resolved records preserve supplied values,
+dataset defaults, assumptions and dated milestone references for replay.
 """
 from __future__ import annotations
 

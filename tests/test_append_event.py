@@ -166,6 +166,26 @@ class AppendEventTests(unittest.TestCase):
         finally:
             reproduce.random_test = original_random_test
 
+    def test_run_operations_replay_branches_added_events_and_edits_in_order(self):
+        t = self.t
+        added = self.append()
+        nodes = {node["id"]: node for node in everything(t)} | {node["id"]: node for node in added["nodes"]}
+        edits = {"cash_chf": 25000}
+        edited = edit_nodes({"nodes": list(nodes.values()), "node_id": t["main"][0]["id"], "edits": edits})
+        nodes |= {node["id"]: node for node in edited["nodes"]}
+        run = build_run(source="test", years=0, branches=t["records"], nodes=list(nodes.values()))
+        run["operations"] = [*({"type": "branch", "branch": record} for record in t["records"]),
+                             {"type": "append", "append": added["record"]},
+                             {"type": "edit", "node_id": t["main"][0]["id"], "edits": edits}]
+        from financial_twin import reproduce
+        original_random_test = reproduce.random_test
+        reproduce.random_test = lambda data: {"nodes": deepcopy(t["main"])}
+        try:
+            report = verify(json.loads(json.dumps(run)))
+        finally:
+            reproduce.random_test = original_random_test
+        self.assertTrue(report["ok"], report["mismatches"][:3] or report["missing_nodes"][:3])
+
     def test_bad_requests_are_rejected(self):
         with self.assertRaisesRegex(ValueError, "Choose a point"):
             append_event({"nodes": everything(self.t), "node_id": "nope", "proposal": proposal()})

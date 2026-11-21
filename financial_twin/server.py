@@ -130,7 +130,7 @@ def extract(statement, years, api_key, currency_code=None):
     years_value(years)
     currency.context(currency_code)  # reject an unsupported currency before anything else
     if not (isinstance(api_key, str) and api_key.strip()) and not configured_api_keys():
-        raise ValueError("Add an API key in settings or configure AI_API_KEY_1 (and more) in .env.")
+        raise ValueError("Configure an API key as AI_API_KEY_1 and set your provider in .env, or use the AI-independent demo.")
     # Amounts written in another currency are converted to CHF here, exactly, rather than by the AI.
     statement, currency_note, rate, conversions = currency.prepare_for_ai(statement, currency_code)
     prompt = f"""Model this user's financial scenario over {years} years using CHF.{currency_note} User statement: {statement}
@@ -220,6 +220,42 @@ def run_simulation(data):
     return {"timeline": timeline, "nodes": nodes, "scenario": root["scenario"],
             "funding_feasibility": nodes[-1]["state"]["funding_feasibility"],
             "goals": nodes[-1]["state"].get("goals", []), "comparison_bundle": engine_comparison_bundle(nodes), "environment": environment()}
+
+
+def alexia_demo():
+    from financial_twin.branching import apply_proposal
+    scenario = {"start_date": "2026-01-01", "currency": "CHF", "opening_cash_chf": 8000,
+                "annual_inflation": 0, "phases": [{"name": "Work", "start_month": 0, "end_month": None,
+                "monthly_income_chf": 4800, "monthly_expenses_chf": 2400}], "one_off_costs": [],
+                "assets": [], "debts": [], "preferences": {}}
+    scenario = create_root(scenario)["scenario"]
+    for record in scenario["provenance"].values():
+        if record["source"] == "user":
+            record.update({"source": "dataset", "transformation": "fictional bundled demo input"})
+    variables = {"opening_cash_chf": 8000, "monthly_income_chf": 4800, "monthly_expenses_chf": 2400}
+    baseline = run_simulation({"scenario": scenario, "variables": variables, "years": 5})
+    proposal = {"title": "Master's degree", "summary": "Study for two years, then start work.",
+                "assumptions": "Expenses stay at CHF 2,400 per month and inflation is zero.",
+                "changes": [{"kind": "income", "label": "Part-time study income", "amount_chf": -3300,
+                             "start_offset_months": 0, "duration_months": 24, "source": "dataset"},
+                            {"kind": "income", "label": "Graduate salary", "amount_chf": 1700,
+                             "start_offset_months": 24, "duration_months": 0, "source": "dataset"}],
+                "one_offs": [{"label": "Tuition year 1", "amount_chf": 8000, "offset_months": 0, "source": "dataset"},
+                             {"label": "Tuition year 2", "amount_chf": 8000, "offset_months": 12, "source": "dataset"}],
+                "assets": [], "investment_multiplier": 1}
+    branch = apply_proposal(baseline["nodes"][0], "Master's degree", 60, {}, proposal, VARIABLES, 0)
+    extraction_variables = []
+    for key, value in variables.items():
+        label, description, minimum, maximum, step, unit = VARIABLES[key]
+        extraction_variables.append({"id": key, "label": label, "description": description, "min": minimum,
+                                     "max": maximum, "step": step, "value": value, "unit": unit})
+    extraction = {"summary": "Alexia compares work with a master's degree.",
+                  "assumptions": "Fictional profile. Expenses are CHF 2,400 per month throughout; inflation is zero.",
+                  "scenario": scenario, "variables": extraction_variables}
+    run = {"source": "simulate", "scenario": scenario, "variables": variables, "years": 5, "start_date": scenario["start_date"],
+           "branches": [branch["branch"]], "operations": [{"type": "branch", "branch": branch["branch"]}],
+           "next_sequence": 1, "environment": baseline["environment"]}
+    return {"extraction": extraction, "years": 5, "nodes": baseline["nodes"] + branch["nodes"], "run": run}
 
 
 BRANCH_SCHEMA = {
@@ -331,14 +367,14 @@ def retry_seconds_setting():
 
 
 def gemini_json(prompt, schema, api_key=None, web_search=False):
-    """Ask the AI provider for JSON. A key given by the website is used on its own; otherwise the keys
+    """Ask the AI provider for JSON. An explicit request key is used on its own; otherwise the keys
     configured in .env take turns (round robin), and a rejected or rate-limited key is skipped in favour
     of the next one and rested for AI_MODEL_RETRY_SECONDS."""
     if isinstance(api_key, str) and api_key.strip():
         return request_json_with_key(prompt, schema, api_key.strip(), web_search)
     keys = configured_api_keys()
     if not keys:
-        raise ValueError("Add an API key in settings or configure AI_API_KEY_1 (and more) in .env.")
+        raise ValueError("Configure an API key as AI_API_KEY_1 and set your provider in .env, or use the AI-independent demo.")
     retry_seconds = retry_seconds_setting()
     global KEY_ROTATION
     with KEY_COOLDOWNS_LOCK:
@@ -1311,6 +1347,8 @@ class Handler(SimpleHTTPRequestHandler):
         elif self.path == "/api/comparisons/alexia":
             from financial_twin.comparison import alexia_comparison
             self.send_json(200, alexia_comparison())
+        elif self.path == "/api/demo/alexia":
+            self.send_json(200, alexia_demo())
         else:
             super().do_GET()
 

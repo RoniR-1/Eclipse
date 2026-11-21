@@ -14,7 +14,7 @@ import sys
 import unittest
 
 from financial_twin.reproduce import RUN_FORMAT, build_run, replay, verify
-from financial_twin.server import apply_branch_change, random_test, run_simulation
+from financial_twin.server import apply_branch_change, edit_nodes, random_test, run_simulation
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -109,6 +109,51 @@ class ReproducibilityTests(unittest.TestCase):
         self.assertEqual(report["mismatches"][0]["field"], "net_worth_chf")
         self.assertAlmostEqual(report["max_abs_diff"], 0.01)
 
+    def test_edits_and_branches_replay_in_order(self):
+        data = {"scenario": scenario(), "years": 2, "variables": {"opening_cash_chf": 8000, "savings_rate": 0.5, "risk_tolerance": 0.6}}
+        nodes = run_simulation(deepcopy(data))["nodes"]
+        first_edit = {"cash_chf": 12000}
+        nodes = edit_nodes({"nodes": nodes, "node_id": nodes[0]["id"], "edits": first_edit})["nodes"]
+        branch = apply_branch_change(nodes[6], "Study", 6, {}, CHANGE, 0)
+        nodes.extend(branch["nodes"])
+        second_edit = {"monthly_income_chf": 2300}
+        updated = edit_nodes({"nodes": nodes, "node_id": branch["nodes"][2]["id"], "edits": second_edit})["nodes"]
+        by_id = {node["id"]: node for node in nodes}
+        by_id.update({node["id"]: node for node in updated})
+        run = build_run(source="simulate", years=2, scenario=data["scenario"], variables=data["variables"], nodes=list(by_id.values()), branches=[branch["branch"]])
+        run["operations"] = [{"type": "edit", "node_id": nodes[0]["id"], "edits": first_edit},
+                             {"type": "branch", "branch": branch["branch"]},
+                             {"type": "edit", "node_id": branch["nodes"][2]["id"], "edits": second_edit}]
+        report = verify(browser_round_trip(run))
+        self.assertTrue(report["ok"], report)
+
+    def test_expected_rows_must_be_complete_unique_and_match_kept_ids(self):
+        run = self.simulated_run()
+        duplicate = deepcopy(run)
+        duplicate["expected"][0] = deepcopy(duplicate["expected"][1])
+        report = verify(duplicate)
+        self.assertFalse(report["ok"])
+        self.assertEqual(report["duplicate_expected_ids"], [run["expected"][1]["id"]])
+        self.assertEqual(report["missing_expected_ids"], [run["expected"][0]["id"]])
+        incomplete = deepcopy(run)
+        del incomplete["expected"][0]["cash_chf"]
+        self.assertEqual(verify(incomplete)["invalid_expected_rows"], [0])
+        duplicate_kept = deepcopy(run)
+        duplicate_kept["kept_node_ids"].append(duplicate_kept["kept_node_ids"][0])
+        self.assertFalse(verify(duplicate_kept)["ok"])
+        boolean = deepcopy(run)
+        boolean["expected"][0]["month"] = False
+        self.assertFalse(verify(boolean)["ok"])
+        for rows in ([], [None], [{}]):
+            invalid = deepcopy(run)
+            invalid["expected"] = rows
+            with self.assertRaisesRegex(ValueError, "expected|Expected"):
+                verify(invalid)
+        invalid = deepcopy(run)
+        invalid["kept_node_ids"] = []
+        with self.assertRaisesRegex(ValueError, "kept_node_ids"):
+            verify(invalid)
+
     def test_committed_sample_run_reproduces(self):
         import reproduce as cli
         sample = json.loads((ROOT / "examples" / "sample-run.json").read_text(encoding="utf-8"))
@@ -116,6 +161,23 @@ class ReproducibilityTests(unittest.TestCase):
                                               "on purpose, regenerate it with scripts/reproduce.py --write-sample")
         self.assertEqual(cli.sample_run()["expected"], sample["expected"])
         self.assertEqual(sample["units"], {"currency": "CHF", "time_step": "month", "horizon_years": 5})
+
+    def test_legacy_integral_provenance_run_reproduces(self):
+        path = ROOT / "fixtures" / "demo" / "legacy-integral-provenance-run.json"
+        run = json.loads(path.read_text(encoding="utf-8"))
+        self.assertTrue(verify(run)["ok"])
+        run["operations"] = []
+        self.assertFalse(verify(run)["ok"])
+
+    def test_new_run_with_integral_provenance_uses_current_ids(self):
+        legacy = json.loads((ROOT / "fixtures" / "demo" / "legacy-integral-provenance-run.json").read_text(encoding="utf-8"))
+        nodes = run_simulation({"scenario": legacy["scenario"], "variables": legacy["variables"], "years": 1})["nodes"]
+        operations = []
+        run = build_run(source="simulate", years=1, scenario=legacy["scenario"], variables=legacy["variables"],
+                        nodes=nodes, operations=operations)
+        operations.append({"type": "edit", "node_id": nodes[0]["id"], "edits": {"cash_chf": 1}})
+        self.assertEqual(run["operations"], [])
+        self.assertTrue(verify(browser_round_trip(run))["ok"])
 
 
 if __name__ == "__main__":

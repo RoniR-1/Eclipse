@@ -6,7 +6,7 @@ from financial_twin.engine import create_root, simulate
 from financial_twin.loaders import alexia_tuition_sources, load_starter_scenario, load_synthetic_profile
 
 
-CHALLENGE = Path(__file__).resolve().parents[1] / "ai-financial-twin-lauzhack-2026"
+CHALLENGE = Path(__file__).resolve().parents[1] / "fixtures" / "demo"
 
 
 class PurchasingPowerAndLineageTests(unittest.TestCase):
