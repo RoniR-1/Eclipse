@@ -173,14 +173,29 @@ function startAstralBackdrop() {
    FREE-MOVING ORGANIC LAVA-LAMP SPINE, MORPHING ORBS & BRANCH ARCS
    ========================================================================== */
 
-function drawOrganicOrb(ctx, x, y, t, seed, { selected, isFork, isShortfall, maxHalo }) {
+function hexToRgb(hex) {
+  const clean = (hex || '#ffa159').replace('#', '');
+  const n = parseInt(clean, 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+
+function mixRgb(a, b, ratio) {
+  return [
+    Math.round(a[0] + (b[0] - a[0]) * ratio),
+    Math.round(a[1] + (b[1] - a[1]) * ratio),
+    Math.round(a[2] + (b[2] - a[2]) * ratio),
+  ];
+}
+
+function drawOrganicOrb(ctx, x, y, t, seed, { selected, isFork, isShortfall, tintHex, maxHalo }) {
   const pulse = organicWave(t * 0.65, seed);
   const scale = (selected ? 1.24 : isFork ? 1.12 : 1.0) * (1 + pulse * 0.08);
   const baseR = 9.5 * scale;
 
-  const auraColor = isShortfall ? [255, 107, 91] : [255, 148, 70];
-  const midColor = isShortfall ? [255, 178, 166] : [255, 210, 164];
-  const coreColor = isShortfall ? [255, 242, 238] : [255, 248, 238];
+  const baseRgb = isShortfall ? [255, 107, 91] : hexToRgb(tintHex || '#ff9446');
+  const auraColor = baseRgb;
+  const midColor = mixRgb(baseRgb, [255, 245, 235], 0.42);
+  const coreColor = mixRgb(baseRgb, [255, 252, 248], 0.82);
 
   // 1. Soft astral outer bloom
   const haloR = Math.min(maxHalo, (selected ? 36 : 28) * (1 + pulse * 0.12));
@@ -296,49 +311,45 @@ function drawSpineFrame(nowMs) {
     });
   });
 
-  // 1. Undulating lava-lamp filament connecting consecutive orbs
+  // 1. Undulating lava-lamp filament connecting consecutive orbs (shifts smoothly to branch hue once diverged)
   if (points.length > 1) {
-    const drawFilament = (lineWidth, strokeStyle) => {
-      ctx.beginPath();
-      for (let i = 0; i < points.length - 1; i++) {
-        const a = points[i];
-        const b = points[i + 1];
-        const span = Math.max(1, b.y - a.y);
-        const steps = Math.max(10, Math.ceil(span / 10));
+    for (let i = 0; i < points.length - 1; i++) {
+      const a = points[i];
+      const b = points[i + 1];
+      const segRgb = hexToRgb(b.meta.tintHex || '#ffa159');
+      const segMid = mixRgb(segRgb, [255, 244, 232], 0.45);
+      const span = Math.max(1, b.y - a.y);
+      const steps = Math.max(10, Math.ceil(span / 10));
+
+      const traceSegment = () => {
+        ctx.beginPath();
         for (let s = 0; s <= steps; s++) {
-          if (i > 0 && s === 0) continue;
           const u = s / steps;
           const y = a.y + span * u;
           const linX = a.x + (b.x - a.x) * u;
           const env = Math.sin(Math.PI * u);
           const sway = organicWave(t * 0.68 - y * 0.0048, i * 2.93 + 0.6) * 11 * env;
           const x = linX + sway;
-          if (i === 0 && s === 0) ctx.moveTo(x, y);
+          if (s === 0) ctx.moveTo(x, y);
           else ctx.lineTo(x, y);
         }
-      }
-      ctx.strokeStyle = strokeStyle;
-      ctx.lineWidth = lineWidth;
+      };
+
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
+      traceSegment();
+      ctx.strokeStyle = `rgba(${segRgb.join(',')}, ${b.meta.isDiverged ? 0.24 : 0.17})`;
+      ctx.lineWidth = 10;
       ctx.stroke();
-    };
+
+      traceSegment();
+      ctx.strokeStyle = `rgba(${segMid.join(',')}, ${b.meta.isDiverged ? 0.72 : 0.52})`;
+      ctx.lineWidth = b.meta.isDiverged ? 2.1 : 1.8;
+      ctx.stroke();
+    }
 
     const topY = points[0].y;
     const botY = points[points.length - 1].y;
-    const glowGrad = ctx.createLinearGradient(0, topY, 0, botY);
-    glowGrad.addColorStop(0, 'rgba(255, 162, 92, 0.22)');
-    glowGrad.addColorStop(0.5, 'rgba(255, 138, 61, 0.16)');
-    glowGrad.addColorStop(1, 'rgba(255, 120, 50, 0.09)');
-
-    const coreGrad = ctx.createLinearGradient(0, topY, 0, botY);
-    coreGrad.addColorStop(0, 'rgba(255, 228, 198, 0.65)');
-    coreGrad.addColorStop(0.5, 'rgba(255, 168, 102, 0.50)');
-    coreGrad.addColorStop(1, 'rgba(255, 138, 61, 0.28)');
-
-    drawFilament(10, glowGrad);
-    drawFilament(1.85, coreGrad);
-
     // Subtle slow lava-lamp warm light droplets drifting down the filament
     if (!reduced) {
       const totalSpan = Math.max(1, botY - topY);
@@ -414,6 +425,7 @@ function drawSpineFrame(nowMs) {
       selected: pt.selected,
       isFork: pt.meta.isFork,
       isShortfall: pt.meta.isShortfall,
+      tintHex: pt.meta.tintHex,
       maxHalo,
     });
   }
@@ -649,11 +661,7 @@ function milestoneTitle(node) {
   if (node.month === 0) return 'Starting point';
   if (node.event_summary && node.event_summary !== 'Monthly update') return node.event_summary;
   if (node.month % 12 === 0) return `Year ${node.month / 12}`;
-  if (node.month % 3 === 0) {
-    const yrs = Math.floor(node.month / 12);
-    const rem = node.month % 12;
-    return yrs === 0 ? `Month ${rem}` : `Year ${yrs}, Month ${rem}`;
-  }
+  if (node.month % 6 === 0) return node.month === 6 ? '6 months' : `Year ${(node.month / 12).toFixed(1)}`;
   if (node.state.cash_chf < 0) return 'Cash shortfall';
   return `Month ${node.month}`;
 }
@@ -710,7 +718,7 @@ function getPathMilestones(chain, index) {
 
   return chain.filter(node => {
     if (node.month === 0 || node.id === tip.id) return true;
-    if (node.month % 3 === 0) return true;
+    if (node.month % 6 === 0) return true;
     if (index.forkNodeIds.has(node.id)) return true;
     if (node.event_summary && node.event_summary !== 'Monthly update') return true;
     if (node.id === firstBreachId) return true;
@@ -843,20 +851,39 @@ function renderTimelineView() {
     state.selectedId = activeMeta.firstNode.month > 0 ? activeMeta.firstNode.id : chain[0].id;
   }
 
-  const horizonYears = (activeMeta.tipNode.month / 12).toFixed(activeMeta.tipNode.month % 12 ? 1 : 0);
-  byId('active-path-kicker').textContent = activeMeta.label.toUpperCase();
-  byId('active-path-subtitle').textContent = activeMeta.id === 'main' || activeMeta.id === 'root'
-    ? `Your ${horizonYears}-year baseline projection (every 3 months).`
-    : `Diverged at ${formatMonthTime(activeMeta.forkMonth)} · compared against your Original path.`;
+  const layout = buildPlanarTreeLayout(getAllGraphMilestones(index), index);
+  const isAlternate = activeMeta.id !== 'main' && activeMeta.id !== 'root';
+  const activeColor = layout.branchColors.get(activeMeta.id) || BRANCH_PALETTE[0];
+  const parentBid = layout.parentBranchOf.get(activeMeta.id);
+  const parentLabel = parentBid ? index.branchMeta.get(parentBid === 'root' ? 'main' : parentBid)?.label : 'Original path';
 
-  renderVerticalTimeline(milestones, activeMeta, index);
+  const horizonYears = (activeMeta.tipNode.month / 12).toFixed(activeMeta.tipNode.month % 12 ? 1 : 0);
+  byId('active-path-kicker').textContent = isAlternate ? `ALTERNATE PATH · ${activeMeta.label.toUpperCase()}` : 'ORIGINAL PATH';
+  const dotEl = byId('active-path-dot');
+  if (dotEl) {
+    dotEl.style.background = activeColor;
+    dotEl.style.boxShadow = `0 0 10px ${activeColor}`;
+  }
+  byId('active-path-subtitle').textContent = isAlternate
+    ? `Diverged from ${parentLabel} at ${formatMonthTime(activeMeta.forkMonth)} · compared against your Original path.`
+    : `Your ${horizonYears}-year baseline projection.`;
+
+  const banner = byId('branch-banner');
+  banner.hidden = !isAlternate;
+  if (isAlternate) {
+    banner.style.setProperty('--branch-accent', activeColor);
+    byId('branch-banner-title').textContent = `Following alternate path: ${activeMeta.label}`;
+    byId('branch-banner-origin').textContent = `Branched from ${parentLabel} at ${formatMonthTime(activeMeta.forkMonth)}`;
+  }
+
+  renderVerticalTimeline(milestones, activeMeta, index, layout);
   renderTreeMinimap(index);
   renderEndSummary(activeMeta, index);
   renderTrajectoryChart(activeMeta, index);
   startSpineAnimation();
 }
 
-function renderVerticalTimeline(milestones, activeMeta, index) {
+function renderVerticalTimeline(milestones, activeMeta, index, layout) {
   const list = byId('vertical-timeline');
   list.replaceChildren();
 
@@ -869,13 +896,17 @@ function renderVerticalTimeline(milestones, activeMeta, index) {
     const isFork = directChildren.length > 1;
     const isShortfall = node.state.cash_chf < 0;
     const isSelected = node.id === state.selectedId;
+    const isDiverged = node.branch_id !== 'root' && node.branch_id !== 'main';
+    const isBranchEntry = isDiverged && prevMilestone && prevMilestone.branch_id !== node.branch_id;
+    const nodeBranchColor = layout.branchColors.get(node.branch_id) || BRANCH_PALETTE[0];
 
     const seed = ((idx + 1) * 2.317) + (node.month * 0.41);
-    state.spineNodesMeta.push({ id: node.id, isFork, isShortfall, seed });
+    state.spineNodesMeta.push({ id: node.id, isFork, isShortfall, isDiverged, tintHex: nodeBranchColor, seed });
 
     const li = document.createElement('li');
-    li.className = `vnode${isSelected ? ' is-selected' : ''}${isFork ? ' is-fork' : ''}`;
+    li.className = `vnode${isSelected ? ' is-selected' : ''}${isFork ? ' is-fork' : ''}${isDiverged ? ' is-diverged' : ''}`;
     li.dataset.nodeId = node.id;
+    li.style.setProperty('--node-branch-color', nodeBranchColor);
     li.addEventListener('click', event => {
       if (event.target.closest('button, .vnode-fork')) return;
       selectNode(node.id, { openDrawer: true });
@@ -889,6 +920,14 @@ function renderVerticalTimeline(milestones, activeMeta, index) {
 
     const content = document.createElement('div');
     content.className = 'vnode-content';
+
+    if (isBranchEntry) {
+      const marker = document.createElement('div');
+      marker.className = 'vnode-branch-marker';
+      const bLabel = index.branchMeta.get(node.branch_id)?.label || 'Alternate path';
+      marker.textContent = `⑂ Alternate path begins · ${bLabel}`;
+      content.append(marker);
+    }
 
     const eyebrow = document.createElement('div');
     eyebrow.className = 'vnode-eyebrow';
@@ -1152,6 +1191,8 @@ function renderTreeMinimap(index) {
       if (tip && !milestones.some(n => n.id === tip.id)) milestones.push(tip);
     }
   }
+  // Include all half-year intervals, events, and forks across every branch
+  const milestones = getAllGraphMilestones(index);
 
   const layout = buildPlanarTreeLayout(milestones, index);
   const { dates, laneOffsets, nextLane, branchColors, parentBranchOf } = layout;
@@ -1219,7 +1260,8 @@ function renderTreeMinimap(index) {
     path.setAttribute('stroke-opacity', edge.isActiveEdge ? '0.96' : '0.48');
     path.setAttribute('stroke-linecap', 'round');
     path.setAttribute('class', 'minimap-edge-hit');
-    path.addEventListener('click', () => {
+    path.addEventListener('click', event => {
+      event.stopPropagation();
       const targetBranch = edge.branchId === 'root' ? 'main' : edge.branchId;
       switchActivePath(targetBranch, { focusNodeId: edge.to });
     });
@@ -1298,7 +1340,8 @@ function renderTreeMinimap(index) {
       tooltip.hidden = true;
       applyMinimapHighlight(null);
     });
-    g.addEventListener('click', () => {
+    g.addEventListener('click', event => {
+      event.stopPropagation();
       tooltip.hidden = true;
       const targetBranch = node.branch_id === 'root' ? state.activeBranchId : node.branch_id;
       switchActivePath(targetBranch, { focusNodeId: node.id });
@@ -1551,7 +1594,7 @@ function applyTreeEdgeHighlight(focusNodeId) {
 function renderTreeGraph({ fit = false, focusId = null } = {}) {
   if (!state.nodes.size) return;
   const index = buildTreeIndex();
-  const milestones = treeEventNodes();
+  const milestones = getAllGraphMilestones(index);
   const visible = new Set(milestones.map(n => n.id));
   const activeSet = new Set(index.branchMeta.get(state.activeBranchId)?.chain.map(n => n.id) || []);
 
@@ -1666,7 +1709,7 @@ function renderTreeGraph({ fit = false, focusId = null } = {}) {
     });
     // Time axis drawn along the bottom of the date columns
     state.network.on('afterDrawing', ctx => {
-      const nodes = treeEventNodes().filter(node => state.graphNodes?.get(node.id));
+      const nodes = getAllGraphMilestones(buildTreeIndex()).filter(node => state.graphNodes?.get(node.id));
       if (!nodes.length) return;
       const columns = [...new Set(nodes.map(node => node.date))].sort();
       const scale = state.network.getScale();
@@ -1866,6 +1909,15 @@ function renderInspector(node, { focusBranchInput = false } = {}) {
     header.append(compare);
   }
 
+  {
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'delete-branch';
+    remove.textContent = 'Delete this path';
+    remove.addEventListener('click', () => deleteBranch(node.branch_id));
+    header.append(remove);
+  }
+
   const narrativeSec = document.createElement('div');
   narrativeSec.className = 'inspector-section';
   const narrativeTitle = document.createElement('h3');
@@ -1915,7 +1967,6 @@ function renderInspector(node, { focusBranchInput = false } = {}) {
     <label for="branch-months">Explore this branch for</label>
     <div class="select-wrap">
       <select id="branch-months">
-        <option value="3">3 months</option>
         <option value="6">6 months</option>
         <option value="12">1 year</option>
         <option value="24">2 years</option>
@@ -1933,7 +1984,7 @@ function renderInspector(node, { focusBranchInput = false } = {}) {
 
   const remaining = state.years * 12 - node.month;
   const monthSelect = form.querySelector('#branch-months');
-  if (remaining > 0 && ![3, 6, 12, 24, 60].includes(remaining)) {
+  if (remaining > 0 && ![6, 12, 24, 60].includes(remaining)) {
     const option = document.createElement('option');
     option.value = remaining;
     option.textContent = `${remaining} months (to 5-year horizon)`;
@@ -1988,7 +2039,7 @@ function renderInspector(node, { focusBranchInput = false } = {}) {
         variables,
         api_key: state.apiKey || undefined,
       });
-      if (revision !== state.revision) return;
+      if (revision !== state.revision || !state.nodes.has(node.id)) return;
       for (const child of result.nodes) state.nodes.set(child.id, child);
       if (result.nodes.length) {
         const first = result.nodes[0];
@@ -2036,6 +2087,134 @@ function updateFollowPathButton(node) {
   const bLabel = index.branchMeta.get(bid)?.label || 'Original path';
   const shortLabel = bLabel.length > 22 ? `${bLabel.slice(0, 20).trim()}…` : bLabel;
   label.textContent = `Follow "${shortLabel}"`;
+}
+
+/* ==========================================================================
+   BRANCH DELETION
+   ========================================================================== */
+
+// Every node in the branch, plus every node of the branches that split off from it.
+function branchNodeIds(branchId) {
+  const removed = new Set();
+  const ordered = [...state.nodes.values()].sort((a, b) => a.month - b.month);
+  for (const node of ordered) {
+    if (node.branch_id === branchId || removed.has(node.parent_id)) removed.add(node.id);
+  }
+  return removed;
+}
+
+// Opens the styled confirmation pop-up; resolves true only when the confirm button is pressed.
+function confirmDialog({ kicker, title, message, confirmLabel }) {
+  const dialog = byId('confirm-dialog');
+  byId('confirm-kicker').textContent = kicker;
+  byId('confirm-title').textContent = title;
+  byId('confirm-message').textContent = message;
+  byId('confirm-ok').textContent = confirmLabel;
+  dialog.returnValue = '';
+  dialog.showModal();
+  return new Promise(resolve => {
+    dialog.addEventListener('close', () => resolve(dialog.returnValue === 'confirm'), { once: true });
+  });
+}
+
+const isOriginalBranch = branchId => branchId === 'main' || branchId === 'root';
+
+// Original-path nodes that no other branch grew out of. The shared history other branches depend on stays.
+function originalPathRemovals() {
+  const keep = new Set();
+  for (const node of state.nodes.values()) {
+    if (isOriginalBranch(node.branch_id)) continue;
+    let cur = state.nodes.get(node.parent_id);
+    while (cur && isOriginalBranch(cur.branch_id) && !keep.has(cur.id)) {
+      keep.add(cur.id);
+      cur = state.nodes.get(cur.parent_id);
+    }
+  }
+  return new Set([...state.nodes.values()]
+    .filter(node => isOriginalBranch(node.branch_id) && !keep.has(node.id))
+    .map(node => node.id));
+}
+
+async function deleteOriginalPath() {
+  const others = buildTreeIndex().branchIds.filter(id => !isOriginalBranch(id));
+  const confirmed = await confirmDialog({
+    kicker: 'DELETE ORIGINAL PATH',
+    title: 'Original path',
+    message: others.length
+      ? `This removes the Original path's projection. Your ${others.length} other branch${others.length === 1 ? '' : 'es'} stay, along with the shared history they grew out of. This can't be undone.`
+      : "This is your only path, so deleting it clears the whole projection and takes you back to your assumptions. This can't be undone.",
+    confirmLabel: 'Delete this path',
+  });
+  if (!confirmed) return;
+
+  // Recompute: a branch may have finished loading while the pop-up was open.
+  const removed = originalPathRemovals();
+  for (const id of removed) {
+    state.nodes.delete(id);
+    state.narratives.delete(id);
+  }
+
+  if (!state.nodes.size) {
+    state.revision += 1; // drop any requests still in flight for the cleared projection
+    state.selectedId = null;
+    state.graphNodes?.clear();
+    state.graphEdges?.clear();
+    state.resultsView = 'timeline';
+    showStage(state.extraction ? 'tuning' : 'intake');
+    showToast('Projection cleared');
+    return;
+  }
+
+  const index = buildTreeIndex();
+  const target = index.branchIds.find(id => !isOriginalBranch(id)) || index.branchIds[0];
+  const focusId = index.branchMeta.get(target)?.firstNode?.id;
+  state.activeBranchId = target;
+  state.selectedId = focusId ?? null;
+  if (state.resultsView === 'tree') {
+    renderTreeGraph({ focusId });
+    if (focusId) selectNode(focusId);
+  } else {
+    switchActivePath(target);
+  }
+  showToast('Deleted the Original path');
+}
+
+async function deleteBranch(branchId) {
+  if (isOriginalBranch(branchId)) return deleteOriginalPath();
+  const first = [...state.nodes.values()]
+    .filter(node => node.branch_id === branchId)
+    .sort((a, b) => a.month - b.month)[0];
+  if (!first) return;
+  const before = branchNodeIds(branchId);
+  const nested = new Set([...before].map(id => state.nodes.get(id).branch_id).filter(id => id !== branchId)).size;
+  const label = buildTreeIndex().branchMeta.get(branchId)?.label || milestoneTitle(first);
+
+  const confirmed = await confirmDialog({
+    kicker: 'DELETE BRANCH',
+    title: label,
+    message: `This removes the branch${nested ? ` and the ${nested} branch${nested === 1 ? '' : 'es'} that split off from it` : ''} from your timeline. This can't be undone.`,
+    confirmLabel: 'Delete this path',
+  });
+  if (!confirmed || !state.nodes.has(first.id)) return;
+
+  // Recompute: a branch may have finished loading while the pop-up was open.
+  for (const id of branchNodeIds(branchId)) {
+    state.nodes.delete(id);
+    state.narratives.delete(id);
+  }
+
+  // Return to the moment the branch split off from.
+  const forkId = state.nodes.has(first.parent_id) ? first.parent_id : buildTreeIndex().root?.id;
+  const forkBranch = state.nodes.get(forkId)?.branch_id;
+  state.activeBranchId = !forkBranch || forkBranch === 'root' ? 'main' : forkBranch;
+  state.selectedId = forkId ?? null;
+  if (state.resultsView === 'tree') {
+    renderTreeGraph({ focusId: forkId });
+    if (forkId) selectNode(forkId);
+  } else {
+    switchActivePath(state.activeBranchId, { focusNodeId: forkId });
+  }
+  showToast(`Deleted branch: ${label}`);
 }
 
 async function selectNode(id, { openDrawer = false, focusBranchInput = false } = {}) {
@@ -2119,15 +2298,21 @@ byId('back-to-top').addEventListener('click', () => {
   window.scrollTo({ top: 0, behavior: 'smooth' });
 });
 byId('switch-to-tree').addEventListener('click', () => setResultsView('tree'));
-byId('open-tree-from-minimap').addEventListener('click', () => setResultsView('tree'));
 byId('back-to-timeline').addEventListener('click', () => setResultsView('timeline', { focusNodeId: state.selectedId }));
+byId('return-to-original').addEventListener('click', () => {
+  const index = buildTreeIndex();
+  const baseId = index.branchMeta.has('main') ? 'main' : index.branchIds[0];
+  switchActivePath(baseId);
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+});
 
-byId('toggle-minimap').addEventListener('click', () => {
-  const dock = byId('minimap-dock');
-  const btn = byId('toggle-minimap');
-  const collapsed = dock.classList.toggle('is-collapsed');
-  btn.textContent = collapsed ? '+' : '–';
-  btn.setAttribute('aria-expanded', String(!collapsed));
+const minimapDock = byId('minimap-dock');
+minimapDock.addEventListener('click', () => setResultsView('tree'));
+minimapDock.addEventListener('keydown', event => {
+  if (event.key === 'Enter' || event.key === ' ') {
+    event.preventDefault();
+    setResultsView('tree');
+  }
 });
 
 byId('close-drawer').addEventListener('click', () => setDrawerOpen(false));
