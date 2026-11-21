@@ -1,10 +1,13 @@
 from copy import deepcopy
 from datetime import date
+from hashlib import sha256
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 import json
 import math
 import os
 from pathlib import Path
+from threading import Lock
+from time import monotonic
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 from uuid import uuid4
@@ -14,6 +17,8 @@ from financial_twin.engine import is_investment_asset
 
 ROOT = Path(__file__).resolve().parent.parent
 WEB = ROOT / "web"
+MODEL_COOLDOWNS = {}
+MODEL_COOLDOWNS_LOCK = Lock()
 
 VARIABLES = {
     "opening_cash_chf": ("Starting cash", "Cash available at the beginning of your timeline.", 0, 1000000, 500, "CHF"),
@@ -172,6 +177,20 @@ def gemini_json(prompt, schema, api_key):
         models = [model.strip() for model in os.environ.get("AI_API_KEY_MODEL", "").split(",") if model.strip()]
         if not models:
             raise ValueError("Configure AI_API_KEY_MODEL in .env.")
+        try:
+            retry_seconds = float(os.environ.get("AI_MODEL_RETRY_SECONDS", "60"))
+            if not math.isfinite(retry_seconds) or retry_seconds < 0:
+                raise ValueError
+        except ValueError as exc:
+            raise ValueError("AI_MODEL_RETRY_SECONDS must be a nonnegative number.") from exc
+        identity = (base_url.rstrip("/"), sha256(api_key.strip().encode()).digest())
+        with MODEL_COOLDOWNS_LOCK:
+            now = monotonic()
+            for key, deadline in list(MODEL_COOLDOWNS.items()):
+                if deadline <= now:
+                    del MODEL_COOLDOWNS[key]
+            available = [model for model in models if (*identity, model) not in MODEL_COOLDOWNS]
+        models = available or models
         for index, model in enumerate(models):
             payload = {"model": model, "messages": [{"role": "user", "content": prompt}],
                        "response_format": {"type": "json_schema", "json_schema": {"name": "financial_twin", "schema": schema}}}
@@ -180,18 +199,27 @@ def gemini_json(prompt, schema, api_key):
             try:
                 with urlopen(request, timeout=45) as response:
                     result = json.load(response)
-                return json.loads(result["choices"][0]["message"]["content"])
+                parsed = json.loads(result["choices"][0]["message"]["content"])
+                with MODEL_COOLDOWNS_LOCK:
+                    MODEL_COOLDOWNS.pop((*identity, model), None)
+                return parsed
             except HTTPError as exc:
-                if (exc.code in (404, 429) or 500 <= exc.code < 600) and index + 1 < len(models):
-                    continue
+                if exc.code in (404, 429) or 500 <= exc.code < 600:
+                    with MODEL_COOLDOWNS_LOCK:
+                        MODEL_COOLDOWNS[(*identity, model)] = monotonic() + retry_seconds
+                    if index + 1 < len(models):
+                        continue
                 if exc.code in (400, 401, 403, 404):
                     raise ValueError("The AI provider rejected the request. Check your API key and model access.") from exc
                 if exc.code == 429:
                     raise ValueError("The AI provider rate limit was reached. Please try again shortly.") from exc
                 raise ValueError("The AI provider is unavailable. Please try again.") from exc
             except (URLError, TimeoutError) as exc:
-                if (isinstance(exc, TimeoutError) or isinstance(getattr(exc, "reason", None), TimeoutError)) and index + 1 < len(models):
-                    continue
+                if isinstance(exc, TimeoutError) or isinstance(getattr(exc, "reason", None), TimeoutError):
+                    with MODEL_COOLDOWNS_LOCK:
+                        MODEL_COOLDOWNS[(*identity, model)] = monotonic() + retry_seconds
+                    if index + 1 < len(models):
+                        continue
                 raise ValueError("Could not reach the AI provider. Check your connection and try again.") from exc
             except (KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
                 raise ValueError("The AI provider returned an invalid response. Please try again.") from exc
@@ -386,6 +414,8 @@ class Handler(SimpleHTTPRequestHandler):
 
 def main():
     load_env()
+    from financial_twin.database import initialize_from_environment
+    initialize_from_environment()
     port = int(os.environ.get("PORT", "8000"))
     server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
     print(f"Financial Twin running at http://127.0.0.1:{port}", flush=True)

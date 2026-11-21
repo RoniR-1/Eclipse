@@ -10,6 +10,11 @@ from financial_twin.server import extract, node_narrative, run_branch, run_simul
 
 
 class WebFlowTests(unittest.TestCase):
+    def setUp(self):
+        self.cooldowns = patch.dict("financial_twin.server.MODEL_COOLDOWNS", {}, clear=True)
+        self.cooldowns.start()
+        self.addCleanup(self.cooldowns.stop)
+
     def gemini_result(self):
         return {
             "summary": "A period of study followed by work",
@@ -67,10 +72,33 @@ class WebFlowTests(unittest.TestCase):
                     TimeoutError(), URLError(TimeoutError())]
         for failure in failures:
             response = io.BytesIO(json.dumps({"choices": [{"message": {"content": json.dumps(data)}}]}).encode())
-            with self.subTest(failure=type(failure).__name__), patch.dict("os.environ", environment), patch("financial_twin.server.urlopen", side_effect=[failure, response]) as urlopen:
+            with self.subTest(failure=type(failure).__name__), patch.dict("financial_twin.server.MODEL_COOLDOWNS", {}, clear=True), patch.dict("os.environ", environment), patch("financial_twin.server.urlopen", side_effect=[failure, response]) as urlopen:
                 result = extract("Study then work", 5, "test-key")
             self.assertEqual(urlopen.call_count, 2)
             self.assertEqual(result["summary"], data["summary"])
+
+    def test_model_cooldown_recovers_preferred_model(self):
+        from financial_twin.server import gemini_json
+
+        requests = []
+
+        def send(request, timeout):
+            model = json.loads(request.data)["model"]
+            requests.append(model)
+            if len(requests) == 1:
+                raise HTTPError(request.full_url, 429, "Busy", {}, None)
+            return io.BytesIO(json.dumps({"choices": [{"message": {"content": "{}"}}]}).encode())
+
+        environment = {"AI_BASE_URL": "https://example.test/v1", "AI_API_KEY_MODEL": "first, second", "AI_MODEL_RETRY_SECONDS": "60"}
+        with patch.dict("os.environ", environment), patch("financial_twin.server.urlopen", side_effect=send), patch("financial_twin.server.monotonic") as now:
+            now.return_value = 100
+            gemini_json("test", {}, "key")
+            now.return_value = 120
+            gemini_json("test", {}, "key")
+            gemini_json("test", {}, "other-key")
+            now.return_value = 160
+            gemini_json("test", {}, "key")
+        self.assertEqual(requests, ["first", "second", "second", "first", "first"])
 
     def test_rejects_invalid_gemini_variable_selection(self):
         for ids in (["opening_cash_chf"] * 3, ["opening_cash_chf", "monthly_income_chf", "house_price"]):

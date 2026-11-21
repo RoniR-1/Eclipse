@@ -2,11 +2,19 @@
 
 ## Run the website
 
-From the repository root, install dependencies with `python3 -m pip install -r requirements.txt`, run `python3 -m financial_twin.server`, and open [the local website](http://127.0.0.1:8000).
+From the repository root, run `./start.sh` and open [the local website](http://127.0.0.1:8000). The shortcut creates the Python environment and `.env` if needed, installs missing dependencies, and starts the default PostgreSQL database using the existing local cluster or Docker Compose. Python 3 and either Docker Compose or the existing local PostgreSQL cluster are required. Stop the website with Ctrl+C.
 
-To configure the AI provider, copy `.env.example` to `.env`, set `AI_API_KEY`, `AI_BASE_URL`, and `AI_API_KEY_MODEL`, and restart the server. Provide model names separated by commas to try another model when one is unavailable, rate-limited, or times out. You can also enter a key through the website’s settings for the current page session.
+To configure the AI provider, copy `.env.example` to `.env`, set `AI_API_KEY`, `AI_BASE_URL`, and `AI_API_KEY_MODEL`, and restart the server. Put model names in preference order on one line, separated by commas, such as `AI_API_KEY_MODEL=model1,model2,model3`. When a model is unavailable, rate-limited, or times out, the server tries the next model and waits 60 seconds before trying the failed model on a later request. Set `AI_MODEL_RETRY_SECONDS` to change that interval. If all models are cooling down, the server tries them in order. You can also enter a key through the website’s settings for the current page session.
 
 Describe your finances and the decision you want to explore, using CHF for monetary amounts. Select a 5-, 10- or 20-year horizon and submit. The server sends the statement to Google Gemini to extract a starting scenario and choose three to five relevant controls. Review the assumptions, adjust the sliders, and choose **Simulate Future** to project the monthly timeline with the Python engine.
+
+## PostgreSQL data
+
+The server requires `DATABASE_URL`. The provided Docker Compose database listens on localhost port 5433 and stores data in the `financial_twin_data` named volume, which survives application and database restarts. A local PostgreSQL instance or hosted PostgreSQL database can also be used by setting its URL in `.env`. Start the database before starting the server. The existing local PostgreSQL cluster in this workspace can instead be started with `/usr/lib/postgresql/16/bin/pg_ctl -D .local/postgres -l .local/postgres.log -o '-p 5433 -k /tmp' start` and stopped with `/usr/lib/postgresql/16/bin/pg_ctl -D .local/postgres stop`. Use either this local cluster or Compose at a time, since both use port 5433.
+
+On startup, PostgreSQL tables are created if needed. If every application data table is empty, all eleven supplied CSV files are loaded in one transaction under an advisory lock. If any table contains data, the import is skipped; subsequent starts do not read the CSVs. A failed import rolls back, and concurrent startups cannot duplicate the seed. To deliberately reset data, empty all application tables or create a new database; removing the Compose volume permanently deletes the stored data. The scenario catalog and the identical scenario library are retained as separate source tables. Most records link to profiles, accounts, or scenarios through foreign keys; asset account references remain unconstrained because some investment accounts are absent from the accounts CSV.
+
+To run the PostgreSQL integration test against a disposable schema, set `TEST_DATABASE_URL` to a database where the user can create schemas, then run `.local/venv/bin/python -m unittest discover -s tests -v`.
 
 ## Simulation engine
 
@@ -16,7 +24,7 @@ This Python package models monthly financial decisions for the LauzHack challeng
 
 Stefania Stan’s [challenge brief](ai-financial-twin-lauzhack-2026/README.md) asks teams to let a user change a life decision and compare its consequences against a baseline. The examples follow Alexia, a fictional student in Lausanne with CHF 8,000 in cash. The [evaluation materials](ai-financial-twin-lauzhack-2026/evaluation/README.md) give draft judging guidance. They emphasize a demonstrable decision, sound accounting, visible assumptions, constraint breaches and explainable comparisons. Binding event rules come from the organizers.
 
-The [Data directory](ai-financial-twin-lauzhack-2026/Data) contains 1,200 synthetic profiles, 1,200 accounts, 2,399 asset snapshots, 283 liability snapshots, 1,500 goals and 28,800 monthly cash reconciliations. The 120 catalog entries describe decisions. The 240 scenario assumption rows cover only a subset of profile/scenario combinations. The README mentions a detailed transaction CSV and a life-event CSV that are absent from this checkout. Net monthly transactions alone cannot identify the underlying income and expense categories.
+The [Data directory](ai-financial-twin-lauzhack-2026/Data) contains 1,200 synthetic profiles, 1,200 accounts, 2,399 asset snapshots, 283 liability snapshots, 1,500 goals and 28,800 monthly cash reconciliations. The 120 catalog entries describe decisions. The 240 scenario assumption rows cover only a subset of profile/scenario combinations. The transaction and life-event CSVs are also loaded. Net monthly transactions alone cannot identify the underlying income and expense categories.
 
 The [starter kit](ai-financial-twin-lauzhack-2026/starter-kit) supplies an independent cash-only reference with three ten-year paths. Its JSON assumptions differ from the CSV scenario assumptions. For example, the JSON charges Alexia CHF 2,500 at the beginning of each study year, whereas her S001 CSV assumption specifies CHF 8,000 per year. Select one set explicitly when comparing paths.
 
