@@ -15,7 +15,7 @@ from urllib.request import Request, urlopen
 from uuid import uuid4
 
 from financial_twin import create_root, simulate
-from financial_twin.engine import is_investment_asset
+from financial_twin.engine import is_investment_asset, _date_at, expense_terms_at
 
 ROOT = Path(__file__).resolve().parent.parent
 WEB = ROOT / "web"
@@ -411,10 +411,193 @@ def apply_branch_change(parent, event, months, variables, change):
         costs.append({"month": month, "description": event.strip(), "amount_chf": change["one_off_cost_chf"]})
     nodes = simulate(updated_parent, months, preferences=preferences, branch_id=branch_id,
                      scenario_updates={"phases": phases, "one_off_costs": costs, "annual_inflation": inflation})
+    nodes[0]["event_state"] = {"assets": deepcopy(updated_parent["state"]["assets"]),
+                               "debts": deepcopy(updated_parent["state"]["debts"]),
+                               "parent_assets": deepcopy(parent["state"]["assets"]),
+                               "parent_debts": deepcopy(parent["state"]["debts"])}
     nodes[0]["event_summary"] = event.strip()
     for node in nodes:
         node["event_narrative"] = event.strip()
     return {"nodes": nodes, "narrative": event.strip()}
+
+
+def edit_nodes(data):
+    nodes = data.get("nodes")
+    edits = data.get("edits")
+    selected_id = data.get("node_id")
+    if not isinstance(nodes, list) or not isinstance(edits, dict):
+        raise ValueError("Provide nodes and edits.")
+    old = {node["id"]: node for node in nodes}
+    if len(old) != len(nodes) or selected_id not in old:
+        raise ValueError("Invalid timeline nodes.")
+    for node in nodes:
+        seen = set()
+        current = node
+        while current["parent_id"] is not None:
+            if current["id"] in seen or current["parent_id"] not in old:
+                raise ValueError("Invalid timeline structure.")
+            seen.add(current["id"])
+            current = old[current["parent_id"]]
+    selected = old[selected_id]
+    month = max(0, selected["month"] - 1)
+    phase = next(p for p in selected["scenario"]["phases"] if p["start_month"] <= month and (p["end_month"] is None or month < p["end_month"]))
+    allowed = {"cash_chf", "monthly_income_chf", "monthly_expenses_chf", "one_off_cost_chf", "date",
+               "year_inflation", "annual_inflation", "inflation_exempt", "duration_months"}
+    if set(edits) - allowed:
+        raise ValueError("Unknown editable field.")
+    for key, value in edits.items():
+        if key == "date":
+            continue
+        if key == "inflation_exempt":
+            if not isinstance(value, bool):
+                raise ValueError("Inflation exemption must be true or false.")
+            continue
+        if key in ("year_inflation", "duration_months") and value is None:
+            continue
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+            raise ValueError("Enter valid financial amounts.")
+        if key in ("year_inflation", "annual_inflation"):
+            if value <= -1:
+                raise ValueError("Inflation must be greater than -100%.")
+        elif key == "duration_months":
+            if not isinstance(value, int) or value < 1:
+                raise ValueError("Duration must be a positive number of months.")
+        elif key != "cash_chf" and value < 0:
+            raise ValueError("Enter valid financial amounts.")
+    if ("cash_chf" in edits or "annual_inflation" in edits) and selected["parent_id"] is not None:
+        raise ValueError("Starting cash and global inflation can only be changed at the starting point.")
+    new_start = None
+    if "date" in edits:
+        date.fromisoformat(edits["date"])
+        new_start = _date_at(edits["date"], -selected["month"])
+        if _date_at(new_start, selected["month"]) != edits["date"]:
+            raise ValueError("This date cannot be represented on the monthly timeline.")
+        if selected["parent_id"] and edits["date"] <= old[selected["parent_id"]]["date"]:
+            raise ValueError("The date must be after the previous node.")
+    changes = {key: edits[key] - phase[key] for key in ("monthly_income_chf",) if key in edits}
+    old_terms = selected["state"]["active_variables"].get("expense_terms")
+    if old_terms is None:
+        factor = selected["state"]["active_variables"].get("price_factor", 1)
+        if selected["month"] > 0:
+            rate = selected["scenario"]["annual_inflation"]
+            factor /= (1 + rate) ** (1 / 12)
+        old_terms = expense_terms_at(selected["scenario"], month, factor)
+    term_edit = any(key in edits for key in ("monthly_expenses_chf", "inflation_exempt", "duration_months"))
+    duration = edits.get("duration_months", old_terms["duration_months"])
+    term = {"start_month": month, "end_month": None if duration is None else month + duration,
+            "monthly_expenses_chf": edits.get("monthly_expenses_chf", old_terms["monthly_expenses_chf"]),
+            "phase_expenses_chf": phase["monthly_expenses_chf"],
+            "inflation_exempt": edits.get("inflation_exempt", old_terms["inflation_exempt"])}
+    edit_year = date.fromisoformat(_date_at(new_start or selected["scenario"]["start_date"], month)).year
+    children = {}
+    for node in nodes:
+        children.setdefault(node["parent_id"], []).append(node)
+    result = {}
+    propagate_cost = {}
+    propagate_date = {}
+    propagate_cash = {}
+    propagate_inflation = {}
+    propagate_year = {}
+    pending = [selected]
+    while pending:
+        original = pending.pop(0)
+        pending.extend(children.get(original["id"], []))
+        scenario = deepcopy(original["scenario"])
+        if new_start:
+            inherit_date = original["id"] == selected_id
+            if not inherit_date:
+                previous = old[original["parent_id"]]
+                inherit_date = propagate_date[original["parent_id"]] and previous["scenario"]["start_date"] == scenario["start_date"]
+            propagate_date[original["id"]] = inherit_date
+        if new_start and inherit_date:
+            scenario["start_date"] = new_start
+        if "cash_chf" in edits:
+            inherit_cash = original["id"] == selected_id
+            if not inherit_cash:
+                previous = old[original["parent_id"]]
+                inherit_cash = propagate_cash[original["parent_id"]] and previous["scenario"]["opening_cash_chf"] == scenario["opening_cash_chf"]
+            propagate_cash[original["id"]] = inherit_cash
+            if inherit_cash:
+                scenario["opening_cash_chf"] = edits["cash_chf"]
+        if "annual_inflation" in edits:
+            inherit_inflation = original["id"] == selected_id
+            if not inherit_inflation:
+                previous = old[original["parent_id"]]
+                inherit_inflation = propagate_inflation[original["parent_id"]] and previous["scenario"]["annual_inflation"] == scenario["annual_inflation"]
+            propagate_inflation[original["id"]] = inherit_inflation
+            if inherit_inflation:
+                scenario["annual_inflation"] = edits["annual_inflation"]
+        if "year_inflation" in edits:
+            overrides = scenario.setdefault("inflation_by_year", {})
+            inherit_year = original["id"] == selected_id
+            if not inherit_year:
+                previous = old[original["parent_id"]]
+                previous_rate = previous["scenario"].get("inflation_by_year", {}).get(str(edit_year))
+                inherit_year = propagate_year[original["parent_id"]] and previous_rate == overrides.get(str(edit_year))
+            propagate_year[original["id"]] = inherit_year
+            if inherit_year:
+                if edits["year_inflation"] is None:
+                    overrides.pop(str(edit_year), None)
+                else:
+                    overrides[str(edit_year)] = edits["year_inflation"]
+        if term_edit:
+            terms = scenario.setdefault("expense_terms", [])
+            terms[:] = [item for item in terms if item["start_month"] != month]
+            terms.append(deepcopy(term))
+        for item in scenario["phases"]:
+            if item["end_month"] is None or item["end_month"] > month:
+                for key, delta in changes.items():
+                    item[key] = max(0, item[key] + delta)
+        if "one_off_cost_chf" in edits:
+            costs = scenario["one_off_costs"]
+            inherit = original["id"] == selected_id
+            if not inherit:
+                previous = old[original["parent_id"]]
+                old_costs = [cost for cost in previous["scenario"]["one_off_costs"] if cost["month"] == month]
+                current_costs = [cost for cost in costs if cost["month"] == month]
+                inherit = propagate_cost[original["parent_id"]] and old_costs == current_costs
+            propagate_cost[original["id"]] = inherit
+            if inherit:
+                scenario["one_off_costs"] = [cost for cost in costs if cost["month"] != month]
+                if edits["one_off_cost_chf"]:
+                    scenario["one_off_costs"].append({"month": month, "description": "Edited cost", "amount_chf": edits["one_off_cost_chf"]})
+        if original["parent_id"] is None:
+            revised = create_root(scenario)
+        else:
+            parent = deepcopy(result.get(original["parent_id"], old[original["parent_id"]]))
+            event_state = original.get("event_state")
+            if not event_state and original["branch_id"] != "main" and original["branch_id"] != old[original["parent_id"]]["branch_id"]:
+                before = old[original["parent_id"]]["state"]
+                after_assets = deepcopy(original["state"]["assets"])
+                for asset in after_assets:
+                    contribution = original["state"]["cash_flow"]["investment_contribution_chf"] if asset["id"] == "__contributions__" else 0
+                    asset["value_chf"] = max(0, asset["value_chf"] - contribution) / ((1 + asset["annual_return"]) ** (1 / 12)) if asset["annual_return"] > -1 else 0
+                after_debts = deepcopy(original["state"]["debts"])
+                for debt in after_debts:
+                    if debt["principal_chf"] > 0:
+                        debt["principal_chf"] = (debt["principal_chf"] + debt["monthly_payment_chf"]) / (1 + debt["annual_interest_rate"] / 12)
+                event_state = {"assets": after_assets, "debts": after_debts,
+                               "parent_assets": before["assets"], "parent_debts": before["debts"]}
+            if event_state:
+                for kind in ("assets", "debts"):
+                    before = {item["id"]: item for item in event_state["parent_" + kind]}
+                    after = {item["id"]: item for item in event_state[kind]}
+                    value_key = "value_chf" if kind == "assets" else "principal_chf"
+                    for item in parent["state"][kind]:
+                        if item["id"] in before and item["id"] in after and before[item["id"]][value_key]:
+                            item[value_key] *= after[item["id"]][value_key] / before[item["id"]][value_key]
+                    parent["state"][kind].extend(deepcopy(item) for key, item in after.items() if key not in before)
+            parent["scenario"] = scenario
+            revised = simulate(parent, 1, preferences=original["state"]["active_variables"]["preferences"], branch_id=original["branch_id"])[0]
+            if revised["date"] <= parent["date"]:
+                raise ValueError("The date would place a later node before its parent.")
+        revised["id"] = original["id"]
+        revised["parent_id"] = original["parent_id"]
+        for key in ("event_summary", "event_narrative", "event_state"):
+            if key in original:
+                revised[key] = deepcopy(original[key])
+        result[original["id"]] = revised
+    return {"nodes": list(result.values())}
 
 
 TEST_EVENTS = [
@@ -541,7 +724,8 @@ class Handler(SimpleHTTPRequestHandler):
             if self.headers.get_content_type() != "application/json":
                 raise ValueError("Content-Type must be application/json.")
             length = int(self.headers.get("Content-Length", "0"))
-            if length <= 0 or length > 100000:
+            limit = 10000000 if self.path == "/api/edit-nodes" else 100000
+            if length <= 0 or length > limit:
                 raise ValueError("Invalid request size.")
             data = json.loads(self.rfile.read(length))
             if not isinstance(data, dict):
@@ -556,6 +740,8 @@ class Handler(SimpleHTTPRequestHandler):
             elif self.path == "/api/branch":
                 key = data.get("api_key") or (os.environ.get("AI_API_KEY") or os.environ.get("GEMINI_API_KEY", ""))
                 response = run_branch(data, key)
+            elif self.path == "/api/edit-nodes":
+                response = edit_nodes(data)
             elif self.path == "/api/narrative":
                 response = node_narrative(data)
             elif self.path == "/api/test":
