@@ -123,6 +123,11 @@ EVENT_TYPES = {
     "housing_change": {
         "label": "Change housing",
         "params": {
+            "purchase_price_chf": _p("Purchase price", "CHF", 0, 1e8, lambda p: 0),
+            "down_payment_share": _p("Down payment", "share", 0, 1, lambda p: 0.2),
+            "purchase_fees_share": _p("Purchase fees", "share", 0, 1, lambda p: 0.05),
+            "mortgage_interest_rate": _p("Mortgage interest rate", "share", 0, 1, lambda p: 0.02),
+            "annual_maintenance_share": _p("Annual maintenance", "share", 0, 1, lambda p: 0.01),
             "new_rent_chf": _p("New monthly rent", "CHF", 0, 1e5,
                                lambda p: p["monthly_rent_chf"] if p else None, note="Defaults to current rent"),
             "deposit_months": _p("Rent deposit", "months", 0, 3, lambda p: 3,
@@ -267,18 +272,23 @@ def _values(profile):
 
 
 def resolve_event(raw, profile, start):
-    _check_keys(raw, ["type", "label", "start_month", "in_months", "date", "params"], "event")
+    _check_keys(raw, ["type", "label", "start_month", "in_months", "date", "params", "resolved_params"], "event")
     kind = raw.get("type")
     if kind not in EVENT_TYPES:
         raise ValueError(f"event type must be one of {list(EVENT_TYPES)}")
     spec = EVENT_TYPES[kind]
     params_raw = raw.get("params") or {}
     _check_keys(params_raw, spec["params"], f"{kind} params")
+    resolved = raw.get("resolved_params") or {}
     p = _values(profile)
     params = {}
     for key, pspec in spec["params"].items():
         given = params_raw.get(key)
-        if given is None:
+        if given is None and key in resolved.get("params", {}):
+            params[key] = _value(_number(resolved["params"][key], key, pspec), resolved["source"], pspec)
+            params[key]["source_urls"] = resolved.get("source_urls", [])
+            params[key]["note"] = resolved.get("note", "")
+        elif given is None:
             params[key] = _value(pspec["default"](p), pspec["source"], pspec)
         else:
             params[key] = _value(_number(given, key, pspec), "user", pspec)
@@ -344,8 +354,15 @@ def _build(profile, events, horizon, factor=0):
                 disc[t] *= 1 + q["cost_of_living_change_pct"]
         elif event["type"] == "housing_change":
             for t in after:
-                rent[t] = q["new_rent_chf"]
-            deposit[m0] += q["deposit_months"] * q["new_rent_chf"]
+                if q["purchase_price_chf"]:
+                    rent[t] = q["purchase_price_chf"] * ((1 - q["down_payment_share"]) * q["mortgage_interest_rate"] + q["annual_maintenance_share"]) / 12
+                else:
+                    rent[t] = q["new_rent_chf"]
+            if q["purchase_price_chf"]:
+                deposit[m0] += q["purchase_price_chf"] * q["down_payment_share"]
+                one_off[m0] += q["purchase_price_chf"] * q["purchase_fees_share"]
+            else:
+                deposit[m0] += q["deposit_months"] * q["new_rent_chf"]
             one_off[m0] += q["moving_cost_chf"]
         elif event["type"] == "unexpected_expense":
             one_off[m0] += q["amount_chf"]
@@ -504,7 +521,8 @@ def _assumptions(profile, paths):
     for name, path in paths.items():
         for event in path["events"]:
             used += [{"scope": f"{name}: {event['label']}", "field": item["label"], "value": item["value"],
-                      "unit": item["unit"], "source": item["source"], "note": item.get("note", "")}
+                      "unit": item["unit"], "source": item["source"], "note": item.get("note", ""),
+                      "source_urls": item.get("source_urls", [])}
                      for item in event["params"].values()
                      if item["source"] != "user" and item["value"] is not None]
     return used

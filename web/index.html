@@ -60,7 +60,27 @@
                 <label for="years">Look ahead</label>
                 <div class="select-wrap">
                   <select id="years" name="years">
+                    <option value="0">0 years</option>
+                    <option value="1">1 year</option>
+                    <option value="2">2 years</option>
+                    <option value="3">3 years</option>
+                    <option value="4">4 years</option>
                     <option value="5" selected>5 years</option>
+                    <option value="6">6 years</option>
+                    <option value="7">7 years</option>
+                    <option value="8">8 years</option>
+                    <option value="9">9 years</option>
+                    <option value="10">10 years</option>
+                    <option value="11">11 years</option>
+                    <option value="12">12 years</option>
+                    <option value="13">13 years</option>
+                    <option value="14">14 years</option>
+                    <option value="15">15 years</option>
+                    <option value="16">16 years</option>
+                    <option value="17">17 years</option>
+                    <option value="18">18 years</option>
+                    <option value="19">19 years</option>
+                    <option value="20">20 years</option>
                   </select>
                 </div>
               </div>
@@ -144,7 +164,10 @@
                 <div class="eyebrow"><span></span> HORIZON SUMMARY</div>
                 <h2>Where this path <em>leads.</em></h2>
               </div>
-              <button class="text-button" id="back-to-top" type="button">↑ Back to top</button>
+              <div class="summary-head-actions">
+                <button class="ghost-button" id="download-run" type="button" title="Save every input and result of this run so it can be replayed exactly with scripts/reproduce.py">Download run file <span aria-hidden="true">⤓</span></button>
+                <button class="text-button" id="back-to-top" type="button">↑ Back to top</button>
+              </div>
             </div>
 
             <div class="summary-layout">

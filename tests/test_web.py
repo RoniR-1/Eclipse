@@ -6,7 +6,7 @@ from unittest.mock import patch
 from urllib.error import HTTPError, URLError
 
 from financial_twin import create_root, simulate
-from financial_twin.server import extract, node_narrative, run_branch, run_simulation
+from financial_twin.server import apply_branch_change, edit_nodes, extract, node_narrative, run_branch, run_simulation, run_projection, random_test, years_value
 
 
 class WebFlowTests(unittest.TestCase):
@@ -14,6 +14,82 @@ class WebFlowTests(unittest.TestCase):
         self.cooldowns = patch.dict("financial_twin.server.MODEL_COOLDOWNS", {}, clear=True)
         self.cooldowns.start()
         self.addCleanup(self.cooldowns.stop)
+
+    def test_edit_propagates_through_fork_and_preserves_event(self):
+        scenario = {"start_date": "2025-01-01", "opening_cash_chf": 10000, "annual_inflation": 0,
+                    "phases": [{"start_month": 0, "end_month": None, "monthly_income_chf": 5000, "monthly_expenses_chf": 2000}],
+                    "one_off_costs": [], "assets": [], "debts": [], "preferences": {}}
+        root = create_root(scenario)
+        main = simulate(root, 3)
+        change = {"monthly_income_delta_chf": 1000, "monthly_expenses_delta_chf": 0, "one_off_cost_chf": 1000,
+                  "investment_multiplier": 1, "new_asset_chf": 20000, "new_debt_chf": 0,
+                  "new_debt_annual_interest_rate": 0, "new_debt_monthly_payment_chf": 0}
+        branch = apply_branch_change(main[0], "New job", 2, {}, change)["nodes"]
+        nodes = [root, *main, *branch]
+        changed = edit_nodes({"nodes": nodes, "node_id": root["id"], "edits": {"cash_chf": 12000, "monthly_income_chf": 6000}})["nodes"]
+        revised = {node["id"]: node for node in changed}
+        self.assertEqual(revised[main[-1]["id"]]["state"]["cash_chf"], 24000)
+        self.assertEqual(revised[branch[-1]["id"]]["state"]["cash_chf"], 25000)
+        self.assertEqual(revised[branch[-1]["id"]]["state"]["assets"][0]["value_chf"], 20000)
+        self.assertEqual(revised[branch[-1]["id"]]["scenario"]["opening_cash_chf"], 12000)
+
+    def test_expense_inflation_override_and_fixed_duration(self):
+        scenario = {"start_date": "2025-01-01", "opening_cash_chf": 50000, "annual_inflation": 0.12,
+                    "phases": [{"start_month": 0, "end_month": None, "monthly_income_chf": 0, "monthly_expenses_chf": 1000}],
+                    "one_off_costs": [], "assets": [], "debts": [], "preferences": {}}
+        root = create_root(scenario)
+        nodes = [root, *simulate(root, 25)]
+        edits = {"monthly_expenses_chf": 1200, "inflation_exempt": True,
+                 "duration_months": 14, "year_inflation": 0.24, "annual_inflation": 0.06}
+        changed = edit_nodes({"nodes": nodes, "node_id": root["id"], "edits": edits})["nodes"]
+        revised = {node["month"]: node for node in changed}
+        self.assertEqual(revised[0]["state"]["active_variables"]["expense_terms"]["year_inflation"], 0.24)
+        self.assertEqual(revised[1]["state"]["cash_flow"]["expenses_chf"], 1200)
+        self.assertEqual(revised[14]["state"]["cash_flow"]["expenses_chf"], 1200)
+        self.assertAlmostEqual(revised[15]["state"]["cash_flow"]["expenses_chf"],
+                               1000 * 1.24 * 1.06 ** (2 / 12))
+        self.assertEqual(revised[15]["state"]["active_variables"]["expense_terms"]["year"], 2026)
+        self.assertIsNone(revised[15]["state"]["active_variables"]["expense_terms"]["year_inflation"])
+
+    def test_year_inflation_override_applies_to_one_year(self):
+        scenario = {"start_date": "2025-01-01", "opening_cash_chf": 100000, "annual_inflation": 0.06,
+                    "phases": [{"start_month": 0, "end_month": None, "monthly_income_chf": 0, "monthly_expenses_chf": 1000}],
+                    "one_off_costs": [], "assets": [], "debts": [], "preferences": {}}
+        root = create_root(scenario)
+        nodes = [root, *simulate(root, 25)]
+        changed = edit_nodes({"nodes": nodes, "node_id": root["id"], "edits": {"year_inflation": 0.24}})["nodes"]
+        revised = {node["month"]: node for node in changed}
+        self.assertAlmostEqual(revised[13]["state"]["cash_flow"]["expenses_chf"], 1240)
+        self.assertAlmostEqual(revised[25]["state"]["cash_flow"]["expenses_chf"], 1240 * 1.06)
+
+    def test_projection_resolves_description_and_preserves_user_amounts(self):
+        data = {"profile": {"age": 30, "cash_chf": 10000, "monthly_net_income_chf": 5000, "monthly_rent_chf": 1500},
+                "scenarios": {"Study": [{"type": "education", "description": "Bachelor at ETH Zurich", "in_months": 0}]},
+                "horizon_years": 1}
+        cached = {"params": {"annual_tuition_chf": 1500}, "source": "database_cache", "source_urls": ["https://example.org"], "note": ""}
+        with patch.dict("os.environ", {"DATABASE_URL": "postgresql://test"}), patch("financial_twin.event_resolver.resolve_event", return_value=cached) as resolver:
+            result = run_projection(data)
+            resolver.assert_called_once()
+            self.assertEqual(result["paths"]["Study"]["events"][0]["params"]["annual_tuition_chf"]["source"], "database_cache")
+            data["scenarios"]["Study"][0]["params"] = {"annual_tuition_chf": 3000}
+            resolver.reset_mock()
+            result = run_projection(data)
+            resolver.assert_not_called()
+            self.assertEqual(result["paths"]["Study"]["events"][0]["params"]["annual_tuition_chf"]["value"], 3000)
+
+    def test_year_selection_including_zero(self):
+        for years in (0, 1, 20):
+            self.assertEqual(years_value(years), years)
+        for years in (-1, 21, 1.5, True):
+            with self.assertRaises(ValueError):
+                years_value(years)
+        result = random_test({"years": 0})
+        self.assertEqual(result["years"], 0)
+        self.assertEqual(len(result["nodes"]), 1)
+        variables = {item["id"]: item["value"] for item in result["extraction"]["variables"]}
+        simulation = run_simulation({"years": 0, "scenario": result["extraction"]["scenario"], "variables": variables})
+        self.assertEqual(len(simulation["nodes"]), 1)
+        self.assertEqual(simulation["nodes"][0]["month"], 0)
 
     def gemini_result(self):
         return {
@@ -172,6 +248,34 @@ class WebFlowTests(unittest.TestCase):
         self.assertAlmostEqual(first[0]["state"]["risk_exposure"]["investment_value_chf"], 7000)
         self.assertEqual(first[0]["event_narrative"], "Market crash")
         self.assertNotIn("narrative", first[0])
+
+    def test_branch_excludes_events_after_fork(self):
+        scenario = {
+            "start_date": "2025-01-01", "opening_cash_chf": 10000,
+            "phases": [
+                {"name": "B", "start_month": 0, "end_month": 3,
+                 "monthly_income_chf": 4000, "monthly_expenses_chf": 2000},
+                {"name": "C", "start_month": 3, "end_month": None,
+                 "monthly_income_chf": 6000, "monthly_expenses_chf": 2000},
+            ],
+            "one_off_costs": [{"description": "C cost", "month": 3, "amount_chf": 1000}],
+            "assets": [], "debts": [],
+        }
+        original = simulate(create_root(scenario), 5)
+        change = {"monthly_income_delta_chf": 500, "monthly_expenses_delta_chf": 0,
+                  "one_off_cost_chf": 0, "investment_multiplier": 1, "new_asset_chf": 0,
+                  "new_debt_chf": 0, "new_debt_annual_interest_rate": 0,
+                  "new_debt_monthly_payment_chf": 0}
+        with patch("financial_twin.server.gemini_json", return_value=change):
+            branch = run_branch({"parent": original[1], "event": "D", "months": 3}, "key")["nodes"]
+            boundary_branch = run_branch({"parent": original[2], "event": "D", "months": 2}, "key")["nodes"]
+        self.assertEqual(branch[0]["event_summary"], "D")
+        self.assertEqual(original[3]["event_summary"], "C; C cost")
+        self.assertEqual(branch[1]["event_summary"], "Monthly update")
+        self.assertEqual(branch[1]["state"]["cash_flow"]["income_chf"], 4500)
+        self.assertEqual(branch[1]["state"]["cash_flow"]["one_off_costs_chf"], 0)
+        self.assertEqual(boundary_branch[0]["state"]["cash_flow"]["income_chf"], 4500)
+        self.assertEqual(boundary_branch[0]["state"]["cash_flow"]["one_off_costs_chf"], 0)
 
 
 if __name__ == "__main__":
