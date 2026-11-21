@@ -7,6 +7,7 @@ const EXPORTS = [
   'state', 'branchNodeIds', 'originalPathRemovals', 'isOriginalBranch', 'deleteBranch', 'buildRunFile',
   'buildTreeIndex', 'getPathMilestones', 'nodeHealth', 'formatVariable', 'milestoneTitle', 'money',
   'moneySigned', 'compactChf', 'escapeHtml', 'variableToDisplay', 'parseVariableInput', 'renderTuning',
+  'setCurrency', 'localizeAmounts', 'currencyRateText', 'conversionText', 'chfToDisplay', 'displayToChf',
 ];
 
 // An object that accepts any property access, assignment or call, standing in for DOM elements.

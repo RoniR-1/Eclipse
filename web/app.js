@@ -48,22 +48,77 @@ const BRANCH_PALETTE = [
   '#c9a3dc', // Muted warm lavender
 ];
 
-const money = value =>
-  new Intl.NumberFormat('en-CH', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0 }).format(value);
+/* ==========================================================================
+   CURRENCY
+   The engine calculates in CHF. Other currencies are a view: amounts are converted for display, and typed
+   amounts are converted back to CHF before they are sent. Rates come from /api/currencies.
+   ========================================================================== */
+
+const CHF = { code: 'CHF', name: 'Swiss franc', symbol: 'CHF', per_chf: 1, date: null, source: null };
+state.currency = CHF;
+state.currencies = [CHF];
+
+// Prefix for amounts: "€2,000", "$2,000", but "SEK 2,000" and "CHF 2,000" (letters get a space).
+const currencyPrefix = () => {
+  const symbol = state.currency.symbol || state.currency.code;
+  return /[A-Za-z]$/.test(symbol) ? `${symbol} ` : symbol;
+};
+// The unit shown next to money inputs.
+const currencyUnit = () => state.currency.code === 'CHF' ? 'CHF' : (state.currency.symbol || state.currency.code);
+const chfToDisplay = chf => Number(chf) * state.currency.per_chf;
+const displayToChf = amount => Number(amount) / state.currency.per_chf;
+
+function setCurrency(code, list = state.currencies) {
+  const found = list.find(item => item.code === code);
+  state.currency = found ? { ...found } : CHF;
+  return state.currency;
+}
+
+// One line saying which rate is used, e.g. "1 EUR = 0.92 CHF · European Central Bank reference rate of 2026-11-20".
+// Small units are quoted per 100 (100 JPY = 0.53 CHF) so two decimals still say something.
+function currencyRateText(currency = state.currency) {
+  if (!currency || currency.code === 'CHF') return 'Calculations are in Swiss francs.';
+  const units = 1 / currency.per_chf < 0.1 ? 100 : 1;
+  return `${units} ${currency.code} = ${(units / currency.per_chf).toFixed(2)} CHF · ${currency.source || 'exchange rate'}${currency.date ? ` of ${currency.date}` : ''}. Calculations stay in CHF.`;
+}
+
+// Numbers shown to people have at most two decimals and comma thousands separators (5,000).
+const twoDecimals = value => new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(value);
+
+const money = value => {
+  if (state.currency.code === 'CHF') {
+    return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0 }).format(value);
+  }
+  const amount = chfToDisplay(value);
+  const digits = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(Math.abs(amount));
+  return `${Math.round(amount) < 0 ? '-' : ''}${currencyPrefix()}${digits}`;
+};
 
 const moneySigned = value => {
-  if (Math.abs(value) < 0.5) return 'CHF 0';
+  if (Math.abs(chfToDisplay(value)) < 0.5) return `${currencyPrefix()}0`;
   return `${value > 0 ? '+' : '−'}${money(Math.abs(value))}`;
 };
 
 const compactChf = value => {
-  const sign = value < 0 ? '−' : '';
-  const abs = Math.abs(value);
-  if (abs >= 1_000_000) return `${sign}CHF ${(abs / 1_000_000).toFixed(1)}M`;
-  if (abs >= 10_000) return `${sign}CHF ${Math.round(abs / 1000)}k`;
-  if (abs >= 1_000) return `${sign}CHF ${(abs / 1_000).toFixed(1)}k`;
-  return `${sign}CHF ${Math.round(abs)}`;
+  const amount = chfToDisplay(value);
+  const sign = amount < 0 ? '−' : '';
+  const abs = Math.abs(amount);
+  const prefix = currencyPrefix();
+  if (abs >= 1_000_000) return `${sign}${prefix}${(abs / 1_000_000).toFixed(1)}M`;
+  if (abs >= 10_000) return `${sign}${prefix}${Math.round(abs / 1000)}k`;
+  if (abs >= 1_000) return `${sign}${prefix}${(abs / 1_000).toFixed(1)}k`;
+  return `${sign}${prefix}${Math.round(abs)}`;
 };
+
+// Server and AI text quotes amounts as "CHF 1,234.50"; show those in the chosen currency too.
+// "(written as €2,000)" notes, added when a story's amounts were converted, are dropped once shown in that currency.
+function localizeAmounts(text) {
+  if (!text || state.currency.code === 'CHF') return text ?? '';
+  return String(text).replace(/CHF\s?(-?\d[\d,'’]*(?:\.\d+)?)(?:\s*\(written as [^)]*\))?/g, (match, number) => {
+    const value = Number(number.replace(/[,'’]/g, ''));
+    return Number.isFinite(value) ? money(value) : match;
+  });
+}
 
 function escapeHtml(str) {
   return String(str)
@@ -1062,19 +1117,36 @@ function getAllGraphMilestones(index) {
    STAGE 2: TUNING RENDERER
    ========================================================================== */
 
-// Assumption values are typed in display units: percentages as percent (42 = 42%), money in CHF, months as months.
+// Assumption values are typed in display units: percentages as percent (42 = 42%), money in the chosen currency
+// (converted to and from CHF, which the engine uses), months as months.
 const isFractionPercent = variable => (variable.unit === '%' || variable.unit === 'percent') && Number(variable.max) <= 1;
 
 function variableToDisplay(variable, value) {
-  const number = Number(value) * (isFractionPercent(variable) ? 100 : 1);
+  const number = variable.unit === 'CHF' ? chfToDisplay(value) : Number(value) * (isFractionPercent(variable) ? 100 : 1);
   return String(Number(number.toFixed(2)));
 }
 
-// Reads a typed value ("5'000", "CHF 5,000", "42%", "3 months") into the variable's own units; null if not a number.
+// Reads a typed value ("5'000", "CHF 5,000", "€5,000", "42%", "3 months") into the variable's own units
+// (money in CHF); null if not a number.
 function parseVariableInput(variable, text) {
-  const cleaned = String(text).replace(/chf|%|months?|[\s'’_]/gi, '').replace(/,(?=\d{3}(\D|$))/g, '').replace(',', '.');
+  const cleaned = String(text)
+    .replace(/chf|eur|usd|gbp|jpy|cny|cad|aud|sek|nok|dkk|pln|inr|zł|[a-z]{0,2}[€$£¥₹]|%|months?|[\s'’_]/gi, '')
+    .replace(/,(?=\d{3}(\D|$))/g, '').replace(',', '.');
   if (!/^-?(\d+\.?\d*|\.\d+)$/.test(cleaned)) return null;
+  if (variable.unit === 'CHF') return displayToChf(Number(cleaned));
   return Number(cleaned) / (isFractionPercent(variable) ? 100 : 1);
+}
+
+// Lists amounts in the story that were written in another currency and converted to CHF exactly.
+function conversionText(data) {
+  const items = data?.conversions || [];
+  const readAs = data?.currency?.code && data.currency.code !== 'CHF'
+    ? `Amounts in your story without a currency were read as ${data.currency.code}.` : '';
+  if (!items.length) return readAs;
+  const rate = data.currency?.date ? ` (${data.currency.source} of ${data.currency.date})` : '';
+  const shown = items.slice(0, 4).map(item => `${item.written} = CHF ${item.chf.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
+  return [`Converted from your story${rate}: ${shown.join(', ')}${items.length > 4 ? `, and ${items.length - 4} more` : ''}.`, readAs]
+    .filter(Boolean).join(' ');
 }
 
 function formatVariable(variable, value) {
@@ -1098,8 +1170,11 @@ function addBaseline(label, text) {
 }
 
 function renderTuning(data) {
-  byId('scenario-summary').textContent = data.summary;
-  byId('assumptions').textContent = data.assumptions ? `Assumptions: ${data.assumptions}` : '';
+  byId('scenario-summary').textContent = localizeAmounts(data.summary);
+  const currencyNote = byId('currency-note');
+  currencyNote.textContent = conversionText(data);
+  currencyNote.hidden = !currencyNote.textContent;
+  byId('assumptions').textContent = data.assumptions ? `Assumptions: ${localizeAmounts(data.assumptions)}` : '';
   byId('baseline').replaceChildren();
 
   const scenario = data.scenario;
@@ -1140,7 +1215,7 @@ function renderTuning(data) {
     if (unitText) {
       const unit = document.createElement('span');
       unit.className = 'slider-unit';
-      unit.textContent = unitText;
+      unit.textContent = unitText === 'CHF' ? currencyUnit() : unitText;
       if (unitText === 'CHF') valueBox.prepend(unit);
       else valueBox.append(unit);
     }
@@ -2007,8 +2082,8 @@ function renderEndSummary(activeMeta, index) {
       }
       if (revision !== state.revision || !reportContent.isConnected) return;
       const report = bundle.paths[bundle.baseline_path];
-      const formatValue = value => value === null || value === undefined ? 'Unavailable' : String(value);
-      const exactMoney = value => value == null ? 'Unavailable' : `CHF ${new Intl.NumberFormat('en-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value)}`;
+      const formatValue = value => value === null || value === undefined ? 'Unavailable' : typeof value === 'number' ? twoDecimals(value) : String(value);
+      const exactMoney = value => value == null ? 'Unavailable' : `${currencyPrefix()}${new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(chfToDisplay(value))}`;
       const drivers = report.sensitivity_summary.drivers;
       const rows = drivers.map(driver => {
         const goals = (driver.goal_impacts || []).map(goal => `${goal.name}: deadline gap change ${goal.deadline_gap_delta_chf == null ? 'unavailable' : exactMoney(goal.deadline_gap_delta_chf)}`).join(', ');
@@ -2659,12 +2734,12 @@ function renderTreeGraph({ fit = false, focusId = null } = {}) {
 
 function detailLabel(key) {
   if (key === '__contributions__') return 'Investment contributions';
-  return key.replace(/_chf$/, ' (CHF)').replace(/_/g, ' ').replace(/^./, letter => letter.toUpperCase());
+  return key.replace(/_chf$/, ` (${state.currency.code})`).replace(/_/g, ' ').replace(/^./, letter => letter.toUpperCase());
 }
 
 function detailValue(key, value) {
   if (typeof value === 'number') {
-    return key.endsWith('_chf') ? money(value) : new Intl.NumberFormat('en-CH', { maximumFractionDigits: 4 }).format(value);
+    return key.endsWith('_chf') ? money(value) : twoDecimals(value);
   }
   if (value === null) return '—';
   return String(value);
@@ -2789,12 +2864,12 @@ function renderInspector(node, { focusBranchInput = false } = {}) {
   const narrativeText = document.createElement('p');
   narrativeText.id = 'node-narrative';
   narrativeText.className = 'inspector-narrative';
-  narrativeText.textContent = state.narratives.get(node.id) || node.narrative || buildMilestoneProse(node, null);
+  narrativeText.textContent = localizeAmounts(state.narratives.get(node.id) || node.narrative || buildMilestoneProse(node, null));
   narrativeSec.append(narrativeTitle, narrativeText);
   if (node.event_narrative) {
     const eventText = document.createElement('p');
     eventText.className = 'event-narrative';
-    eventText.textContent = node.event_narrative;
+    eventText.textContent = localizeAmounts(node.event_narrative);
     narrativeSec.append(eventText);
   }
 
@@ -2907,15 +2982,15 @@ function renderInspector(node, { focusBranchInput = false } = {}) {
     const terms = s.active_variables?.expense_terms || {};
     const startingExpense = terms.monthly_expenses_chf ?? editPhase.monthly_expenses_chf;
     const fields = [
-      ...(node.month === 0 ? [{ name: 'cash_chf', label: 'Starting cash (CHF)', value: s.cash_chf }] : []),
-      { name: 'monthly_income_chf', label: 'Monthly income (CHF)', value: editPhase.monthly_income_chf },
-      { name: 'monthly_expenses_chf', label: 'Monthly expenses at start of year (CHF)', value: startingExpense },
-      { name: 'yearly_expenses_chf', label: 'Annual expenses at start of year (CHF)', value: startingExpense * 12 },
+      ...(node.month === 0 ? [{ name: 'cash_chf', label: `Starting cash (${state.currency.code})`, value: s.cash_chf, money: true }] : []),
+      { name: 'monthly_income_chf', label: `Monthly income (${state.currency.code})`, value: editPhase.monthly_income_chf, money: true },
+      { name: 'monthly_expenses_chf', label: `Monthly expenses at start of year (${state.currency.code})`, value: startingExpense, money: true },
+      { name: 'yearly_expenses_chf', label: `Annual expenses at start of year (${state.currency.code})`, value: startingExpense * 12, money: true },
       ...(node.month === 0 ? [{ name: 'annual_inflation', label: 'Default annual inflation (%)', value: node.scenario.annual_inflation, percent: true }] : []),
       { name: 'year_inflation', label: `Inflation for ${terms.year ?? node.date.slice(0, 4)} (%)`, value: terms.year_inflation ?? null, percent: true, optional: true, placeholder: 'Use default annual inflation' },
       { name: 'inflation_exempt', label: 'Fixed by contract, unaffected by inflation', value: terms.inflation_exempt ?? false, type: 'checkbox' },
       { name: 'duration_months', label: 'Expense duration (months)', value: terms.duration_months ?? null, optional: true, placeholder: 'Ongoing' },
-      { name: 'one_off_cost_chf', label: 'One-time cost (CHF)', value: editCost },
+      { name: 'one_off_cost_chf', label: `One-time cost (${state.currency.code})`, value: editCost, money: true },
       { name: 'date', label: 'Date', value: node.date, type: 'date' },
     ];
     for (const field of fields) {
@@ -2932,7 +3007,9 @@ function renderInspector(node, { focusBranchInput = false } = {}) {
 
       }
       label.textContent = field.label;
-      input.value = field.value === null ? '' : field.percent ? Number((field.value * 100).toFixed(8)) : field.value;
+      input.value = field.value === null ? ''
+        : field.percent ? Number((field.value * 100).toFixed(2))
+          : field.money ? Number(chfToDisplay(field.value).toFixed(2)) : field.value;
       input.required = !field.optional;
       if (field.placeholder) input.placeholder = field.placeholder;
       if (input.type === 'number') {
@@ -2946,8 +3023,8 @@ function renderInspector(node, { focusBranchInput = false } = {}) {
     }
     const monthlyExpenses = editForm.elements.monthly_expenses_chf;
     const yearlyExpenses = editForm.elements.yearly_expenses_chf;
-    monthlyExpenses.addEventListener('input', () => { yearlyExpenses.value = Number(monthlyExpenses.value) * 12; });
-    yearlyExpenses.addEventListener('input', () => { monthlyExpenses.value = Number(yearlyExpenses.value) / 12; });
+    monthlyExpenses.addEventListener('input', () => { yearlyExpenses.value = Number((Number(monthlyExpenses.value) * 12).toFixed(2)); });
+    yearlyExpenses.addEventListener('input', () => { monthlyExpenses.value = Number((Number(yearlyExpenses.value) / 12).toFixed(2)); });
     const editError = document.createElement('p');
     editError.className = 'form-error';
     editError.setAttribute('role', 'alert');
@@ -2964,9 +3041,13 @@ function renderInspector(node, { focusBranchInput = false } = {}) {
         const input = editForm.elements[field.name];
         let value;
         if (input.type === 'checkbox') value = input.checked;
-        else if (input.type === 'number') value = input.value === '' ? null : Number(input.value) / (field.percent ? 100 : 1);
-        else value = input.value;
-        if (value !== field.value && !(field.percent && value !== null && field.value !== null && Math.abs(value - field.value) < 1e-10)) edits[field.name] = value;
+        else if (input.type === 'number') {
+          value = input.value === '' ? null : field.money ? displayToChf(input.value) : Number(input.value) / (field.percent ? 100 : 1);
+        } else value = input.value;
+        // Shown values are rounded (and converted for other currencies), so an untouched field is not an edit.
+        const tolerance = field.money ? 0.006 / state.currency.per_chf : field.percent ? 0.000051 : 1e-10;
+        const unchanged = value !== null && field.value !== null && typeof value === 'number' && Math.abs(value - field.value) < tolerance;
+        if (value !== field.value && !((field.percent || field.money) && unchanged)) edits[field.name] = value;
       }
       if (!Object.keys(edits).length) return;
       editError.textContent = '';
@@ -3083,8 +3164,8 @@ function renderBranchInfo(node) {
   const list = el('ul');
   for (const [text, source] of describeBlocks(plan)) list.append(el('li', {}, el('span', { text }), setBadge(el('span'), source)));
   box.append(list);
-  if (plan.assumptions) box.append(el('p', { class: 'proposal-assumptions', text: plan.assumptions }));
-  if (plan.warnings?.length) box.append(el('ul', { class: 'proposal-warnings' }, ...plan.warnings.map(text => el('li', { text }))));
+  if (plan.assumptions) box.append(el('p', { class: 'proposal-assumptions', text: localizeAmounts(plan.assumptions) }));
+  if (plan.warnings?.length) box.append(el('ul', { class: 'proposal-warnings' }, ...plan.warnings.map(text => el('li', { text: localizeAmounts(text) }))));
   const sources = sourceLinks(plan.source_urls);
   if (sources) box.append(sources);
   return box;
@@ -3123,7 +3204,7 @@ function showComposer(section, node, text = '', presetId = null) {
     setButtonLoading(submit, true, 'Researching the numbers…', 'Get the numbers');
     const revision = state.revision;
     try {
-      const result = await request('/api/branch/propose', { parent: node, preset: selected || undefined, event: details || undefined });
+      const result = await request('/api/branch/propose', { parent: node, preset: selected || undefined, event: details || undefined, currency: state.currency.code });
       if (revision === state.revision && state.selectedId === node.id) renderReview(section, node, result.proposal, details, selected);
     } catch (problem) {
       error.textContent = problem.message;
@@ -3154,7 +3235,10 @@ function blockEditor(key, item, onRemove) {
   const grid = el('div', { class: 'block-grid' });
   let down = null;
   const refreshDown = () => { if (down) { item.down_payment_chf = item.price_chf - item.loan_chf; down.textContent = money(item.down_payment_chf); } };
-  for (const [field, type, label, options] of BLOCK_FIELDS[key]) {
+  for (const [field, type, fieldLabel, options] of BLOCK_FIELDS[key]) {
+    // Amounts are stored in CHF and shown in the chosen currency.
+    const isMoney = type === 'number' && field.endsWith('_chf');
+    const label = fieldLabel.replace('CHF', state.currency.code);
     let input;
     if (type === 'select') {
       input = el('select', {}, ...options.map(([value, optionText]) => el('option', { value, text: optionText })));
@@ -3163,11 +3247,13 @@ function blockEditor(key, item, onRemove) {
       input = down = el('output', { class: 'readonly-value' });
     } else {
       input = el('input', { type: type === 'text' ? 'text' : 'number', step: type === 'int' ? 1 : 'any', min: type === 'int' ? 0 : null });
-      input.value = type === 'percent' ? Number((item[field] * 100).toFixed(3)) : item[field];
+      input.value = type === 'percent' ? Number((item[field] * 100).toFixed(2))
+        : isMoney ? Number(chfToDisplay(item[field]).toFixed(2)) : item[field];
     }
     if (type !== 'readonly') input.addEventListener('input', () => {
       const raw = input.value;
-      item[field] = type === 'text' || type === 'select' ? raw : type === 'percent' ? Number(raw) / 100 : type === 'int' ? Math.round(Number(raw)) : Number(raw);
+      item[field] = type === 'text' || type === 'select' ? raw : type === 'percent' ? Number(raw) / 100
+        : type === 'int' ? Math.round(Number(raw)) : isMoney ? displayToChf(raw) : Number(raw);
       item.source = 'user';
       setBadge(badge, 'user');
       refreshDown();
@@ -3231,9 +3317,9 @@ function renderReview(section, node, proposal, text, presetId = null) {
   title.value = plan.title;
   section.append(el('span', { class: 'card-kicker', text: 'REVIEW BEFORE BRANCHING' }), el('h3', { text: 'Check the numbers' }),
     el('label', { for: 'branch-title', text: 'Event name' }), title);
-  if (plan.summary) section.append(el('p', { class: 'proposal-summary', text: plan.summary }));
-  if (plan.assumptions) section.append(el('p', { class: 'proposal-assumptions', text: plan.assumptions }));
-  if (plan.warnings?.length) section.append(el('ul', { class: 'proposal-warnings' }, ...plan.warnings.map(item => el('li', { text: item }))));
+  if (plan.summary) section.append(el('p', { class: 'proposal-summary', text: localizeAmounts(plan.summary) }));
+  if (plan.assumptions) section.append(el('p', { class: 'proposal-assumptions', text: localizeAmounts(plan.assumptions) }));
+  if (plan.warnings?.length) section.append(el('ul', { class: 'proposal-warnings' }, ...plan.warnings.map(item => el('li', { text: localizeAmounts(item) }))));
   const sources = sourceLinks(plan.source_urls);
   if (sources) section.append(sources);
   const lists = { changes: el('div'), one_offs: el('div'), assets: el('div') };
@@ -3449,7 +3535,7 @@ async function selectNode(id, { openDrawer = false, focusBranchInput = false, sk
     state.narratives.set(id, result.narrative);
     if (state.selectedId === id) {
       const el = byId('node-narrative');
-      if (el) el.textContent = result.narrative;
+      if (el) el.textContent = localizeAmounts(result.narrative);
     }
   } catch {
     // Keep instant prose fallback
@@ -3563,6 +3649,82 @@ byId('tree-adjust-scenario').addEventListener('click', () => {
   showStage('tuning');
 });
 
+/* ==========================================================================
+   CURRENCY CHOICE (assumptions page)
+   ========================================================================== */
+
+const CURRENCY_STORAGE_KEY = 'financial_twin_currency';
+
+// Re-renders text that depends on the chosen currency.
+function refreshCurrencyText() {
+  const rate = byId('currency-rate');
+  if (rate) rate.textContent = currencyRateText();
+}
+
+function chooseCurrency(code) {
+  setCurrency(code);
+  try { localStorage.setItem(CURRENCY_STORAGE_KEY, state.currency.code); } catch { /* storage unavailable */ }
+  for (const select of document.querySelectorAll('.currency-select')) {
+    if (select.value !== state.currency.code) select.value = state.currency.code;
+  }
+  refreshCurrencyText();
+}
+
+async function loadCurrencies() {
+  let saved = 'CHF';
+  try { saved = localStorage.getItem(CURRENCY_STORAGE_KEY) || 'CHF'; } catch { /* storage unavailable */ }
+  try {
+    const response = await fetch('/api/currencies');
+    if (!response.ok) throw new Error('unavailable');
+    const data = await response.json();
+    state.currencies = data.currencies.map(item => ({ ...item, date: data.date, source: data.source, live: data.live }));
+    // The assumptions page shows names; the compact menus on the results page show codes, with names on hover.
+    for (const menu of document.querySelectorAll('.currency-select')) {
+      const compact = menu.id !== 'currency';
+      menu.replaceChildren(...state.currencies.map(item => {
+        const option = document.createElement('option');
+        option.value = item.code;
+        option.textContent = compact ? item.code : `${item.code} · ${item.name}`;
+        option.title = item.name;
+        return option;
+      }));
+    }
+  } catch {
+    // Without rates only CHF can be shown; the select keeps its single CHF option.
+    state.currencies = [CHF];
+  }
+  chooseCurrency(saved);
+}
+
+// Switching currency redraws whatever is on screen in the new currency, keeping the values set so far.
+function redrawInCurrency() {
+  if (state.extraction?.variables && byId('sliders')) {
+    for (const variable of state.extraction.variables) {
+      const slider = byId(`slider-${variable.id}`);
+      if (slider?.value !== undefined && slider.value !== '' && Number.isFinite(Number(slider.value))) {
+        variable.value = Number(slider.value);
+        variable.min = Math.min(Number(variable.min), Number(slider.min));
+        variable.max = Math.max(Number(variable.max), Number(slider.max));
+      }
+    }
+    renderTuning(state.extraction);
+  }
+  if (state.nodes.size && state.stage === 'results') {
+    if (state.resultsView === 'tree') renderTreeGraph();
+    else renderTimelineView();
+    const selected = state.nodes.get(state.selectedId);
+    if (selected && (state.drawerOpen || state.resultsView === 'tree')) renderInspector(selected);
+  }
+}
+
+for (const menu of document.querySelectorAll('.currency-select')) {
+  menu.addEventListener('change', event => {
+    chooseCurrency(event.target.value);
+    redrawInCurrency();
+  });
+}
+loadCurrencies();
+
 byId('intake-form').addEventListener('submit', async event => {
   event.preventDefault();
   const button = byId('extract-button');
@@ -3573,7 +3735,12 @@ byId('intake-form').addEventListener('submit', async event => {
     state.extraction = await request('/api/extract', {
       statement: byId('statement').value.trim(),
       years: state.years,
+      currency: state.currency.code,
     });
+    // Show results with the exact rate the server used to convert the story.
+    if (state.extraction.currency?.code === state.currency.code && state.extraction.currency.per_chf) {
+      state.currency = { ...state.currency, ...state.extraction.currency };
+    }
     renderTuning(state.extraction);
     showStage('tuning');
   } catch (error) {
@@ -3673,6 +3840,8 @@ function buildRunFile() {
     start_date: run.start_date,
     years: run.years,
     units: { currency: 'CHF', time_step: 'month', horizon_years: run.years },
+    // Shown to the user in this currency; every number in this file is CHF.
+    display_currency: { code: state.currency.code, per_chf: state.currency.per_chf, date: state.currency.date, source: state.currency.source },
     scenario: run.scenario,
     variables: run.variables,
     branches: run.branches,
