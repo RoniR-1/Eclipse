@@ -1869,3 +1869,60 @@ code {
     scroll-behavior: auto;
   }
 }
+
+/* ==========================================================================
+   BRANCH DELETION
+   ========================================================================== */
+
+.delete-branch {
+  margin-top: 16px;
+  border: 1px solid #a8473a;
+  background: transparent;
+  color: var(--danger);
+  border-radius: 8px;
+  padding: 8px 14px;
+  font-size: 12px;
+  font-weight: 700;
+  transition: background 0.15s;
+}
+.delete-branch:hover { background: #4a1d17; }
+
+.confirm-dialog {
+  max-width: 420px;
+  padding: 30px 30px 26px;
+  text-align: center;
+  border: 1px solid #5a2a1c;
+  background: linear-gradient(180deg, var(--surface-elevated), var(--surface) 60%);
+}
+.confirm-dialog[open] { animation: confirm-in 0.18s ease-out; }
+.confirm-dialog[open]::backdrop { animation: confirm-fade 0.18s ease-out; backdrop-filter: blur(3px); }
+.confirm-icon {
+  width: 52px;
+  height: 52px;
+  margin: 0 auto 16px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--danger);
+  background: #4a1d17;
+  box-shadow: 0 0 0 6px rgba(74, 29, 23, 0.4);
+}
+.confirm-dialog h2 { margin: 10px 0 8px; font-size: 30px; overflow-wrap: anywhere; }
+.confirm-dialog p { margin: 0 0 24px; }
+.confirm-actions { display: flex; gap: 12px; }
+.confirm-actions button {
+  flex: 1;
+  min-height: 44px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 700;
+  transition: background 0.15s, border-color 0.15s;
+}
+.confirm-cancel { border: 1px solid var(--border-strong); background: transparent; color: var(--text); }
+.confirm-cancel:hover { background: var(--surface-elevated); }
+.confirm-danger { border: 1px solid #c4483a; background: #b8392b; color: #fff3ee; }
+.confirm-danger:hover { background: #d0473a; }
+@keyframes confirm-in { from { opacity: 0; transform: translateY(8px) scale(0.96); } to { opacity: 1; transform: none; } }
+@keyframes confirm-fade { from { opacity: 0; } to { opacity: 1; } }
