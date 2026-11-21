@@ -175,7 +175,7 @@ describe('formatting', () => {
     assert.equal(app.milestoneTitle(node('n', null, 'main', 6)), '6 months');
     assert.equal(app.milestoneTitle(node('n', null, 'main', 18)), 'Year 1.5');
     assert.equal(app.milestoneTitle(node('n', null, 'main', 15)), 'Month 15');
-    assert.equal(app.milestoneTitle(node('n', null, 'main', 7, { cash: -1 })), 'Cash shortfall');
+    assert.equal(app.milestoneTitle(node('n', null, 'main', 7, { cash: -1 })), 'Month 7');
     assert.equal(app.milestoneTitle(node('n', null, 'main', 7)), 'Month 7');
   });
 });

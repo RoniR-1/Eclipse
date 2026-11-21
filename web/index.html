@@ -7,7 +7,7 @@
   <title>Financial Twin — make room for your future</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
@@ -22,6 +22,7 @@
       </a>
 
       <div class="topbar-actions">
+        <a class="settings-button" href="/compare.html">Compare decisions</a>
         <button class="settings-button" id="test-data" type="button" title="Generate a sample multi-branch timeline without using AI">
           <span aria-hidden="true">⚄</span>
           <span class="settings-label">Test</span>
@@ -38,6 +39,7 @@
           <p class="hero-description">
             Big decisions deserve a clearer picture. Tell your AI Financial Twin where you are and where you want to go, then explore how your finances could evolve over time.
           </p>
+          <a class="comparison-link" href="/compare.html">Build a comparison without AI</a>
         </div>
 
         <div class="intake-card">
@@ -144,22 +146,11 @@
               <p id="active-path-subtitle">Your 5-year projection.</p>
             </div>
             <div class="results-actions">
+              <button class="text-button" id="return-to-original" type="button" hidden><span aria-hidden="true">←</span> Original path</button>
               <button class="ghost-button" id="jump-to-summary" type="button">Summary <span aria-hidden="true">↓</span></button>
               <button class="ghost-button" id="switch-to-tree" type="button">Full tree <span aria-hidden="true">⑂</span></button>
               <button class="text-button" id="adjust-scenario" type="button"><span aria-hidden="true">←</span> Adjust assumptions</button>
             </div>
-          </div>
-
-          <!-- Clear indicator shown only when viewing an alternative branch -->
-          <div id="branch-banner" class="branch-banner" hidden>
-            <div class="branch-banner-left">
-              <span class="branch-banner-orb" id="branch-banner-orb" aria-hidden="true"></span>
-              <div>
-                <strong id="branch-banner-title">Alternate path</strong>
-                <span id="branch-banner-origin">Branched from Original path</span>
-              </div>
-            </div>
-            <button type="button" class="branch-return-btn" id="return-to-original">← Return to Original path</button>
           </div>
 
           <!-- Centered, Unobstructed Free-Moving Vertical Timeline -->
@@ -206,30 +197,35 @@
           </section>
         </div>
 
-        <!-- MODE B: FULL INTERACTIVE TREE VIEW (vis-network) -->
+        <!-- MODE B: FULL INTERACTIVE TREE VIEW (open full-bleed canvas, panels on demand on the left) -->
         <div id="tree-view" class="tree-view" hidden>
           <div id="timeline-graph" class="timeline-graph" aria-label="Interactive full decision tree graph"></div>
 
-          <div class="tree-topbar-overlay">
-            <button class="ghost-button" id="back-to-timeline" type="button">← Back to timeline</button>
-            <button class="text-button tree-adjust-link" id="tree-adjust-scenario" type="button">Adjust assumptions</button>
+          <div class="tree-top-bar">
+            <div class="tree-top-left">
+              <button class="ghost-button" id="back-to-timeline" type="button">← Back to timeline</button>
+              <button class="ghost-button" id="toggle-paths-panel" type="button" aria-expanded="false">Your paths</button>
+              <button class="ghost-button" id="fit-graph" type="button">Fit</button>
+              <button class="text-button tree-adjust-link" id="tree-adjust-scenario" type="button">Adjust assumptions</button>
+            </div>
+            <div class="tree-top-meta">
+              <span class="tree-key"><i class="tree-key-event">✦</i> Event</span>
+              <span class="tree-key"><i class="tree-key-recap"></i> Recap</span>
+            </div>
           </div>
 
-          <div class="graph-card floating-panel" id="tree-controls-panel">
-            <div class="panel-bar" title="Drag to move">
+          <div class="graph-card tree-left-sheet" id="tree-controls-panel" hidden>
+            <div class="panel-bar">
               <span class="card-kicker">YOUR PATHS</span>
-              <button class="panel-toggle" type="button" aria-label="Minimize panel" aria-expanded="true">–</button>
+              <button class="drawer-close" id="close-paths-panel" type="button" aria-label="Close paths">×</button>
             </div>
             <div class="panel-body">
-              <div class="tree-controls-row">
-                <span class="tree-controls-hint">Drag · Scroll to zoom</span>
-                <button class="ghost-button" id="fit-graph" type="button">Fit</button>
-              </div>
+              <p class="tree-controls-hint">Drag canvas to pan · Scroll to zoom · Click any node for details</p>
               <label class="milestone-label" for="milestone-select">Jump to point</label>
               <div class="select-wrap">
                 <select id="milestone-select"></select>
               </div>
-              <button class="primary-button wide compact" id="follow-selected-path" type="button" style="margin-top:12px">
+              <button class="primary-button wide compact" id="follow-selected-path" type="button" style="margin-top:14px">
                 <span class="btn-label">Follow path in timeline</span>
                 <span class="btn-icon" aria-hidden="true">→</span>
               </button>
@@ -243,13 +239,10 @@
         <div id="drawer-backdrop" class="drawer-backdrop" hidden></div>
 
         <!-- SINGLE SHARED MOMENT DRAWER / TREE INSPECTOR -->
-        <aside id="inspector-panel" class="inspector floating-panel" aria-label="Selected moment">
-          <div class="panel-bar" title="Drag to move in full tree view">
+        <aside id="inspector-panel" class="inspector" aria-label="Selected moment">
+          <div class="panel-bar">
             <span class="card-kicker">THIS MOMENT</span>
-            <div class="panel-bar-actions">
-              <button class="panel-toggle" type="button" aria-label="Minimize panel" aria-expanded="true">–</button>
-              <button class="drawer-close" id="close-drawer" type="button" aria-label="Close panel">×</button>
-            </div>
+            <button class="drawer-close" id="close-drawer" type="button" aria-label="Close panel">×</button>
           </div>
           <div class="panel-body" id="inspector" aria-live="polite">
             <div class="inspector-empty">
