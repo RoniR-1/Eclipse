@@ -32,7 +32,7 @@ class GeneralizedEntryTests(unittest.TestCase):
         cash = next(item for item in drivers if item["field"] == "opening_cash_chf")
         self.assertEqual(cash["terminal_cash_delta_chf"], 300)
         income = next(item for item in drivers if item["field"] == "monthly_income_chf")
-        self.assertEqual(income["terminal_cash_delta_chf"], 5400)
+        self.assertAlmostEqual(income["terminal_cash_delta_chf"], round(sum(450 * 1.02 ** (month / 12) for month in range(12)), 2))
         self.assertTrue(any(item["field"] == "annual_interest_rate" for item in drivers))
 
     def test_branch_report_uses_branch_checkpoint(self):
@@ -63,7 +63,7 @@ class GeneralizedEntryTests(unittest.TestCase):
         path = bundle["paths"]["Simulation"]
         self.assertEqual(bundle["scenario_record"]["sensitivity_start_month"], 2)
         income = next(item for item in path["sensitivity_summary"]["drivers"] if item["field"] == "monthly_income_chf")
-        self.assertEqual(income["terminal_cash_delta_chf"], 1800)
+        self.assertAlmostEqual(income["terminal_cash_delta_chf"], round(sum(600 * 1.02 ** (month / 12) for month in range(2, 5)), 2))
 
     def test_branch_report_preserves_prefork_low_and_driver_deltas(self):
         scenario = self.scenario()

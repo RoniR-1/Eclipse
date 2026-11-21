@@ -2,7 +2,9 @@
 
 ## Server configuration and usage
 
-To configure the AI provider, copy `.env.example` to `.env`, set `AI_API_KEY`, `AI_BASE_URL`, and `AI_API_KEY_MODEL`, and restart the server. Put model names in preference order on one line, separated by commas, such as `AI_API_KEY_MODEL=model1,model2,model3`. When a model is unavailable, rate-limited, or times out, the server tries the next model and waits 60 seconds before trying the failed model on a later request. Set `AI_MODEL_RETRY_SECONDS` to change that interval. If all models are cooling down, the server tries them in order. You can also enter a key through the website’s settings for the current page session.
+To configure the AI provider, copy `.env.example` to `.env`, set `AI_API_KEY_1`, `AI_BASE_URL`, and `AI_API_KEY_MODEL`, and restart the server. Put model names in preference order on one line, separated by commas, such as `AI_API_KEY_MODEL=model1,model2,model3`. When a model is unavailable, rate-limited, or times out, the server tries the next model and waits 60 seconds before trying the failed model on a later request. Set `AI_MODEL_RETRY_SECONDS` to change that interval. If all models are cooling down, the server tries them in order.
+
+To spread requests over several API keys, set `AI_API_KEY_1`, `AI_API_KEY_2`, `AI_API_KEY_3` and so on; any number of keys is read in numeric order, and gaps or blank values are skipped. Each AI request starts with the next key in turn. If a key is rate-limited (HTTP 429) or rejected (401 or 403), the same request is retried with the next key, and that key rests for `AI_MODEL_RETRY_SECONDS` before it is used again; if every key fails, the last error is shown. Network errors and invalid requests are not retried with other keys, since another key would not help. The single `AI_API_KEY` (or `GEMINI_API_KEY`) still works and joins the rotation if set. The website has no key settings, so keys are only configured in `.env`. Keys never leave the server: `/api/config` only reports whether a key is configured.
 
 Describe your finances and the decision you want to explore, using CHF for monetary amounts. Select a 5-, 10- or 20-year horizon and submit. The server sends the statement to Google Gemini to extract a starting scenario and choose three to five relevant controls. Review the assumptions, adjust the sliders, and choose **Simulate Future** to project the monthly timeline with the Python engine.
 
@@ -53,7 +55,7 @@ The model applies these rules once per month, in this order.
 
 | Quantity | Calculation and interpretation |
 | --- | --- |
-| Living costs | Base monthly expenses × opening price index. The index starts at 1 and grows by `(1 + annual_inflation) ** (1/12)` per month. Income and dated one-offs use explicit nominal CHF assumptions. |
+| Income and living costs | Base monthly income and base monthly expenses × the price index. The index starts at 1 and grows by `(1 + annual_inflation) ** (1/12)` per month, so phase amounts are in today's money and wages keep pace with prices. Dated one-off costs and loan payments are nominal CHF amounts and are not indexed. |
 | Debt | Interest = opening principal × nominal annual loan rate / 12. Payment is capped at principal plus interest. The remaining amount becomes next month's principal. |
 | Asset growth | Each opening holding earns `(1 + annual_return) ** (1/12) - 1`. New contributions start earning returns the following month. |
 | Operating cash flow | Net income − living costs − dated costs − debt payments. |
@@ -96,11 +98,84 @@ Both paths start year two with CHF 22,400. Continuing to work adds CHF 14,400 to
 
 For a CSV-backed opening state, use `load_synthetic_profile(data_dir, profile_id, monthly_expenses_chf=...)`. Supply total recurring living costs, including rent and excluding loan payments. The profile provides reference net income and rent but lacks a complete spending budget. Cash is repeated in the profile, account and asset files and enters the opening balance only once. Investment growth defaults to zero. A zero scheduled loan payment leaves accrued interest unpaid. The goals table can inform a user's chosen cash reserve. The engine does not infer preferences from a profile's age or employment.
 
+## Branching from a milestone
+
+Selecting a milestone opens **What if something changed?**. A user picks an event type, describes the event in their own words, or both. The AI turns the request into editable building blocks and sets every number; they are shown in a review card and only simulated after the user confirms.
+
+| Block | Meaning |
+| --- | --- |
+| Monthly change | Income or expense change per month, with a start offset and a duration (0 = permanent), for example −3,000 income for 24 months, then +1,000 from month 24 |
+| One-off amount | A single amount at an offset: positive for a cost, negative for money received (booked as one month of extra income) |
+| Purchase | An asset bought at the branch point with an optional loan. The server enforces price = loan + down payment, so a purchase never creates or destroys wealth; only the purchase costs reduce net worth. Annual value change models appreciation or depreciation. A rent deposit is a purchase of kind `deposit`. |
+| Investment change | Revalues existing investments at the branch point (0.7 = −30%) |
+
+Every block carries a source (`user`, `dataset`, `assumption` or `ai_estimate`), and editing a value marks it `user`. The server returns warnings when the down payment was corrected, a loan payment is below its interest, or upfront costs exceed the available cash.
+
+The event types in `financial_twin/branching.py` (Study, Career change, Relocate, New home, Unexpected expense, Have a child, Buy property, Market shock, Go part-time) carry no numbers. Each one gives the AI guidance on what to model, for example tuition for the study period, reduced income while studying and the graduate salary afterwards, plus an example of useful details such as the programme and country. The AI first asks for web search, so it can look up current figures such as tuition or local rents, and returns the pages it used as `source_urls`; the review card links them. If the provider rejects search, the request is repeated without it. The prompt includes the dataset reference values (study length, tuition, unexpected-expense amount, median rent), which the AI marks with source `dataset` when it uses them.
+
+| Endpoint | Purpose |
+| --- | --- |
+| `GET /api/branch/presets` | Event types: id, label and an example of useful details |
+| `POST /api/branch/propose` | `{parent, preset?, event?}` with at least one of them → `{proposal, origin}`. Always calls the AI. |
+| `POST /api/branch/apply` | `{parent, event, months, variables, proposal}` → branch nodes. Deterministic; the first node stores the applied proposal as `branch_proposal`. |
+| `POST /api/branch` | One step (propose and apply without review), kept for compatibility |
+
+`/api/branch/apply` splits the engine's phases at every block boundary, so temporary changes end on time and their start and end appear as milestones. The random test scenario, which must work without the AI, builds its branches from fixed sample events (`SAMPLES`); these are not offered to users. `tests/test_branching.py` checks durations, purchase accounting, money received, warnings, every preset and the AI and no-AI paths.
+
+A branch continues the situation at the selected node and does not inherit phases or one-off costs that the original path planned after that node, so each branch explores one event at a time.
+
 ## Check the implementation
 
-Run `python3 -m unittest discover -s tests -v` from the workspace root with the challenge checkout present. The starter's original tests can also be run from `ai-financial-twin-lauzhack-2026/starter-kit` with `python3 -m unittest -v`.
+Run `.local/venv/bin/python -m unittest discover -s tests -v` from the workspace root with the challenge checkout present. This also runs the browser-logic tests when Node.js is installed; run them on their own with `node --test tests/web/app.test.mjs`. The starter's original tests can also be run from `ai-financial-twin-lauzhack-2026/starter-kit` with `python3 -m unittest -v`.
+
+| Test file | What it checks |
+| --- | --- |
+| `test_engine.py` | Checkpoints, branch isolation, transfers, debt, inflation and invalid phases in the simulation engine. |
+| `test_accounting_invariants.py` | The validation checklist's identities on every month of 40 seeded timelines with branches: cash rolls forward by net cash flow, net worth equals assets minus debt, moving cash into investments leaves net worth unchanged, debt payments split into principal and interest, and steps are one calendar month. Also the checklist's boundary cases: zero income, zero interest, paid-off loans, higher tuition, annual-to-monthly conversion and negative returns. |
+| `test_branching.py` | Life-event branches (one-off costs, recurring changes, financed purchases, market crashes, phase splitting, branch-specific assumptions), rejection of invalid AI output and requests before the AI is called, the Test button's data, narratives and `.env` loading. |
+| `test_http_api.py` | Every endpoint through the real HTTP handler, JSON 400 errors for malformed requests, 404s, no caching, and that files outside `web/` are not served. |
+| `test_web.py` | AI request format, model fallback and cooldown, slider handling and nested branches. |
+| `test_reproducibility.py` | Identical results from identical inputs, seeds, deterministic branch IDs and exact replay of run files. |
+| `test_ai_cache.py` | Same input, same numbers: with a fake AI that answers differently every time, the same story or branch event still gives identical numbers, also through the HTTP API, after a restart and under concurrent requests; invalid answers are not cached. |
+| `test_api_keys.py` | Taking turns across `AI_API_KEY_1`, `AI_API_KEY_2`, …, failover on rate limits and rejected keys, rest periods, and `scripts/check_keys.py`. |
+| `test_event_resolver.py`, `test_event_cache_postgres.py` | Reference figures for named institutions and places: cache hits and refreshes, aliases, grounded citations and failed lookups (the PostgreSQL test needs `TEST_DATABASE_URL`). |
+| `test_frontend.py`, `web/app.test.mjs` | Browser logic: branch and Original-path deletion, the confirmation flow, the tree index, timeline milestones, health flags, number formatting, HTML escaping, and that a run file written by the browser replays exactly in Python. |
+| `test_projection.py`, `test_loaders.py`, `test_database.py` | The projection engine, the challenge data loaders and the PostgreSQL seed (needs `TEST_DATABASE_URL`). |
 
 `tests/test_projection.py` runs without the challenge data, except for one ledger replay. That test feeds the monthly income and spending of profiles P00001–P00050 from `synthetic-transactions.csv` through the projection recurrence and requires every month to match `closing_cash_chf` in `synthetic-cash-balances.csv`. It looks for the data in `ai-financial-twin-lauzhack-2026-main/Data` or `ai-financial-twin-lauzhack-2026/Data` inside the repository, or in `../ai-financial-twin-lauzhack-2026-main/Data`, and is skipped when none exists.
+
+## Same input, same numbers
+
+The language model is the only part of the pipeline that is not deterministic: asked the same question twice, it can answer differently. The server therefore caches every validated AI answer in `.local/ai-cache` (set `AI_CACHE_DIR` to move it), so the same input always produces the same numbers:
+
+- **Same story, same assumptions.** The scenario answer is stored under the full question: the story text, the horizon, the answer format and a prompt version. Asking again, after a restart too, returns the stored answer without calling the AI, so the simulation and the final year are identical. Differences in spacing do not count as a different story.
+- **Same event, same branch.** A branch's answer is stored under the event text and the exact moment it starts from, so adding the same event at the same point gives the same branch.
+- **Independent of keys and models.** API keys and model names are not part of the question, so key rotation and model fallback cannot change a cached answer.
+- **Only valid answers are kept.** An answer that fails validation is not stored, so the next request asks again. If two identical requests arrive at once, the first stored answer is used by both.
+- **Stable first answers.** New questions are sent with `temperature` 0 (and `seed` 0 for Gemini), which makes first answers as consistent as the provider allows. Set `AI_TEMPERATURE` to change this, or leave it blank for models that reject the setting.
+
+To get fresh answers, change the wording or delete `.local/ai-cache`. Dates follow the day a projection is started, so a repeat on a later day shows the same numbers with later dates. `tests/test_ai_cache.py` uses a fake AI that answers differently every time and checks that the same story, through the website's API, still gives identical numbers for every month.
+
+## Reproduce a run
+
+Every result can be recomputed exactly from a saved run file, without the AI provider or the database.
+
+1. Check the committed sample: `.local/venv/bin/python scripts/reproduce.py examples/sample-run.json`. It prints the source, horizon, units and software versions, then `REPRODUCED` when all 1,143 recorded values match exactly (exit status 0), or the differing values (exit status 1).
+2. Reproduce your own run: in the website, choose **Download run file** in the horizon summary below the timeline, then run the same command on the downloaded file.
+
+A run file records everything the calculation needs:
+
+| Field | Contents |
+| --- | --- |
+| `source`, `seed`, `start_date` | `simulate` for a story-based run; `test` for the **Test** button's random data, which is regenerated from its seed. The seed is shown when the test data is generated. |
+| `scenario`, `variables`, `years`, `units` | The engine inputs for the original path: the scenario the AI extracted, the slider values, the horizon, CHF and monthly steps. |
+| `branches` | Every branch in creation order, with the change the AI produced for it and a sequence number that makes its node IDs deterministic. |
+| `kept_node_ids`, `expected` | The nodes still on screen after any deletions, and their cash, net worth, total assets, total debt and net cash flow. |
+| `environment` | The Python and NumPy versions that produced the results. |
+
+The AI steps are the only nondeterministic part: asking the model again can return a different scenario or branch change. The run file therefore stores their outputs, and everything after them is deterministic. Replaying on different Python or NumPy versions is reported, since floating-point results could then differ.
+
+`tests/test_reproducibility.py` checks that identical inputs give identical results, that test data reproduces from its seed, that branch IDs are deterministic, that a run file replays exactly after a browser-style JSON round trip, that deleted branches stay deleted, that a tampered value is detected, and that the committed sample still reproduces. If the engine is changed on purpose, regenerate the sample with `scripts/reproduce.py --write-sample examples/sample-run.json`.
 
 ## Projection engine (user-entered profile)
 

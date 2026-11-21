@@ -56,6 +56,18 @@ class SimulationTests(unittest.TestCase):
         self.assertAlmostEqual(child["cash_chf"], 1000)
         self.assertAlmostEqual(child["net_worth_chf"], -12)
 
+    def test_income_and_living_costs_both_follow_inflation(self):
+        scenario = self.scenario()
+        scenario["annual_inflation"] = 0.12
+        scenario["one_off_costs"] = [{"month": 12, "amount_chf": 100, "description": "Fee"}]
+        nodes = simulate(create_root(scenario), 13)
+        first, later = nodes[0]["state"]["cash_flow"], nodes[12]["state"]["cash_flow"]
+        self.assertAlmostEqual(first["income_chf"], 500)
+        self.assertAlmostEqual(later["income_chf"], 560)
+        self.assertAlmostEqual(later["expenses_chf"], 336)
+        self.assertAlmostEqual(later["income_chf"] / later["expenses_chf"], first["income_chf"] / first["expenses_chf"])
+        self.assertAlmostEqual(later["one_off_costs_chf"], 100)  # dated amounts stay nominal
+
     def test_inflation_change_preserves_accumulated_price_level(self):
         scenario = self.scenario()
         scenario["annual_inflation"] = 0.12
@@ -64,6 +76,7 @@ class SimulationTests(unittest.TestCase):
         branch = simulate(checkpoint, 2, scenario_updates={"annual_inflation": 0})
         self.assertAlmostEqual(branch[0]["state"]["cash_flow"]["expenses_chf"], 336)
         self.assertAlmostEqual(branch[1]["state"]["cash_flow"]["expenses_chf"], 336)
+        self.assertAlmostEqual(branch[0]["state"]["cash_flow"]["income_chf"], 560)
         self.assertGreaterEqual(branch[0]["state"]["risk_exposure"]["investment_value_chf"], 50)
         with self.assertRaises(ValueError):
             create_root({**scenario, "annual_inflation": -1})

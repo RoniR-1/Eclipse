@@ -286,7 +286,7 @@ def _state(cash, assets, debts, flow, preferences, scenario, month, price_factor
         "cpi_base_date": scenario["start_date"],
         "real_cash_chf": cash / price_factor,
         "real_net_worth_chf": (asset_total - debt_total) / price_factor,
-        "inflation_coverage": {"recurring_expenses": "inflated unless exempt", "income": "nominal", "one_off_costs": "nominal", "fixed_contracts": "inflation_exempt expense terms remain nominal"},
+        "inflation_coverage": {"recurring_expenses": "inflated unless exempt", "income": "inflated by the price index", "one_off_costs": "nominal", "fixed_contracts": "inflation_exempt expense terms remain nominal"},
         "cash_flow": flow,
         "risk_exposure": {
             "investment_value_chf": invested,
@@ -392,7 +392,9 @@ def simulate(node, months, *, preferences=None, branch_id="main", scenario_updat
         if not matching:
             raise ValueError(f"No phase covers month {month}")
         phase = matching[0]
-        income = phase["monthly_income_chf"]
+        # Phase income is in today's money and follows the price index like living costs, so inflation
+        # (including year-specific rates) does not silently erode a salary. One-offs and loan payments stay nominal.
+        income = phase["monthly_income_chf"] * price_factor
         terms = expense_terms_at(scenario, month, price_factor)
         expenses = terms["actual_monthly_expenses_chf"]
         costs = [item for item in scenario["one_off_costs"] if item["month"] == month]
