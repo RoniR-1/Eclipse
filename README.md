@@ -16,4 +16,6 @@ The script creates the Python environment and `.env` if needed, installs missing
 
 To configure the AI provider, set `AI_API_KEY`, `AI_BASE_URL` and `AI_API_KEY_MODEL` in `.env`, then restart the server. You can also enter a key in the website settings for the current page session.
 
+Startup seeds 32 Swiss education and housing presets in PostgreSQL. Use `GET /api/events/presets` to list current presets. On `POST /api/project`, supply a short public milestone in the event’s `description` or `label`, such as `Master's at EPFL`. A cache miss can trigger a grounded provider request. The projection assumptions include the source, references and estimation notes. Set `LIFE_EVENT_CACHE_TTL_DAYS` to change the 180-day lifetime for newly inserted or refreshed records.
+
 See [technical documentation](TECHNICAL.md) for engineering details.

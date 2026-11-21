@@ -2215,6 +2215,7 @@ byId('test-data').addEventListener('click', async () => {
   const button = byId('test-data');
   button.disabled = true;
   try {
+    state.years = Number(byId('years').value);
     const result = await request('/api/test', { years: state.years });
     state.years = result.years;
     state.extraction = result.extraction;

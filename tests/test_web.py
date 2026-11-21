@@ -6,7 +6,7 @@ from unittest.mock import patch
 from urllib.error import HTTPError, URLError
 
 from financial_twin import create_root, simulate
-from financial_twin.server import extract, node_narrative, run_branch, run_simulation
+from financial_twin.server import extract, node_narrative, run_branch, run_simulation, run_projection, random_test, years_value
 
 
 class WebFlowTests(unittest.TestCase):
@@ -14,6 +14,35 @@ class WebFlowTests(unittest.TestCase):
         self.cooldowns = patch.dict("financial_twin.server.MODEL_COOLDOWNS", {}, clear=True)
         self.cooldowns.start()
         self.addCleanup(self.cooldowns.stop)
+
+    def test_projection_resolves_description_and_preserves_user_amounts(self):
+        data = {"profile": {"age": 30, "cash_chf": 10000, "monthly_net_income_chf": 5000, "monthly_rent_chf": 1500},
+                "scenarios": {"Study": [{"type": "education", "description": "Bachelor at ETH Zurich", "in_months": 0}]},
+                "horizon_years": 1}
+        cached = {"params": {"annual_tuition_chf": 1500}, "source": "database_cache", "source_urls": ["https://example.org"], "note": ""}
+        with patch.dict("os.environ", {"DATABASE_URL": "postgresql://test"}), patch("financial_twin.event_resolver.resolve_event", return_value=cached) as resolver:
+            result = run_projection(data)
+            resolver.assert_called_once()
+            self.assertEqual(result["paths"]["Study"]["events"][0]["params"]["annual_tuition_chf"]["source"], "database_cache")
+            data["scenarios"]["Study"][0]["params"] = {"annual_tuition_chf": 3000}
+            resolver.reset_mock()
+            result = run_projection(data)
+            resolver.assert_not_called()
+            self.assertEqual(result["paths"]["Study"]["events"][0]["params"]["annual_tuition_chf"]["value"], 3000)
+
+    def test_year_selection_including_zero(self):
+        for years in (0, 1, 20):
+            self.assertEqual(years_value(years), years)
+        for years in (-1, 21, 1.5, True):
+            with self.assertRaises(ValueError):
+                years_value(years)
+        result = random_test({"years": 0})
+        self.assertEqual(result["years"], 0)
+        self.assertEqual(len(result["nodes"]), 1)
+        variables = {item["id"]: item["value"] for item in result["extraction"]["variables"]}
+        simulation = run_simulation({"years": 0, "scenario": result["extraction"]["scenario"], "variables": variables})
+        self.assertEqual(len(simulation["nodes"]), 1)
+        self.assertEqual(simulation["nodes"][0]["month"], 0)
 
     def gemini_result(self):
         return {
