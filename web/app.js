@@ -94,9 +94,12 @@ function milestoneTitle(node) {
 }
 
 function health(node) {
-  if (node.state.cash_chf < 0 || node.state.net_worth_chf < 0) return { label: 'Needs attention', color: '#ff6b5b' };
+  const issues = [];
+  if (node.state.cash_chf < 0) issues.push(`Cash is ${money(node.state.cash_chf)}. Review income and expenses.`);
+  if (node.state.net_worth_chf < 0) issues.push(`Net worth is ${money(node.state.net_worth_chf)}. Review assets and debts.`);
+  if (issues.length) return { label: 'Needs attention', color: '#ff6b5b', issues };
   const expenses = node.state.cash_flow.expenses_chf;
-  if (expenses > 0 && node.state.cash_chf < expenses * 3) return { label: 'Building resilience', color: '#f2c14e' };
+  if (expenses > 0 && node.state.cash_chf < expenses * 3) return { label: 'Building resilience', color: '#f2c14e', issues: [`Cash is ${money(node.state.cash_chf)}, below three months of expenses (${money(expenses * 3)}). Review cash and expenses.`] };
   return { label: 'On track', color: '#7fc48a' };
 }
 
@@ -109,86 +112,101 @@ function renderGraph(fit = false) {
   const visible = new Set(milestones.map(node => node.id));
   const lanes = new Map([['root', 0], ['main', 0]]);
   for (const node of milestones) if (!lanes.has(node.branch_id)) lanes.set(node.branch_id, lanes.size - 1);
-  const months = [...new Set(milestones.map(node => node.month))].sort((a, b) => a - b);
+  const dates = [...new Set(milestones.map(node => node.date))].sort();
+  const rows = new Map();
+  const laneOffsets = new Map();
+  let nextLane = 0;
+  for (const branch of lanes.keys()) {
+    laneOffsets.set(branch, nextLane);
+    const counts = new Map();
+    for (const node of milestones.filter(item => item.branch_id === branch)) counts.set(node.date, (counts.get(node.date) || 0) + 1);
+    nextLane += Math.max(1, ...counts.values());
+  }
   const graphNodes = milestones.map(node => {
     const status = health(node);
+    const rowKey = `${node.branch_id}:${node.date}`;
+    const rowOffset = rows.get(rowKey) || 0;
+    rows.set(rowKey, rowOffset + 1);
     return {
       id: node.id,
-      label: `${node.date} · Year ${(node.month / 12).toFixed(node.month % 12 ? 1 : 0)}\n${milestoneTitle(node)}\n${money(node.state.net_worth_chf)}\n● ${status.label}`,
-      x: months.indexOf(node.month) * 260,
-      y: lanes.get(node.branch_id) * 190,
+      label: `${milestoneTitle(node)}\n${money(node.state.net_worth_chf)}\n● ${status.label}${node.state.cash_chf < 0 ? '\nNegative cash' : ''}${node.state.net_worth_chf < 0 ? '\nNegative net worth' : ''}${status.label === 'Building resilience' ? '\nLow cash reserve' : ''}`,
+      x: dates.indexOf(node.date) * 300,
+      y: (laneOffsets.get(node.branch_id) + rowOffset) * 160,
       color: { background: node.id === state.selectedId ? '#4a2614' : '#2b1910', border: status.color, highlight: { background: '#4a2614', border: status.color } },
       font: { color: '#f6e9dc', size: 14, face: 'DM Sans', multi: false },
       borderWidth: node.id === state.selectedId ? 3 : 1.5,
       shape: 'box', margin: 16, widthConstraint: { minimum: 170, maximum: 210 },
     };
   });
+  const positions = new Map(graphNodes.map(node => [node.id, node]));
   const edges = [];
   for (const node of milestones) {
     let parentId = node.parent_id;
     while (parentId && !visible.has(parentId)) parentId = state.nodes.get(parentId)?.parent_id;
-    if (parentId) edges.push({ id: `${parentId}>${node.id}`, from: parentId, to: node.id, arrows: 'to', color: { color: '#8a5a3c', highlight: '#ff9a4d' }, smooth: { type: 'cubicBezier', roundness: 0.4 } });
+    if (!parentId) continue;
+    const parent = positions.get(parentId);
+    const child = positions.get(node.id);
+    const direction = Math.sign(child.x - parent.x) || 1;
+    const exitX = parent.x + direction * 150;
+    const entryX = child.x === parent.x ? exitX : child.x - direction * 150;
+    const bends = [];
+    if (exitX === entryX) {
+      if (parent.y !== child.y) bends.push([exitX, parent.y], [entryX, child.y]);
+    } else {
+      const channelY = child.y - 80;
+      bends.push([exitX, parent.y], [exitX, channelY], [entryX, channelY], [entryX, child.y]);
+    }
+    let from = parentId;
+    for (const [index, [x, y]] of bends.entries()) {
+      const id = JSON.stringify([parentId, node.id, index]);
+      graphNodes.push({ id, x, y, shape: 'dot', size: 0.01, borderWidth: 0, color: 'transparent' });
+      edges.push({ id, from, to: id });
+      from = id;
+    }
+    edges.push({ id: JSON.stringify([parentId, node.id]), from, to: node.id, arrows: 'to' });
   }
   if (!state.network) {
     state.graphNodes = new vis.DataSet(graphNodes);
     state.graphEdges = new vis.DataSet(edges);
     state.network = new vis.Network(byId('timeline-graph'), { nodes: state.graphNodes, edges: state.graphEdges }, {
-      physics: false, interaction: { hover: true, navigationButtons: false },
-      nodes: { chosen: false }, edges: { width: 2, arrowStrikethrough: false },
+      physics: false, interaction: { hover: true, navigationButtons: false, dragNodes: false },
+      nodes: { chosen: false }, edges: { smooth: false, color: { color: '#8a5a3c', highlight: '#ff9a4d' }, width: 2, arrowStrikethrough: false },
       layout: { improvedLayout: false },
     });
-    state.network.on('click', params => { if (params.nodes.length) selectNode(params.nodes[0]); });
-    let drag = null;
-    state.network.on('dragStart', params => {
-      if (!params.nodes.length) { drag = null; return; }
-      const children = new Map();
-      for (const edge of state.graphEdges.get()) {
-        if (!children.has(edge.from)) children.set(edge.from, []);
-        children.get(edge.from).push(edge.to);
+    state.network.on('click', params => { if (state.nodes.has(params.nodes[0])) selectNode(params.nodes[0]); });
+    state.network.on('afterDrawing', ctx => {
+      const nodes = milestoneNodes();
+      const columns = [...new Set(nodes.map(node => node.date))].sort();
+      if (!nodes.length) return;
+      const scale = state.network.getScale();
+      const bottom = Math.max(...nodes.map(node => state.network.getBoundingBox(node.id).bottom));
+      const axisY = bottom + 24;
+      ctx.save();
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.55)';
+      ctx.lineWidth = 1 / scale;
+      ctx.beginPath();
+      ctx.moveTo(-110, axisY);
+      ctx.lineTo((columns.length - 1) * 300 + 110, axisY);
+      for (const index of columns.keys()) {
+        ctx.moveTo(index * 300, axisY);
+        ctx.lineTo(index * 300, axisY + 6 / scale);
       }
-      const dragged = new Set(params.nodes);
-      const followers = new Set();
-      const stack = [...params.nodes];
-      while (stack.length) {
-        for (const child of children.get(stack.pop()) || []) {
-          if (dragged.has(child) || followers.has(child)) continue;
-          followers.add(child);
-          stack.push(child);
-        }
+      ctx.stroke();
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'top';
+      ctx.fillStyle = '#f6e9dc';
+      ctx.font = `${Math.min(14, 14 / scale)}px DM Sans`;
+      for (const [index, date] of columns.entries()) {
+        const node = nodes.find(item => item.date === date);
+        ctx.fillText(`${date} · Year ${(node.month / 12).toFixed(1)}`, index * 300, axisY + 10 / scale);
       }
-      const anchor = params.nodes[0];
-      drag = { anchor, origin: state.network.getPosition(anchor), followers: state.network.getPositions([...followers]) };
+      ctx.restore();
     });
-    state.network.on('dragging', () => {
-      if (!drag) return;
-      const current = state.network.getPosition(drag.anchor);
-      const dx = current.x - drag.origin.x;
-      const dy = current.y - drag.origin.y;
-      for (const [id, start] of Object.entries(drag.followers)) state.network.moveNode(id, start.x + dx, start.y + dy);
-    });
-    state.network.on('dragEnd', () => { drag = null; });
   } else {
-    // Keep every node that is already on the canvas where it currently is (including nodes the user dragged);
-    // only place new nodes, shifted by however far their nearest existing ancestor has moved from its default spot.
     const existing = new Set(state.graphNodes.getIds());
-    const positions = state.network.getPositions([...existing]);
-    const defaults = new Map(graphNodes.map(node => [node.id, { x: node.x, y: node.y }]));
-    const parentOf = new Map(edges.map(edge => [edge.to, edge.from]));
-    for (const node of graphNodes) {
-      if (existing.has(node.id)) {
-        node.x = positions[node.id].x;
-        node.y = positions[node.id].y;
-        continue;
-      }
-      let anchor = parentOf.get(node.id);
-      while (anchor && !existing.has(anchor)) anchor = parentOf.get(anchor);
-      if (anchor && defaults.has(anchor)) {
-        node.x += positions[anchor].x - defaults.get(anchor).x;
-        node.y += positions[anchor].y - defaults.get(anchor).y;
-      }
-    }
+    const renderedIds = new Set(graphNodes.map(node => node.id));
     const edgeIds = new Set(edges.map(edge => edge.id));
-    state.graphNodes.remove([...existing].filter(id => !visible.has(id)));
+    state.graphNodes.remove([...existing].filter(id => !renderedIds.has(id)));
     state.graphNodes.update(graphNodes);
     state.graphEdges.remove(state.graphEdges.getIds().filter(id => !edgeIds.has(id)));
     state.graphEdges.update(edges);
@@ -205,7 +223,8 @@ function renderGraph(fit = false) {
   for (const node of milestones) {
     const option = document.createElement('option');
     option.value = node.id;
-    option.textContent = `${node.branch_id === 'root' || node.branch_id === 'main' ? 'Original path' : `Branch ${lanes.get(node.branch_id)}`} · ${node.date} — ${milestoneTitle(node)} — ${money(node.state.net_worth_chf)}`;
+    const status = health(node);
+    option.textContent = `${node.branch_id === 'root' || node.branch_id === 'main' ? 'Original path' : `Branch ${lanes.get(node.branch_id)}`} · ${node.date} — ${milestoneTitle(node)} — ${money(node.state.net_worth_chf)}${status.issues ? ` — ${status.label}: ${status.issues.join('; ')}` : ''}`;
     select.append(option);
   }
   select.value = state.selectedId || '';
@@ -268,24 +287,35 @@ function branchValue(node, variable) {
 
 function renderInspector(node) {
   const panel = byId('inspector');
+  const nodeHealth = health(node);
   panel.replaceChildren();
   const header = document.createElement('div');
   header.className = 'inspector-header';
   const kicker = document.createElement('span');
   kicker.className = 'card-kicker';
-  kicker.textContent = `${node.date} · YEAR ${(node.month / 12).toFixed(node.month % 12 ? 1 : 0)}`;
+  kicker.textContent = `${node.date} · YEAR ${(node.month / 12).toFixed(1)}`;
   const title = document.createElement('h2');
   title.textContent = milestoneTitle(node);
   const status = document.createElement('span');
   status.className = 'health-label';
-  status.style.color = health(node).color;
-  status.textContent = `● ${health(node).label}`;
+  status.style.color = nodeHealth.color;
+  status.textContent = `● ${nodeHealth.label}`;
   const worth = document.createElement('div');
   worth.className = 'inspector-worth';
   worth.textContent = money(node.state.net_worth_chf);
   const worthLabel = document.createElement('p');
   worthLabel.textContent = 'Projected net worth';
   header.append(kicker, title, status, worth, worthLabel);
+  if (nodeHealth.issues) {
+    const issues = document.createElement('ul');
+    issues.className = 'health-issues';
+    for (const issue of nodeHealth.issues) {
+      const item = document.createElement('li');
+      item.textContent = issue;
+      issues.append(item);
+    }
+    header.append(issues);
+  }
   const narrative = document.createElement('div');
   narrative.className = 'narrative';
   const narrativeTitle = document.createElement('h3');
