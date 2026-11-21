@@ -129,6 +129,29 @@ describe('tree index', () => {
     // m1 starts the Original path, m2 is a fork, a3 starts branch A, a4 is a fork, a5 is the first shortfall and the tip.
     assert.deepEqual(plain(app.getPathMilestones(chain, index).map(item => item.id)), ['root', 'm1', 'm2', 'a3', 'a4', 'a5']);
   });
+
+  test('hiding recaps drops both 6-month and full-year recaps (including non-event fork recaps) while keeping starts, events and tips', () => {
+    // Extend main path past month 6 and month 12 to month 18 so m6 (6m) and m12 (Year 1) are pure recaps and m18 is the tip
+    let prev = 'm6';
+    for (let m = 7; m <= 18; m++) {
+      const id = `m${m}`;
+      app.state.nodes.set(id, node(id, prev, 'main', m));
+      prev = id;
+    }
+    const index = app.buildTreeIndex();
+    const mainChain = index.branchMeta.get('main').chain;
+    assert.ok(app.getPathMilestones(mainChain, index).some(n => n.id === 'm6'), 'm6 is shown by default');
+    assert.ok(app.getPathMilestones(mainChain, index).some(n => n.id === 'm12'), 'm12 (Year 1) is shown by default');
+    app.setHideRecaps(true);
+    const compactMain = app.getPathMilestones(mainChain, index).map(n => n.id);
+    // m2 and m4 are non-event fork recaps, m6 and m12 are periodic recaps — all hidden, leaving only root, m1 (branch start), and m18 (horizon end)
+    assert.deepEqual(plain(compactMain), ['root', 'm1', 'm18']);
+    const treeIds = app.getAllGraphMilestones(index).map(n => n.id);
+    assert.ok(!treeIds.includes('m6') && !treeIds.includes('m12') && !treeIds.includes('m2') && !treeIds.includes('m4'));
+    assert.ok(treeIds.includes('a3') && treeIds.includes('b5') && treeIds.includes('c5'), 'real event nodes stay visible');
+    app.setHideRecaps(false);
+    assert.ok(app.getAllGraphMilestones(index).some(n => n.id === 'm12'), 're-showing recaps brings yearly recaps back');
+  });
 });
 
 describe('health flags', () => {
