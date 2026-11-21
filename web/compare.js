@@ -1,7 +1,7 @@
 const $ = (selector) => document.querySelector(selector);
 const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (character) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"})[character]);
-const money = (value) => value === null || value === undefined ? "Not available" : `CHF ${new Intl.NumberFormat("en-CH", {minimumFractionDigits: 2, maximumFractionDigits: 2}).format(value)}`;
-const plain = (value) => value === null || value === undefined ? "Unknown" : typeof value === "number" ? new Intl.NumberFormat("en-CH", {maximumSignificantDigits: 12}).format(value) : String(value);
+const money = (value) => value === null || value === undefined ? "Not available" : `CHF ${new Intl.NumberFormat("en-US", {minimumFractionDigits: 2, maximumFractionDigits: 2}).format(value)}`;
+const plain = (value) => value === null || value === undefined ? "Unknown" : typeof value === "number" ? new Intl.NumberFormat("en-US", {maximumFractionDigits: 2}).format(value) : String(value);
 const sourceName = (source) => ({database_cache: "dataset", web_search: "research"})[source] || source || "unknown";
 const sourceBadge = (source) => `<span class="badge">${escapeHtml(sourceName(source))}</span>`;
 const when = (month, date) => month === null || month === undefined ? "Not reached" : `Month ${escapeHtml(month)}${date ? ` · ${escapeHtml(date)}` : ""}`;
