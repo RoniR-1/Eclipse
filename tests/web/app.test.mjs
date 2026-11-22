@@ -48,6 +48,24 @@ const ids = () => [...app.state.nodes.keys()].sort();
 // Values created inside the app's context have that context's prototypes; compare plain copies.
 const plain = value => JSON.parse(JSON.stringify(value));
 
+test('unscored goals do not produce a winning path', () => {
+  const document = fakeDocument();
+  const { app: goalApp } = loadApp({ document });
+  goalApp.state.nodes = new Map(graph().map(item => [item.id, item]));
+  goalApp.renderScorecard({
+    horizon: '2026-02', method: 'Method', goals: [{ name: 'Save', type: 'monthly_surplus' }],
+    paths: [{ branch_id: 'main', tip_id: 'm1', rank: 1, score: null, goals_met: 0, goals_scored: 0, robust: 0,
+      results: [{ status: 'no_observed_months', gap_chf: null, explain: { headline: 'No months', levers: [] } }] }],
+  });
+  const result = document.getElementById('goals-result');
+  const content = [...result.walk()];
+  assert.ok(content.some(item => item.textContent === 'No goals can be scored yet'));
+  assert.ok(content.some(item => item.textContent.includes('same cash can count toward multiple goals')));
+  assert.ok(content.some(item => item.attributes.title?.includes('No complete months in the projection')));
+  assert.ok(!content.some(item => item.textContent.startsWith('Closest to your goals')));
+  assert.ok(!content.some(item => item.classList.contains('is-best')));
+});
+
 describe('branch deletion', () => {
   test('a branch takes its nested branches with it and nothing else', () => {
     assert.deepEqual([...app.branchNodeIds('A')].sort(), ['a3', 'a4', 'a5', 'b5', 'b6']);

@@ -5102,6 +5102,7 @@ const GOAL_STATUS = {
   robust: ['✓', 'Met, even if estimates are off'], fragile: ['✓', 'Met, but not if estimates turn out worse'],
   met: ['✓', 'Met'], within_reach: ['~', 'Only met if estimates turn out better'], missed: ['✗', 'Missed'],
   beyond_horizon: ['—', 'After the projection horizon; not scored'],
+  no_observed_months: ['—', 'No complete months in the projection; not scored'],
 };
 const LEVER_LABELS = { money: 'Money', time: 'Time', target: 'Reachable', cause: 'Why', buffer: 'Safety', note: 'Note' };
 const GOALS_STORAGE = 'eclipse_goals';
@@ -5270,18 +5271,19 @@ function renderScorecard(card) {
     const explain = el('button', { type: 'button', class: 'text-button goals-view', text: 'Explain', onclick: () => showPathExplanation(byId('goals-explain'), row.branch_id) });
     const view = el('button', { type: 'button', class: 'text-button goals-view', text: 'View',
       onclick: () => goToPath(row.branch_id, row.tip_id) });
-    body.append(el('tr', { class: row.rank === 1 ? 'is-best' : '' },
-      el('td', { text: String(row.rank) }), el('td', { class: 'goals-path', text: pathLabel(row.branch_id) }),
+    body.append(el('tr', { class: row.score !== null && row.rank === 1 ? 'is-best' : '' },
+      el('td', { text: row.score === null ? '—' : String(row.rank) }), el('td', { class: 'goals-path', text: pathLabel(row.branch_id) }),
       el('td', { text: row.score === null ? '—' : `${Math.round(row.score * 100)}%`, title: `${row.goals_met} of ${row.goals_scored} scored goals met` }),
       ...row.results.map(goalCell), el('td', { class: 'goals-actions' }, explain, view)));
   }
   table.append(body);
-  const best = card.paths[0];
+  const best = card.paths.find(row => row.score !== null);
   box.replaceChildren(
-    el('h3', { text: `Closest to your goals: ${pathLabel(best.branch_id)}` }),
-    el('p', { class: 'goals-summary', text: `${best.goals_met} of ${best.goals_scored} goals met (${best.robust} even if estimates are off). Every path is judged up to ${card.horizon}.` }),
+    el('h3', { text: best ? `Closest to your goals: ${pathLabel(best.branch_id)}` : 'No goals can be scored yet' }),
+    el('p', { class: 'goals-summary', text: best ? `${best.goals_met} of ${best.goals_scored} goals met (${best.robust} even if estimates are off). Every path is judged up to ${card.horizon}.` : `Extend the projection or adjust your goals to compare paths. The current horizon is ${card.horizon}.` }),
     el('div', { class: 'goals-table-wrap' }, table),
-    el('p', { class: 'goals-legend', text: '✓ met · ~ only if estimates turn out better · ✗ missed · — after the horizon. Amounts show how far above or below the target a path is. Explain shows what would close the gap.' }),
+    el('p', { class: 'goals-legend', text: '✓ met · ~ only if estimates turn out better · ✗ missed · — not scored. Amounts show how far above or below the target a path is. Explain shows what would close the gap.' }),
+    el('p', { class: 'goals-legend', text: 'Each goal is checked independently. The same cash can count toward multiple goals, so meeting each target does not establish that all planned spending can be funded.' }),
     el('div', { id: 'goals-explain', class: 'goals-explain' }),
     el('p', { class: 'range-note', text: card.method }));
 }
