@@ -909,6 +909,9 @@ def apply_branch_change(parent, event, months, variables, change, sequence=None,
         if field not in ("monthly_income_delta_chf", "monthly_expenses_delta_chf") and value < 0:
             raise ValueError("Gemini returned invalid event adjustments.")
     proceeds = change.get("borrowing_proceeds_chf", 0)
+    duration = change.get("duration_months", 0)
+    if isinstance(duration, bool) or not isinstance(duration, int) or duration < 0:
+        raise ValueError("Duration must be a nonnegative whole number of months.")
     if isinstance(proceeds, bool) or not isinstance(proceeds, (int, float)) or not math.isfinite(proceeds) or not 0 <= proceeds <= change["new_debt_chf"]:
         raise ValueError("Borrowing proceeds must be between zero and the new debt.")
     phases = []
@@ -929,6 +932,9 @@ def apply_branch_change(parent, event, months, variables, change, sequence=None,
         revised["monthly_income_chf"] = max(0, phase["monthly_income_chf"] + change["monthly_income_delta_chf"])
         revised["monthly_expenses_chf"] = max(0, phase["monthly_expenses_chf"] + change["monthly_expenses_delta_chf"])
         phases.append(revised)
+        if duration:
+            revised["end_month"] = month + duration
+            phases.append({**deepcopy(phase), "start_month": month + duration, "end_month": None})
         break
     preferences = {}
     inflation = scenario["annual_inflation"]
@@ -947,6 +953,8 @@ def apply_branch_change(parent, event, months, variables, change, sequence=None,
     updated_parent = deepcopy(parent)
     updated_parent["state"]["cash_chf"] += proceeds
     change = {field: change[field] for field in fields} | ({"borrowing_proceeds_chf": proceeds} if proceeds else {})
+    if duration:
+        change["duration_months"] = duration
     branch_id = uuid4().hex if sequence is None else branch_identifier(parent["id"], event, months, variables, change, sequence)
     for asset in updated_parent["state"]["assets"]:
         if is_investment_asset(asset):
@@ -984,6 +992,7 @@ def apply_branch_change(parent, event, months, variables, change, sequence=None,
                                "parent_assets": deepcopy(parent["state"]["assets"]),
                                "parent_debts": deepcopy(parent["state"]["debts"])}
     nodes[0]["event_summary"] = event.strip()
+    nodes[0]["legacy_change"] = deepcopy(change)
     nodes[0]["branch_commitments"] = branch_commitments(parent, nodes[0])
     for node in nodes:
         node["event_narrative"] = event.strip()
@@ -1003,7 +1012,7 @@ def _carry_node_fields(revised, original, branch_parent=None, event_state=None):
     """Keep a re-simulated node's identity and the event it records."""
     revised["id"] = original["id"]
     revised["parent_id"] = original["parent_id"]
-    for key in ("event_summary", "event_narrative", "event_state", "branch_proposal", "appended_events"):
+    for key in ("event_summary", "event_narrative", "event_state", "branch_proposal", "legacy_change", "appended_events"):
         if key in original:
             revised[key] = deepcopy(event_state if key == "event_state" and branch_parent is not None else original[key])
     if "branch_commitments" in original:
@@ -1351,6 +1360,155 @@ def append_event(data):
     return {"nodes": nodes, "record": record, "appended": appended, "point_id": point["id"]}
 
 
+def edit_event(data):
+    from financial_twin.reproduce import RUN_FORMAT, random_test as replay_test, run_simulation as replay_simulation
+    run = data.get("run")
+    if not isinstance(run, dict) or run.get("format") != RUN_FORMAT:
+        raise ValueError("Provide a valid run.")
+    base_event = data.get("base_event")
+    kept = run.get("kept_node_ids")
+    if not isinstance(kept, list) or data.get("parent_id") not in kept:
+        raise ValueError("Choose a start point on the visible timeline.")
+    durations = data.get("durations", [])
+    if not isinstance(durations, list) or any(isinstance(value, bool) or not isinstance(value, int) or value < 0 for value in durations):
+        raise ValueError("Durations must be nonnegative whole months.")
+    source = run.get("source")
+    scenario = deepcopy(run.get("scenario"))
+    variables = deepcopy(run.get("variables") or {})
+    seed_records = []
+    if source == "test":
+        generated = replay_test({"years": run["years"], "seed": run["seed"], "start_date": run["start_date"]})
+        initial = generated["nodes"]
+        if "branch_records" in generated:
+            scenario = generated["extraction"]["scenario"]
+            variables = {item["id"]: item["value"] for item in generated["extraction"]["variables"]
+                         if item["id"] in ("opening_cash_chf", "savings_rate", "risk_tolerance")}
+            seed_records = generated["branch_records"]
+            initial = [node for node in initial if node["branch_id"] in ("root", "main")]
+            source = "simulate"
+    elif run.get("source") == "simulate":
+        initial = replay_simulation({"scenario": run["scenario"], "years": run["years"], "variables": run.get("variables", {})})["nodes"]
+    else:
+        raise ValueError("Unknown run source.")
+    old = {node["id"]: node for node in initial}
+    revised_initial = initial
+    if base_event is not None:
+        from financial_twin.event_timing import edit_base_event
+        parent = old.get(data.get("parent_id"))
+        if not isinstance(base_event, dict) or parent is None:
+            raise ValueError("Choose a point on the main timeline.")
+        scenario = edit_base_event(scenario, base_event.get("kind"), base_event.get("index"), parent["month"], data.get("duration"))
+        revised_initial = replay_simulation({"scenario": scenario, "years": run["years"], "variables": variables})["nodes"]
+    revised = {node["id"]: node for node in revised_initial}
+    ids = {before["id"]: after["id"] for before, after in zip(initial, revised_initial)}
+    operations = run.get("operations") or [{"type": "branch", "branch": branch} for branch in run.get("branches", [])]
+    recorded = {(item["branch"].get("parent_id"), item["branch"].get("sequence"))
+                for item in operations if item.get("type") == "branch"}
+    operations = [{"type": "branch", "branch": branch} for branch in seed_records
+                  if (branch.get("parent_id"), branch.get("sequence")) not in recorded] + operations
+    updated_operations = []
+    selected_id = revised_initial[min(parent["month"] + 1, len(revised_initial) - 1)]["id"] if base_event is not None else None
+    target_found = base_event is not None
+
+    def apply_operation(operation, timeline):
+        kind = operation.get("type")
+        if kind == "extend_path" or kind == "branch" and operation["branch"].get("kind") != "append":
+            months = operation["months"] if kind == "extend_path" else operation["branch"]["months"]
+            if isinstance(months, bool) or not isinstance(months, int) or not 1 <= months <= 600:
+                raise ValueError("Timeline duration must be between 1 and 600 months.")
+        if kind == "extend_path":
+            parent = timeline[operation["node_id"]]
+            path = "main" if parent["branch_id"] == "root" else parent["branch_id"]
+            return {"nodes": simulate(parent, operation["months"], branch_id=path)}
+        if kind == "edit":
+            return edit_nodes({"nodes": list(timeline.values()), "node_id": operation["node_id"], "edits": operation["edits"]})
+        if kind == "append" or kind == "branch" and operation["branch"].get("kind") == "append":
+            record = operation.get("append") or operation["branch"]
+            return append_event({"nodes": list(timeline.values()), "node_id": record["node_id"], "event": record["event"],
+                                 "proposal": record["proposal"], "sequence": record["sequence"],
+                                 "months": record.get("months"), "extend": "months" in record})
+        if kind != "branch":
+            raise ValueError("Unknown run operation.")
+        branch = operation["branch"]
+        parent = timeline[branch["parent_id"]]
+        if "proposal" in branch:
+            return apply_proposal(parent, branch["event"], branch["months"], branch.get("variables", {}),
+                                  branch["proposal"], VARIABLES, branch["sequence"])
+        return apply_branch_change(parent, branch["event"], branch["months"], branch.get("variables", {}),
+                                   branch["change"], branch["sequence"],
+                                   inferred_transformation=branch.get("inferred_transformation"), include_report=False)
+
+    for operation in operations:
+        original_result = apply_operation(operation, old)
+        updated = deepcopy(operation)
+        kind = updated.get("type")
+        is_append = kind == "append" or kind == "branch" and updated["branch"].get("kind") == "append"
+        record = (updated.get("append") or updated["branch"]) if is_append else updated.get("branch")
+        matches = (is_append and original_result["appended"]["id"] == data.get("event_id")) or (
+            not is_append and kind == "branch" and base_event is None and
+            original_result["nodes"][0]["id"] == data.get("node_id") and not data.get("event_id"))
+        if matches:
+            if target_found:
+                raise ValueError("Event identity is ambiguous.")
+            parent_id = data.get("parent_id")
+            old_parent_id = record["node_id" if is_append else "parent_id"]
+            if is_append and "months" in record and parent_id != old_parent_id:
+                extension = {"type": "extend_path", "node_id": ids[old_parent_id], "months": record["months"]}
+                extended = apply_operation(extension, revised)
+                for before, after in zip(original_result["nodes"], extended["nodes"]):
+                    ids[before["id"]] = after["id"]
+                    old[before["id"]] = before
+                    revised[after["id"]] = after
+                updated_operations.append(extension)
+                record.pop("months")
+            path = lambda node: "main" if node["branch_id"] == "root" else node["branch_id"]
+            if parent_id not in old or parent_id not in ids or path(old[parent_id]) != path(old[old_parent_id]):
+                raise ValueError("Choose a start point on the same path that existed when the event was added.")
+            if "proposal" in record:
+                proposal = record["proposal"]
+                if len(durations) != len(proposal.get("changes", [])):
+                    raise ValueError("Provide a duration for each recurring change.")
+                for change, duration in zip(proposal["changes"], durations):
+                    change["duration_months"] = duration
+            else:
+                change = record["change"]
+                recurring = bool(change.get("monthly_income_delta_chf") or change.get("monthly_expenses_delta_chf"))
+                if len(durations) != int(recurring):
+                    raise ValueError("Provide a duration for the recurring change.")
+                if recurring:
+                    change["duration_months"] = durations[0]
+            record["node_id" if is_append else "parent_id"] = parent_id
+            target_found = True
+        if kind in ("edit", "extend_path"):
+            updated["node_id"] = ids[updated["node_id"]]
+        elif record is not None:
+            parent_key = "node_id" if is_append else "parent_id"
+            record[parent_key] = ids[record[parent_key]]
+        revised_result = apply_operation(updated, revised)
+        if kind == "branch" and not is_append:
+            if len(original_result["nodes"]) != len(revised_result["nodes"]):
+                raise ValueError("Could not preserve the event timeline.")
+            for before, after in zip(original_result["nodes"], revised_result["nodes"]):
+                ids[before["id"]] = after["id"]
+        elif is_append or kind == "extend_path":
+            for before, after in zip(original_result["nodes"], revised_result["nodes"]):
+                if before["id"] not in ids:
+                    ids[before["id"]] = after["id"]
+        if matches:
+            selected_id = revised_result["nodes"][0]["id"]
+        old.update({node["id"]: node for node in original_result["nodes"]})
+        revised.update({node["id"]: node for node in revised_result["nodes"]})
+        updated_operations.append(updated)
+    if not target_found:
+        raise ValueError("This event cannot be found in the run history.")
+    if any(node_id not in ids for node_id in kept):
+        raise ValueError("Invalid saved timeline.")
+    nodes = [revised[ids[node_id]] for node_id in kept]
+    branches = [operation["branch"] for operation in updated_operations if operation.get("type") == "branch"]
+    return {"nodes": nodes, "operations": updated_operations, "branches": branches, "selected_id": selected_id,
+            "source": source, "scenario": scenario, "variables": variables}
+
+
 TEST_EVENTS = [
     ("Start a master's degree", {"monthly_income_delta_chf": -3000, "monthly_expenses_delta_chf": 400, "one_off_cost_chf": 8000}),
     ("Get promoted", {"monthly_income_delta_chf": 1500}),
@@ -1409,15 +1567,20 @@ def random_test(data, rng=None):
     events = rng.sample(TEST_EVENTS, 4)
     branch_years = rng.sample(range(1, years), min(3, max(0, years - 1)))
     branches = []
+    branch_records = []
     for (event, change), year in zip(events, sorted(branch_years)):
-        branch = apply_branch_change(main[year * 12], event, (years - year) * 12, {}, {**defaults, **change},
-                                     len(branches), inferred_transformation="random demonstration event", include_report=False)["nodes"]
+        generated = apply_branch_change(main[year * 12], event, (years - year) * 12, {}, {**defaults, **change},
+                                        len(branches), inferred_transformation="random demonstration event", include_report=False)
+        branch = generated["nodes"]
+        branch_records.append(generated["branch"])
         branches.append(branch)
         nodes.extend(branch)
     if branches and len(branches[0]) > 24:
         event, change = events[3]
-        nodes.extend(apply_branch_change(branches[0][23], event, len(branches[0]) - 24, {}, {**defaults, **change},
-                                         len(branches), inferred_transformation="random demonstration event", include_report=False)["nodes"])
+        generated = apply_branch_change(branches[0][23], event, len(branches[0]) - 24, {}, {**defaults, **change},
+                                        len(branches), inferred_transformation="random demonstration event", include_report=False)
+        branch_records.append(generated["branch"])
+        nodes.extend(generated["nodes"])
     variables = []
     for variable_id in ["opening_cash_chf", "monthly_income_chf", "monthly_expenses_chf", "savings_rate", "risk_tolerance"]:
         label, description, minimum, maximum, step, unit = VARIABLES[variable_id]
@@ -1428,7 +1591,7 @@ def random_test(data, rng=None):
         variables.append({"id": variable_id, "label": label, "description": description, "min": minimum, "max": maximum, "step": step, "value": value, "unit": unit})
     extraction = {"summary": "Randomly generated test scenario (no AI used).", "assumptions": "All figures are random test data.",
                   "scenario": scenario, "variables": variables}
-    return {"extraction": extraction, "years": years, "nodes": nodes, "seed": seed, "start_date": start_date,
+    return {"extraction": extraction, "years": years, "nodes": nodes, "branch_records": branch_records, "seed": seed, "start_date": start_date,
             "next_sequence": len(branches) + 1, "environment": environment()}
 
 
@@ -1547,7 +1710,7 @@ class Handler(SimpleHTTPRequestHandler):
             if self.headers.get_content_type() != "application/json":
                 raise ValueError("Content-Type must be application/json.")
             length = int(self.headers.get("Content-Length", "0"))
-            limit = 67108864 if self.path in ("/api/edit-nodes", "/api/branch/append", "/api/path-report", "/api/uncertainty", "/api/goals/score", "/api/paths/compare") else 10000000 if self.path == "/api/project" else 100000
+            limit = 67108864 if self.path in ("/api/edit-nodes", "/api/event/edit", "/api/branch/append", "/api/path-report", "/api/uncertainty", "/api/goals/score", "/api/paths/compare") else 10000000 if self.path == "/api/project" else 100000
             if length <= 0 or length > limit:
                 raise ValueError("Invalid request size.")
             data = json.loads(self.rfile.read(length))
@@ -1588,6 +1751,8 @@ class Handler(SimpleHTTPRequestHandler):
                 response = analyse(data.get("nodes"), data.get("uncertainty", DEFAULT_UNCERTAINTY))
             elif self.path == "/api/edit-nodes":
                 response = edit_nodes(data)
+            elif self.path == "/api/event/edit":
+                response = edit_event(data)
             elif self.path == "/api/path-report":
                 from financial_twin.engine_report import engine_comparison_bundle
                 response = {"comparison_bundle": engine_comparison_bundle(data.get("nodes"))}

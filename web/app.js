@@ -3919,7 +3919,7 @@ function renderInspector(node, { focusBranchInput = false } = {}) {
 
   // Three tabs under the header: the story of this point, its numbers, and what you can change from here.
   if (focusBranchInput) state.inspectorTab = 'whatif';
-  const overview = [rangeSection, narrativeSec, renderBranchInfo(node), renderAppendedEvents(node)];
+  const overview = [rangeSection, narrativeSec, renderBaseEventTiming(node), renderEventTiming(node), renderBranchInfo(node), renderAppendedEvents(node)];
   // Fork and goal commitments only exist on some points; an empty fold would show as a blank "Details".
   const numbers = [acctSec, feasibility, commitmentSec, goalSec.childElementCount ? goalSec : null, provenance];
   const composer = el('div', { class: 'branch-form' });
@@ -4379,6 +4379,109 @@ function pathPoints(node) {
   return [...state.nodes.values()]
     .filter(item => item.branch_id === path || (path === 'main' && item.branch_id === 'root'))
     .sort((a, b) => a.month - b.month);
+}
+
+async function saveEventTiming(payload, error, save) {
+  error.textContent = '';
+  save.disabled = true;
+  const revision = state.revision;
+  try {
+    const result = await request('/api/event/edit', { run: buildRunFile(), ...payload });
+    if (revision !== state.revision) return;
+    state.run.operations = result.operations;
+    state.run.branches = result.branches;
+    for (const key of ['source', 'scenario', 'variables', 'seed', 'start_date']) {
+      if (key in result) state.run[key] = result[key];
+    }
+    state.nodes = new Map(result.nodes.map(updated => [updated.id, updated]));
+    state.revision += 1;
+    state.narratives.clear();
+    state.pathReports.clear();
+    const selected = state.nodes.get(result.selected_id);
+    if (selected) state.activeBranchId = selected.branch_id === 'root' ? 'main' : selected.branch_id;
+    if (state.resultsView === 'tree') renderTreeGraph({ focusId: result.selected_id });
+    else renderTimelineView();
+    selectNode(result.selected_id, { openDrawer: true, skipTimelineRender: true });
+    showToast('Event timing saved');
+  } catch (failure) {
+    error.textContent = failure.message;
+  } finally {
+    save.disabled = false;
+  }
+}
+
+function eventTimingForm(parent, title, changes, points, payload) {
+  const details = el('details', { class: 'node-edit-details' }, el('summary', { text: `Edit timing for “${title}”` }));
+  const form = el('form', { class: 'node-edit-form' });
+  const start = el('select', { 'aria-label': 'Start date' },
+    ...points.map(point => el('option', { value: point.id, text: formatNiceDate(point.date, { includeDay: true }) })));
+  start.value = parent.id;
+  form.append(el('label', {}, 'Start date', start));
+  const durations = changes.map(change => {
+    const input = el('input', { type: 'number', min: '0', step: '1', required: true, value: change.duration_months });
+    form.append(el('label', {}, `${change.label} duration (months, 0 = permanent)`, input));
+    return input;
+  });
+  const error = el('p', { class: 'form-error', role: 'alert' });
+  const save = el('button', { type: 'submit', class: 'primary-button wide', text: 'Save timing' });
+  form.append(error, save);
+  form.addEventListener('submit', event => {
+    event.preventDefault();
+    saveEventTiming(payload(start.value, durations.map(input => Number(input.value))), error, save);
+  });
+  details.append(form);
+  return details;
+}
+
+function renderBaseEventTiming(node) {
+  if (!state.run || node.branch_id !== 'main' || node.month < 1) return null;
+  const root = [...state.nodes.values()].find(point => point.parent_id === null);
+  const parent = state.nodes.get(node.parent_id);
+  if (!root || !parent) return null;
+  const month = node.month - 1;
+  const events = [];
+  root.scenario.phases.forEach((phase, index) => {
+    if (phase.start_month === month && phase.start_month > 0) events.push({ kind: 'phase', index, item: phase, title: phase.name });
+  });
+  root.scenario.one_off_costs.forEach((cost, index) => {
+    if (cost.month === month) events.push({ kind: 'cost', index, item: cost, title: cost.description });
+  });
+  if (!events.length) return null;
+  const section = el('section', { class: 'inspector-section' });
+  for (const event of events) {
+    const changes = event.kind === 'phase' ? [{ label: 'Event', duration_months:
+      event.item.end_month === null ? 0 : event.item.end_month - event.item.start_month }] : [];
+    const points = pathPoints(parent).filter(point => followingNode(point));
+    section.append(eventTimingForm(parent, event.title, changes, points, (parentId, durations) => ({
+      node_id: node.id, parent_id: parentId, base_event: { kind: event.kind, index: event.index }, duration: durations[0] || 0,
+    })));
+  }
+  return section;
+}
+
+function renderEventTiming(node) {
+  if (!state.run) return null;
+  const origin = branchOrigin(node);
+  const events = [];
+  if (origin?.id === node.id) events.push({ title: origin.branch_proposal.title, proposal: origin.branch_proposal });
+  if (node.legacy_change && isBranchStart(node)) {
+    const change = node.legacy_change;
+    const changes = change.monthly_income_delta_chf || change.monthly_expenses_delta_chf
+      ? [{ label: 'Event', duration_months: change.duration_months || 0 }] : [];
+    events.push({ title: node.event_summary, proposal: { changes } });
+  }
+  for (const item of node.appended_events || []) events.push(item);
+  if (!events.length) return null;
+  const parent = state.nodes.get(node.parent_id);
+  if (!parent) return null;
+  const section = el('section', { class: 'inspector-section' });
+  for (const item of events) {
+    const points = pathPoints(parent).filter(point => !item.id || point.id === parent.id || followingNode(point));
+    section.append(eventTimingForm(parent, item.title, item.proposal.changes, points, (parentId, durations) => ({
+      node_id: node.id, event_id: item.id, parent_id: parentId, durations,
+    })));
+  }
+  return section;
 }
 
 // "When it happens": a month and a year of this path, starting at the selected point. The event takes
@@ -5283,7 +5386,9 @@ function renderUnsupported(items) {
 }
 
 function pathLabel(branchId) {
-  return buildTreeIndex().branchMeta.get(branchId)?.label || (branchId === 'main' ? 'Original path' : 'Path');
+  const meta = buildTreeIndex().branchMeta.get(branchId);
+  const label = meta?.label || (branchId === 'main' ? 'Original path' : 'Path');
+  return `${label} (${meta?.code || branchId})`;
 }
 
 function goalCell(result) {
