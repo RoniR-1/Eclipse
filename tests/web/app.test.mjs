@@ -48,6 +48,26 @@ const ids = () => [...app.state.nodes.keys()].sort();
 // Values created inside the app's context have that context's prototypes; compare plain copies.
 const plain = value => JSON.parse(JSON.stringify(value));
 
+test('branch composer offers each alternative before reviewing its numbers', async () => {
+  const document = fakeDocument();
+  const alternatives = ['Sabbatical', 'Go part-time'].map(title => ({
+    title, summary: '', assumptions: '', changes: [], one_offs: [], assets: [], investment_multiplier: 1,
+  }));
+  const { app: composer } = loadApp({ document, fetch: async () => ({
+    ok: true, json: async () => ({ proposal: alternatives[0], alternatives }),
+  }) });
+  const points = graph();
+  composer.state.nodes = new Map(points.map(item => [item.id, item]));
+  composer.state.selectedId = 'root';
+  composer.state.presets = [];
+  const section = new FakeElement();
+  composer.showComposer(section, points[0], 'A one-year sabbatical or part-time');
+  const form = section.find(item => item?.tagName === 'FORM');
+  await form.listeners.submit[0]({ preventDefault() {} });
+  assert.ok(section.find(item => item?.textContent === 'Sabbatical'));
+  assert.ok(section.find(item => item?.textContent === 'Go part-time'));
+});
+
 test('unscored goals do not produce a winning path', () => {
   const document = fakeDocument();
   const { app: goalApp } = loadApp({ document });

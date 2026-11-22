@@ -1531,7 +1531,9 @@ function renderTuning(data) {
   const currencyNote = byId('currency-note');
   currencyNote.textContent = conversionText(data);
   currencyNote.hidden = !currencyNote.textContent;
-  byId('assumptions').textContent = data.assumptions ? `Assumptions: ${localizeAmounts(data.assumptions)}` : '';
+  const alternativeNotes = (data.alternatives || []).map(plan => `${plan.title}: ${plan.assumptions}`).join(' ');
+  const assumptions = [data.assumptions, alternativeNotes].filter(Boolean).join(' ');
+  byId('assumptions').textContent = assumptions ? `Assumptions: ${localizeAmounts(assumptions)}` : '';
   byId('baseline').replaceChildren();
 
   const scenario = data.scenario;
@@ -4115,7 +4117,17 @@ function showComposer(section, node, text = '', presetId = null) {
     try {
       const result = await request('/api/branch/propose', { parent: point, preset: selected || undefined, event: details || undefined, currency: state.currency.code });
       if (revision === state.revision && state.selectedId === node.id) {
-        renderReview(section, point, result.proposal, details, selected, { origin: node, estimatedFor: point });
+        if (result.alternatives?.length > 1) {
+          section.replaceChildren(el('h3', { text: 'Choose an alternative' }),
+            ...result.alternatives.map(proposal => el('button', {
+              type: 'button', class: 'ghost-button wide', text: proposal.title,
+              onclick: () => renderReview(section, point, proposal, details, selected, { origin: node, estimatedFor: point }),
+            })),
+            el('button', { type: 'button', class: 'text-button', text: 'Edit description',
+              onclick: () => showComposer(section, node, details, selected) }));
+        } else {
+          renderReview(section, point, result.proposal, details, selected, { origin: node, estimatedFor: point });
+        }
       }
     } catch (problem) {
       error.textContent = problem.message;
@@ -4692,10 +4704,10 @@ async function selectNode(id, { openDrawer = false, focusBranchInput = false, sk
   }
 }
 
-function renderResults(nodes, bundle = null) {
+function renderResults(nodes, bundle = null, baselineLeafId = null) {
   state.revision += 1;
   state.pathReports = new Map();
-  if (bundle) state.pathReports.set(nodes.at(-1).id, bundle);
+  if (bundle) state.pathReports.set(baselineLeafId || nodes.at(-1).id, bundle);
   state.nodes = new Map(nodes.map(node => [node.id, node]));
   state.narratives = new Map();
   state.activeBranchId = nodes.some(n => n.branch_id === 'main') ? 'main' : nodes[0].branch_id;
@@ -4934,13 +4946,17 @@ byId('simulate-form').addEventListener('submit', async event => {
       scenario: state.extraction.scenario,
       years: state.years,
       variables,
+      alternatives: state.extraction.alternatives || [],
     });
+    const branches = result.branches || [];
     state.run = {
       source: 'simulate', seed: null, start_date: result.scenario.start_date, years: state.years,
-      scenario: structuredClone(state.extraction.scenario), variables, branches: [], operations: [], next_sequence: 0,
+      scenario: structuredClone(state.extraction.scenario), variables, branches,
+      operations: branches.map(branch => ({ type: 'branch', branch: structuredClone(branch) })),
+      next_sequence: branches.length,
       environment: result.environment,
     };
-    renderResults(result.nodes, result.comparison_bundle);
+    renderResults(result.nodes, result.comparison_bundle, result.baseline_leaf_id);
 
   } catch (error) {
     byId('simulate-error').textContent = error.message;
