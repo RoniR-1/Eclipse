@@ -1436,8 +1436,9 @@ def main():
     from financial_twin.database import initialize_from_environment
     initialize_from_environment()
     port = int(os.environ.get("PORT", "8000"))
-    server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
-    print(f"Financial Twin running at http://127.0.0.1:{port}", flush=True)
+    host = os.environ.get("HOST", "127.0.0.1")
+    server = ThreadingHTTPServer((host, port), Handler)
+    print(f"Financial Twin listening on {host}:{port}", flush=True)
     server.serve_forever()
 
 

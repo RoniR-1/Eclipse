@@ -14,6 +14,15 @@ The included `fixtures/demo` directory supplies the comparison inputs, synthetic
 
 For free-text story extraction and branch proposals, configure a provider key in `AI_API_KEY_1` and restart. For a chat-completions-compatible service, also set `AI_BASE_URL` and a comma-separated `AI_API_KEY_MODEL` list. Native Gemini uses `GEMINI_MODEL` when the base URL is empty. Validated assumptions and reviewed edits are the reproducible inputs. A fresh AI extraction can change the result. [Provider setup and replay](TECHNICAL.md) · [Failure handling](FAILURE_HANDLING.md)
 
+## Deploy on Railway
+
+1. Create a Railway project from this repository and add a PostgreSQL service.
+2. In the application service variables, set `DATABASE_URL` to `${{Postgres.DATABASE_URL}}`, replacing `Postgres` if the database service has a different name. The database role needs permission to create tables and indexes.
+3. Deploy the application and generate a public domain in its networking settings. Railway installs `requirements.txt`, starts the application using `railway.toml`, and supplies `PORT`. Startup creates the schema and imports the included fictional seed data into an empty database.
+4. To enable AI features, set `AI_API_KEY_1` and any provider settings described above as application service variables. The application runs the fictional demos without an API key.
+
+The AI response cache and exchange-rate cache use the application filesystem. They can be recreated after a deployment. To retain the AI response cache, attach a Railway volume and set `AI_CACHE_DIR` to a directory within its mount path. PostgreSQL data persists in the database service.
+
 ## Rehearse the five-year Alexia demo
 
 1. Choose **Explore fictional demo without AI**. Start on 1 January 2026 with CHF 8,000. Read both paths at **1 January 2031**, after 60 monthly transitions. The working path earns CHF 4,800 net and spends CHF 2,400 per month.
