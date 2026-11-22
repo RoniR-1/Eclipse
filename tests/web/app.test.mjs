@@ -80,10 +80,16 @@ test('unscored goals do not produce a winning path', () => {
   const result = document.getElementById('goals-result');
   const content = [...result.walk()];
   assert.ok(content.some(item => item.textContent === 'No goals can be scored yet'));
-  assert.ok(content.some(item => item.textContent.includes('same cash can count toward multiple goals')));
+  assert.ok(content.some(item => item.textContent.includes('same cash can count toward several goals')));
   assert.ok(content.some(item => item.attributes.title?.includes('No complete months in the projection')));
   assert.ok(!content.some(item => item.textContent.startsWith('Closest to your goals')));
   assert.ok(!content.some(item => item.classList.contains('is-best')));
+});
+
+test('the goals result line is short and says the horizon only once, in the note below', () => {
+  assert.equal(app.goalsResultText({ goals_met: 1, goals_scored: 1, robust: 1 }), '1 of 1 goals met, even if estimates are off');
+  assert.equal(app.goalsResultText({ goals_met: 2, goals_scored: 3, robust: 1 }), '2 of 3 goals met (1 even if estimates are off)');
+  assert.equal(app.goalsResultText({ goals_met: 0, goals_scored: 2, robust: 0 }), '0 of 2 goals met');
 });
 
 describe('branch deletion', () => {
