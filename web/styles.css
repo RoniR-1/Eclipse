@@ -3687,11 +3687,6 @@ html[data-theme="light"] .info-tip-body {
   margin: 0;
 }
 
-.label-hint {
-  font-weight: 400;
-  color: var(--text-muted);
-}
-
 /* "How your data is used" under the story form */
 .data-use {
   margin-top: 14px;
@@ -4429,4 +4424,15 @@ html[data-theme="light"] .when-note {
 
 .range-value.is-end {
   transform: translateX(calc(-100% + 6px));
+}
+
+/* The (i) next to "Your starting point" opens over the "Adjust your assumptions" card, not behind it */
+.tuning-grid > .summary-card {
+  position: relative;
+  z-index: 2;
+}
+
+.tuning-grid > .sliders-card {
+  position: relative;
+  z-index: 1;
 }
