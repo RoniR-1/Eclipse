@@ -1488,7 +1488,8 @@ body.world-mode #inspector-panel .panel-toggle {
   font-size: 13px;
 }
 
-.node-edit-form input {
+.node-edit-form input,
+.node-edit-form select {
   display: block;
   width: 100%;
   margin-top: 6px;
@@ -3218,7 +3219,8 @@ html[data-theme="light"] .branch-toggle output {
   color: var(--text-strong);
 }
 
-html[data-theme="light"] .node-edit-form input {
+html[data-theme="light"] .node-edit-form input,
+html[data-theme="light"] .node-edit-form select {
   background: var(--input-bg);
   border-color: var(--border-strong);
   color: var(--text);

@@ -28,7 +28,7 @@ from collections import Counter
 from copy import deepcopy
 
 from financial_twin.branching import apply_proposal
-from financial_twin.engine import LEGACY_PROVENANCE_IDS
+from financial_twin.engine import LEGACY_PROVENANCE_IDS, simulate
 from financial_twin.server import VARIABLES, append_event, apply_branch_change, edit_nodes, environment, random_test, run_simulation
 
 RUN_FORMAT = "financial-twin-run/1"
@@ -92,6 +92,12 @@ def _replay(run):
     if operations is None or not operations and run.get("branches"):
         operations = [{"type": "branch", "branch": branch} for branch in run.get("branches", [])]
     for operation in operations:
+        if operation.get("type") == "extend_path":
+            parent = by_id[operation["node_id"]]
+            path = "main" if parent["branch_id"] == "root" else parent["branch_id"]
+            extended = simulate(parent, operation["months"], branch_id=path)
+            by_id.update({node["id"]: node for node in extended})
+            continue
         if operation.get("type") == "edit":
             edited = edit_nodes({"nodes": list(by_id.values()), "node_id": operation["node_id"], "edits": operation["edits"]})
             by_id.update({node["id"]: node for node in edited["nodes"]})

@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 
 const EXPORTS = [
-  'state', 'branchNodeIds', 'originalPathRemovals', 'isOriginalBranch', 'deleteBranch', 'buildRunFile',
+  'state', 'branchNodeIds', 'originalPathRemovals', 'isOriginalBranch', 'deleteBranch', 'buildRunFile', 'showComposer',
   'buildTreeIndex', 'renderBreakdown', 'holdingName', 'inspectorTabs', 'fillRangeSection', 'nodesKey', 'renderReview', 'dropdownMenu', 'goalsResultText', 'pathPoints', 'whenField', 'renderReplacedPlans', 'followingNode', 'showAppendedEvent', 'pathName', 'deleteFromNode', 'nodesFrom', 'isBranchStart',
   'getPathMilestones', 'getAllGraphMilestones', 'setHideRecaps', 'getLeafPaths', 'niceTicks', 'GRAPH_METRICS', 'nodeHealth',
   'formatVariable', 'milestoneTitle', 'money', 'moneySigned', 'compactChf', 'escapeHtml',
@@ -98,6 +98,8 @@ export class FakeElement {
   dispatch(type, extra = {}) { for (const listener of this.listeners[type] || []) listener({ type, target: this, preventDefault() {}, ...extra }); }
   *walk() { for (const child of this.children) { yield child; if (child instanceof FakeElement) yield* child.walk(); } }
   find(predicate) { for (const node of this.walk()) if (predicate(node)) return node; return null; }
+  querySelectorAll(selector) { return [...this.walk()].filter(node => node?.tagName?.toLowerCase() === selector); }
+  querySelector(selector) { return this.find(node => selector.startsWith('.') && node?.classList?.contains(selector.slice(1))); }
 }
 
 export function fakeDocument() {

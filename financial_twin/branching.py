@@ -17,6 +17,8 @@ from copy import deepcopy
 from hashlib import sha256
 import json
 import math
+import re
+from datetime import date
 from pathlib import Path
 from uuid import uuid4
 
@@ -309,7 +311,7 @@ def apply_proposal(parent, event, months, variables, proposal, catalogue, sequen
     changes = [{"kind": c["kind"], "label": c["label"], "amount": c["amount_chf"],
                 "start": month + c["start_offset_months"],
                 "end": month + c["start_offset_months"] + c["duration_months"] if c["duration_months"] else None}
-               for c in plan["changes"] if c["amount_chf"]]
+               for c in plan["changes"] if c["amount_chf"] or re.search(r"\b(?:bachelor|master|degree|education)\b", c["label"], re.I)]
     costs = [deepcopy(cost) for cost in scenario["one_off_costs"] if cost["month"] < month]
     for item in plan["one_offs"]:
         at = month + item["offset_months"]
@@ -523,6 +525,99 @@ PRESETS = {
 
 # ── AI interpretation ──────────────────────────────────────────────────────
 
+def explicit_education_period(text, start_date):
+    degree = re.search(r"\b(bachelor|master)(?:[’']s|s)?\b", text, re.I)
+    years = list(re.finditer(r"\b(20\d{2}|21\d{2})\b", text))
+    durations = list(re.finditer(r"\b(\d+|one|two|three|four|five|six)\s*[- ]?\s*years?\b", text, re.I))
+    if not degree or not years or not durations:
+        return None
+    year = min(years, key=lambda match: abs(match.start() - degree.start()))
+    duration = min(durations, key=lambda match: abs(match.start() - degree.start()))
+    number = duration.group(1).lower()
+    duration_years = int(number) if number.isdigit() else {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6}[number]
+    try:
+        start = date.fromisoformat(start_date)
+    except (TypeError, ValueError):
+        return None
+    month_names = ("january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december")
+    preceding = text[max(0, year.start() - 12):year.start()].strip().lower()
+    month = next((index for index, name in enumerate(month_names, 1) if preceding.endswith(name)), 1)
+    offset = (int(year.group(1)) - start.year) * 12 + month - start.month
+    if offset < 0 or offset > MAX_MONTHS or not 1 <= duration_years * 12 <= MAX_MONTHS:
+        return None
+    return degree.group(1).title() + "'s degree", offset, duration_years * 12
+
+
+def ensure_education_proposal(raw, event, start_date):
+    period = explicit_education_period(event, start_date)
+    if not period or not isinstance(raw, dict) or not isinstance(raw.get("changes"), list):
+        return raw
+    education_changes = [item for item in raw["changes"] if isinstance(item, dict) and item.get("kind") == "expenses"
+                         and re.search(r"\b(?:bachelor|master|degree|study|studies|education|tuition|university)\b", str(item.get("label", "")), re.I)]
+    education_costs = [item for item in raw.get("one_offs", []) if isinstance(item, dict)
+                       and re.search(r"\b(?:bachelor|master|degree|study|studies|education|tuition|university)\b", str(item.get("label", "")), re.I)]
+    if len(education_changes) == 1:
+        raw = deepcopy(raw)
+        target = next(item for item in raw["changes"] if isinstance(item, dict) and item.get("kind") == "expenses"
+                      and re.search(r"\b(?:bachelor|master|degree|study|studies|education|tuition|university)\b", str(item.get("label", "")), re.I))
+        target["start_offset_months"], target["duration_months"] = period[1:]
+        if re.search(r"\bwork(?:ing)?\b", event, re.I) and not re.search(r"\b(?:part[ -]?time|reduc\w*|stop|quit|leave|rais\w*|increas\w*)\b", event, re.I):
+            raw["changes"] = [item for item in raw["changes"] if not (isinstance(item, dict) and item.get("kind") == "income"
+                              and re.search(r"\b(?:study|studies|education|student|part[ -]?time)\b", str(item.get("label", "")), re.I))]
+        return raw
+    if education_changes:
+        return raw
+    title, offset, duration = period
+    raw = deepcopy(raw)
+    if not re.search(r"\b(?:bachelor|master|degree|study|education)\b", str(raw.get("title", "")), re.I):
+        raw["title"] = title
+    tuition = 0 if education_costs or re.search(r"\b(?:free|no tuition|tuition.{0,30}(?:CHF|\d)|(?:CHF|\d).{0,30}tuition)\b", event, re.I) else DEFAULTS["education"]["annual_tuition_chf"] / 12
+    raw["changes"].append(_change("expenses", title + " tuition", tuition,
+                                  offset, duration, "dataset"))
+    raw["assumptions"] = (str(raw.get("assumptions", "")) + " " +
+                          "When only a year is given, the degree starts in January. Tuition uses the dataset median unless stated.").strip()
+    return raw
+
+
+def ensure_work_proposal(raw, event, start_date, income):
+    if not isinstance(raw, dict) or not isinstance(raw.get("changes"), list):
+        return raw
+    labels = " ".join(str(item.get("label", "")) for item in raw["changes"] if isinstance(item, dict))
+    change = None
+    assumption = ""
+    if re.search(r"\bsabbatical\b", event, re.I) and not re.search(r"\b(?:sabbatical|break|leave)\b", labels, re.I):
+        duration = re.search(r"\b(\d+|one|two|three|four|five|six)\s*[- ]?\s*(years?|months?)\b", event, re.I)
+        if duration:
+            number = duration.group(1).lower()
+            count = int(number) if number.isdigit() else {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6}[number]
+            months = count * (12 if duration.group(2).lower().startswith("year") else 1)
+            year = re.search(r"\b(20\d{2}|21\d{2})\b", event)
+            offset = 0
+            if year:
+                try:
+                    start = date.fromisoformat(start_date)
+                    offset = (int(year.group(1)) - start.year) * 12 + 1 - start.month
+                except (TypeError, ValueError):
+                    return raw
+            if 1 <= months <= MAX_MONTHS and 0 <= offset <= MAX_MONTHS:
+                change = _change("income", "Sabbatical", -income, offset, months)
+                assumption = ("The sabbatical starts in January of the stated year and work income resumes afterwards." if year else
+                              "The sabbatical begins at the selected date and work income resumes afterwards.")
+    elif re.search(r"\bpart[ -]?time\b", event, re.I) and not re.search(r"\b(?:part[ -]?time|working|work|salary|income)\b", labels, re.I):
+        percentage = re.search(r"\b(\d{1,3})\s*(?:%|percent)", event, re.I)
+        if not percentage or int(percentage.group(1)) <= 100:
+            fraction = int(percentage.group(1)) / 100 if percentage else 0.6
+            change = _change("income", "Part-time work", income * (fraction - 1))
+            assumption = ("Income changes in proportion to the stated working percentage." if percentage else
+                          "Part-time work is assumed to be 60%, with income changing proportionally.")
+    if change is None:
+        return raw
+    raw = deepcopy(raw)
+    raw["changes"].append(change)
+    raw["assumptions"] = (str(raw.get("assumptions", "")) + " " + assumption).strip()
+    return raw
+
+
 def proposal_prompt(event, parent, preset=None):
     income, expenses = current_flows(parent)
     state = parent["state"]
@@ -546,7 +641,12 @@ def proposal_prompt(event, parent, preset=None):
     )
     return (
         "Translate the described financial event into building blocks for a monthly cash simulation in CHF, "
-        "starting at the selected point in time. "
+        "The selected date is the reference date for offsets. Calculate calendar years relative to that date, "
+        "using January when only a year is given and state this assumption. Include every explicitly described future "
+        "life event even when the person continues working. For a degree, include a labelled tuition or education "
+        "expense change for the stated duration and start date, and end it when the studies finish. Preserve ongoing "
+        "employment income unless the user describes a change, and do not invent a post-study salary change. "
+        "A sabbatical temporarily stops work income for its stated duration, then prior income resumes. "
         "Use 'changes' for recurring monthly income or expense changes relative to the current situation: amount_chf "
         "is the monthly change (negative to reduce), start_offset_months is when it starts after the event, and "
         "duration_months is how long it lasts (0 = permanent). Model temporary situations with a duration, and a later "
