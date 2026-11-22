@@ -1858,7 +1858,11 @@ function fillRangeSection(section, node) {
     },
     el('span', { class: 'range-label', text: title }),
     el('span', { class: `range-end${low < 0 ? ' is-neg' : ''}`, text: compactChf(low) }),
-    el('span', { class: 'range-bar' }, el('span', { class: 'range-dot', style: `left: ${position.toFixed(1)}%` })),
+    el('span', { class: 'range-bar' },
+      el('span', { class: 'range-dot', style: `left: ${position.toFixed(1)}%` }),
+      // The projected value above the dot; near either end it aligns inwards so it stays over the bar.
+      el('span', { class: `range-value${position < 18 ? ' is-start' : position > 82 ? ' is-end' : ''}`,
+        style: `left: ${position.toFixed(1)}%`, text: compactChf(centre) })),
     el('span', { class: 'range-end', text: compactChf(high) })));
   }
   const shortfall = range.first_shortfall?.[node.branch_id];
