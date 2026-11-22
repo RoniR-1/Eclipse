@@ -4407,3 +4407,26 @@ html[data-theme="light"] .when-note {
 .qr-close:hover {
   color: #000;
 }
+
+/* Projected value above the dot on a range bar */
+.range-row {
+  padding-top: 20px;   /* room for the value above the dot */
+}
+
+.range-value {
+  position: absolute;
+  bottom: 9px;
+  transform: translateX(-50%);
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--text-strong);
+  white-space: nowrap;
+}
+
+.range-value.is-start {
+  transform: translateX(-6px);
+}
+
+.range-value.is-end {
+  transform: translateX(calc(-100% + 6px));
+}

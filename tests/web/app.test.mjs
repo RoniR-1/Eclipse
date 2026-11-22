@@ -370,9 +370,12 @@ describe('how far this could move', () => {
     const output = text(section);
     const rows = [...section.walk()].filter(item => item.classList?.contains('range-row'));
     assert.equal(rows.length, 2);
-    assert.match(output, /Net worth CHF -9\.0k\s+CHF 4\.0k/);
+    assert.match(output, /Net worth CHF -9\.0k\s+CHF -200\s+CHF 4\.0k/);
     const dot = [...section.walk()].find(item => item.classList?.contains('range-dot'));
     assert.equal(dot.attributes.style, 'left: 67.7%', 'projection −200 between −9,000 and 4,000');
+    const value = [...section.walk()].find(item => item.classList?.contains('range-value'));
+    assert.equal(value.textContent, 'CHF -200', 'the projected value is written above the dot');
+    assert.equal(value.attributes.style, 'left: 67.7%');
     assert.equal([...section.walk()].filter(item => item.classList?.contains('range-warning')).length, 1);
     assert.match(output, /runs out of cash in 2026-05-01/);
     assert.ok(output.includes('What matters most') && output.includes('Tuition') && !output.includes('Inflation'), 'top 3 drivers');
