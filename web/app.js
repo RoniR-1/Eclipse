@@ -1508,6 +1508,24 @@ function addBaseline(label, text, source = 'assumption') {
   return { amount, badge: row.lastElementChild };
 }
 
+function provenanceFieldLabel(path, scenario) {
+  const labels = {
+    opening_cash_chf: 'Starting cash',
+    annual_inflation: 'Annual inflation',
+    start_date: 'Start date',
+    currency: 'Currency',
+  };
+  const readable = key => labels[key] || key.replace(/_chf$/, '').replaceAll('_', ' ').replace(/^./, letter => letter.toUpperCase());
+  return path.split('.').map(part => {
+    const match = part.match(/^([^\[]+)\[(\d+)\]$/);
+    if (!match) return readable(part);
+    const [, collection, index] = match;
+    const singular = { phases: 'Phase', goals: 'Goal', assets: 'Asset', debts: 'Debt', one_off_costs: 'One-time cost' }[collection] || readable(collection);
+    const item = scenario[collection]?.[Number(index)];
+    return item?.name ? `${singular} ${Number(index) + 1} (${item.name})` : `${singular} ${Number(index) + 1}`;
+  }).join(' · ');
+}
+
 function renderTuning(data) {
   byId('scenario-summary').textContent = localizeAmounts(data.summary);
   const currencyNote = byId('currency-note');
@@ -1524,7 +1542,7 @@ function renderTuning(data) {
     const row = document.createElement('div');
     row.className = 'provenance-row';
     const name = document.createElement('span');
-    name.textContent = path.replaceAll('_', ' ');
+    name.textContent = provenanceFieldLabel(path, scenario);
     const value = document.createElement('span');
     value.textContent = `${record.value ?? '—'} ${record.unit || ''}`.trim();
     const badge = document.createElement('span');
@@ -3783,7 +3801,7 @@ function renderInspector(node, { focusBranchInput = false } = {}) {
     row.className = 'provenance-row';
     const value = record.value === null ? 'Open-ended' : String(record.value);
     const detail = [record.unit, record.frequency, record.as_of_date, record.file, record.row, record.transformation].filter(Boolean).join(' · ');
-    row.innerHTML = `<div><strong>${escapeHtml(field)}</strong><span class="source-badge">${escapeHtml(record.source || 'unknown')}</span></div>
+    row.innerHTML = `<div class="provenance-heading"><strong>${escapeHtml(provenanceFieldLabel(field, node.scenario))}</strong><span class="source-badge">${escapeHtml(record.source || 'unknown')}</span></div>
       <span>${escapeHtml(value)}${detail ? ` · ${escapeHtml(detail)}` : ''}</span>`;
     provenance.append(row);
   }

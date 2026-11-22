@@ -1443,6 +1443,14 @@ body.world-mode #inspector-panel .panel-toggle {
 .goal-result strong,
 .provenance-row strong { color: var(--text-strong); }
 
+.provenance-heading {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.provenance-heading .source-badge { margin-left: 0; }
+
 .provenance-details summary {
   color: #ffc89a;
   font-size: 13px;
