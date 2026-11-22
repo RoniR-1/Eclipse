@@ -184,9 +184,24 @@ The pessimistic run moves every input to its unfavourable side at once and the o
 
 ## Compare paths
 
-**Compare paths** (next to Goals) shows every path over the same years. `POST /api/paths/compare` continues paths that end early to the common horizon (as the goals scorecard does) and returns, per path: net worth and cash at the horizon and their difference from the original path, the lowest cash and when cash first runs out (months short), the month a path overtakes the original path and stays ahead, the net-worth range if estimates are off, and plain-language sentences (`financial_twin/path_compare.py`). The sentences come from fixed templates: the net-worth difference from the original path is split into income, living costs, one-off costs, loan interest, investment returns and the value of things bought or sold. A purchase's cash payment is reported together with the value of what it bought, so buying a home or car is not shown as a loss. `tests/test_path_compare.py` checks a raise, a study break that is caught up later, a purchase, a cash shortfall and continuation.
+**Compare paths** (next to Goals) shows every path over the same years. `POST /api/paths/compare` continues paths that end early to the common horizon (as the goals scorecard does) and returns, per path: net worth and cash at the horizon and their difference from the original path, the lowest cash and when cash first runs out (months short), the month a path overtakes the original path and stays ahead, the net-worth range if estimates are off, and plain-language sentences (`financial_twin/path_compare.py`). The sentences come from fixed templates filled with calculated numbers.
+
+**One explanation.** `financial_twin/explain.py` is the only place a difference between two paths is explained. `attribute(chain, base, field, until)` splits the difference in cash or net worth at a date into the money flows that caused it, summed from the start:
+
+| Field | Parts |
+|---|---|
+| Net worth | income, living costs, one-off costs, loan interest, investment returns, changes in the value of what you own (home, investments, deposits) |
+| Cash | income, living costs, one-off costs and purchases, loan payments, money moved into investments, money borrowed, other cash movements |
+
+The last part is whatever the listed flows do not cover, so the parts always add up to the difference. Parts under CHF 100 or 2% of the difference are left out. For net worth, a purchase's cash payment is netted against the value of what it bought, so buying a home or car is not shown as a loss. Compare paths uses it at the common horizon for net worth; a goal's **Why** lever uses it at the goal's deadline, for cash or net worth depending on the goal. In the app, **Explain** in Goals and in Compare paths opens the same panel: *Why this path differs* (always) and *Your goals on this path* with the levers (once goals are scored). `tests/test_path_compare.py` checks a raise, a study break that is caught up later, a purchase, a cash shortfall, continuation, and that the cash and net-worth parts add up and match the goal lever.
 
 **One goal list.** Goals mentioned in the story (the engine's scenario goals, checked per node with cash set aside for goals already met) are imported into the Goals panel as *cash by a date* goals marked "From your story" when the panel opens. Once the paths are scored, the node details show the scorecard's verdict for that node's path (**Your goals on this path**), so the panel and the details agree; before scoring they show the story goals with a button to compare every path.
+
+## Which estimates matter most (sensitivity)
+
+**Sensitivity** on a path (`POST /api/path-report`, `financial_twin/engine_report.py`) answers: *which of my inputs moves the result most?* It raises one input at a time by 15% (or a small step if it is zero), keeps everything else the same, re-runs the path from its last change and reports how much **cash at the end** and the **lowest cash** move. The table lists inputs in plain words (for example *Monthly income from 2027-09* instead of `phases[2].monthly_income_chf`, which stays in the tooltip), sorted by the size of the effect, so the inputs worth checking first are at the top. It is a ranking of influence, not a forecast, and gives no probabilities; the uncertainty range does the "what if several estimates are off at once" part.
+
+The table has no goal column: goals are judged in one place, the Goals scorecard, whose robust / fragile status already shows whether a goal survives estimates being off. Goal targets are not tested as inputs, because changing a target moves no money. The engine still returns `goal_impacts` per input in the path report for run files and scripts.
 
 ## Check the implementation
 

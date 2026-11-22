@@ -6,34 +6,13 @@ situation, see goals.extend_to_horizon). Per path:
     net worth and cash at the horizon, and the difference from the original path
     lowest cash and the first month cash is negative (a funding gap)
     break-even: the month a path overtakes the original path's net worth and stays ahead
-    why: the net-worth difference from the original path split into income, living costs, one-off costs,
-         loan interest, investment returns, and the value of things bought or sold (the rest: homes, cars,
-         deposits and revaluations, which move money without spending it)
+    why: the net-worth difference from the original path split into the money flows that caused it
+         (explain.attribute, shared with the goal levers)
 
 The sentences come from fixed templates filled with these calculated numbers.
 """
-from financial_twin.goals import _chf, _paths
-
-PARTS = [
-    ("income_chf", 1, "income"),
-    ("expenses_chf", -1, "living costs"),
-    ("one_off_costs_chf", -1, "one-off costs"),
-    ("debt_interest_chf", -1, "loan interest"),
-    ("investment_return_chf", 1, "investment returns"),
-]
-
-
-def _totals(chain):
-    totals = {key: 0.0 for key, _, _ in PARTS}
-    for node in chain[1:]:
-        flow = node["state"].get("cash_flow", {})
-        for key in totals:
-            totals[key] += flow.get(key, 0.0)
-    return totals
-
-
-def _signed(value):
-    return f"{'+' if value >= 0 else '−'}{_chf(value)}"
+from financial_twin.explain import attribute, chf as _chf, describe, signed as _signed
+from financial_twin.goals import _paths
 
 
 def _break_even(chain, main_by_date):
@@ -54,30 +33,9 @@ def _explain(row, chain, main_chain, main_by_date):
     sentences = []
     if main_chain is not None and chain is not main_chain:
         difference = row["net_worth_vs_original_chf"]
-        mine, base = _totals(chain), _totals(main_chain)
-        parts = {label: sign * (mine[key] - base[key]) for key, sign, label in PARTS}
-        bought = difference - sum(parts.values())
-        # A purchase pays cash (a one-off cost) for something that keeps its value: report them together.
-        moved = None
-        if parts["one-off costs"] < 0 < bought:
-            moved = min(-parts["one-off costs"], bought)
-            parts["one-off costs"] += moved
-            bought -= moved
-        parts["the value of things bought or sold (home, car, deposit)"] = bought
-        threshold = max(100.0, 0.02 * abs(difference))
-        parts = sorted(((label, value) for label, value in parts.items() if abs(value) >= threshold),
-                       key=lambda part: abs(part[1]), reverse=True)
         direction = "more" if difference >= 0 else "less"
         sentences.append(f"Ends {row['horizon']} with {_chf(row['net_worth_chf'])} net worth, {_chf(difference)} {direction} than the original path.")
-        if moved and moved >= threshold:
-            sentences.append(f"Purchases moved {_chf(moved)} of cash into things you own; that alone does not change net worth.")
-        if parts:
-            helped = [f"{label} ({_signed(value)})" for label, value in parts[:3] if value > 0]
-            hurt = [f"{label} ({_signed(value)})" for label, value in parts[:3] if value < 0]
-            if helped:
-                sentences.append("Working for this path: " + ", ".join(helped) + ".")
-            if hurt:
-                sentences.append("Working against it: " + ", ".join(hurt) + ".")
+        sentences.extend(describe(attribute(chain, main_chain, "net_worth_chf")))
         status, when = _break_even(chain, main_by_date)
         if status == "always":
             sentences.append("It is never behind the original path.")

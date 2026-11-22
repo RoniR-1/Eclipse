@@ -3,7 +3,8 @@ import json
 import unittest
 
 from financial_twin import create_root, simulate
-from financial_twin.goals import extend_to_horizon
+from financial_twin.explain import attribute
+from financial_twin.goals import _cause, extend_to_horizon
 from financial_twin.path_compare import compare_paths
 from financial_twin.server import apply_branch, compare_all_paths
 
@@ -76,6 +77,25 @@ class PathCompareTests(unittest.TestCase):
         self.assertEqual(row["months_short"], 24 - 5 + 1)
         self.assertIn("funding gap", " ".join(row["explanation"]))
         self.assertIsNone(result["main"]["first_shortfall"])
+
+    def test_one_attribution_adds_up_for_cash_and_net_worth(self):
+        main = path()
+        car = {"label": "Car", "kind": "vehicle", "price_chf": 20000, "loan_chf": 0, "down_payment_chf": 20000,
+               "transaction_costs_chf": 0, "annual_interest_rate": 0, "monthly_payment_chf": 0,
+               "annual_value_change": 0, "source": "user"}
+        other = branch(main[3], plan([change("expenses", 300)], assets=[car]), 21)
+        chain = main[:4] + other
+        for field in ("cash_chf", "net_worth_chf"):
+            split = attribute(chain, main, field)
+            listed = sum(value for _, value in split["parts"])
+            self.assertAlmostEqual(listed, split["difference"], delta=1)
+        cash = dict(attribute(chain, main, "cash_chf")["parts"])
+        self.assertAlmostEqual(cash["one-off costs and purchases"], -20000, places=6)
+        self.assertAlmostEqual(cash["living costs"], -300 * 21, places=6)
+        # the goal lever quotes the same split, cut at the deadline: 8 branch months up to 2026-12
+        cause = _cause(chain, main, "2026-12", True)
+        self.assertIn("one-off costs and purchases (−CHF 20k)", cause)
+        self.assertIn("living costs (−CHF 2,400)", cause)
 
     def test_endpoint_adds_ranges_and_orders_original_first(self):
         main = path()

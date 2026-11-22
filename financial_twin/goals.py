@@ -27,6 +27,7 @@ from datetime import date
 import math
 
 from financial_twin.engine import simulate
+from financial_twin.explain import attribute, chf as _chf, holding_back
 
 GOAL_TYPES = {
     "cash_by_date": "Cash by a date",
@@ -207,52 +208,23 @@ def _status(met, pessimistic_met, optimistic_met, has_range=True):
     return "within_reach" if optimistic_met and has_range else "missed"
 
 
-def _chf(value):
-    value = abs(value)
-    return f"CHF {value / 1000:,.1f}k".replace(".0k", "k") if value >= 10000 else f"CHF {value:,.0f}"
-
-
 def _months_word(months):
     return f"{months} month{'s' if months != 1 else ''}"
 
 
 # ── causes: what differs from the original path ────────────────────────────
 
-FLOW_LABELS = [
-    ("income_chf", -1, "income is {amount} lower"),
-    ("expenses_chf", 1, "living costs are {amount} higher"),
-    ("one_off_costs_chf", 1, "one-off costs are {amount} higher"),
-    ("debt_payments_chf", 1, "loan payments are {amount} higher"),
-    ("investment_contribution_chf", 1, "{amount} more went into investments (still yours, but not cash)"),
-]
-
-
-def _flows(chain, until_key):
-    totals = {key: 0.0 for key, _, _ in FLOW_LABELS}
-    for node in chain[1:]:
-        if node["date"][:7] > until_key:
-            break
-        flow = node["state"].get("cash_flow", {})
-        for key in totals:
-            totals[key] += flow.get(key, 0.0)
-    return totals
-
-
 def _cause(chain, main_chain, until_key, cash_goal):
-    mine = _flows(chain, until_key)
+    """What holds this path back at the goal's deadline: the same attribution as Compare paths (explain.py)."""
+    field = "cash_chf" if cash_goal else "net_worth_chf"
     if main_chain is not None and main_chain is not chain:
-        base = _flows(main_chain, until_key)
-        worst, text = 0.0, None
-        for key, sign, template in FLOW_LABELS:
-            if key == "investment_contribution_chf" and not cash_goal:
-                continue
-            harm = sign * (mine[key] - base[key])
-            if harm > worst + 1:
-                worst, text = harm, template.format(amount=_chf(harm))
+        text = holding_back(attribute(chain, main_chain, field, until_key))
         if text:
-            return f"Compared with the original path by {until_key}, {text}."
-    income = mine["income_chf"]
-    spent = mine["expenses_chf"] + mine["one_off_costs_chf"] + mine["debt_payments_chf"]
+            return f"Compared with the original path by {until_key}, what holds it back: {text}."
+    mine = [node for node in chain[1:] if node["date"][:7] <= until_key]
+    flow = lambda key: sum(node["state"].get("cash_flow", {}).get(key, 0.0) for node in mine)
+    income = flow("income_chf")
+    spent = flow("expenses_chf") + flow("one_off_costs_chf") + flow("debt_payments_chf")
     if income > 0:
         return f"Up to {until_key}, living costs, one-off costs and loan payments use {spent / income:.0%} of income."
     return None

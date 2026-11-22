@@ -76,7 +76,7 @@ class GoalScorecardTests(unittest.TestCase):
         flat = rows[branch[0]["branch_id"]]["results"][0]
         self.assertEqual(flat["status"], "missed")
         self.assertIn("Cash runs out", flat["explain"]["headline"])
-        self.assertIn("living costs are", next(l["text"] for l in flat["explain"]["levers"] if l["kind"] == "cause"))
+        self.assertIn("living costs (−", next(l["text"] for l in flat["explain"]["levers"] if l["kind"] == "cause"))
         self.assertEqual(rows["main"]["results"][0]["status"], "fragile")    # 5% higher costs would run out
         self.assertEqual(card["paths"][0]["branch_id"], "main")
 
