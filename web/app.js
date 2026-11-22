@@ -2442,7 +2442,6 @@ function renderTreeMinimap(index) {
 function renderEndSummary(activeMeta, index) {
   const container = byId('path-kpis');
   container.replaceChildren();
-  renderPathComparison(index);
 
   const chain = activeMeta.chain;
   const tip = activeMeta.tipNode;
@@ -2528,62 +2527,6 @@ function renderEndSummary(activeMeta, index) {
   }
   if (state.sensitivityOpen) {
     loadAndRenderSensitivityReport(activeMeta);
-  }
-}
-
-function renderPathComparison(index) {
-  const container = byId('path-comparison');
-  container.replaceChildren();
-  const baseline = index.branchMeta.get('main') || index.branchMeta.get('root');
-  if (!baseline) return;
-  const baselineLabel = state.run?.demo === 'alexia' ? 'Start working' : 'Original path';
-  container.append(el('h3', { text: 'Compare your paths' }));
-  const alternatives = [...index.branchMeta.values()].filter(meta => meta.id !== baseline.id && meta.id !== 'root');
-  if (!alternatives.length) {
-    container.append(el('p', { text: 'Create an alternative at any timeline point to compare it with the original path.' }));
-    return;
-  }
-  for (const path of alternatives) {
-    const common = path.chain.filter(node => node.month >= path.forkMonth && baseline.byMonth.get(node.month)?.date === node.date);
-    const alternative = common.at(-1);
-    const horizon = alternative?.month;
-    const original = baseline.byMonth.get(horizon);
-    if (!original || !alternative) {
-      container.append(el('p', { text: `${path.label} has no shared date with the original after its fork.` }));
-      continue;
-    }
-    const pairs = path.chain.filter(node => node.month <= horizon && node.month >= path.forkMonth)
-      .map(node => [node, baseline.byMonth.get(node.month)]).filter(([node, base]) => base?.date === node.date);
-    const gap = pairs.reduce((largest, [node, base]) => {
-      const delta = node.state.cash_chf - base.state.cash_chf;
-      return !largest || delta < largest.delta ? { delta, date: node.date } : largest;
-    }, null);
-    const largestGap = pairs.reduce((largest, [node, base]) => {
-      const delta = node.state.cash_chf - base.state.cash_chf;
-      return !largest || Math.abs(delta) > Math.abs(largest.delta) ? { delta, date: node.date } : largest;
-    }, null);
-    const breakEven = pairs.findIndex(([node, base], i) => node.state.net_worth_chf >= base.state.net_worth_chf && pairs.slice(i).every(([later, reference]) => later.state.net_worth_chf >= reference.state.net_worth_chf));
-    const minimum = chain => Math.min(...chain.filter(node => node.month <= horizon).map(node => node.state.funding_feasibility?.low_point_chf ?? node.state.cash_chf));
-    const baseMin = minimum(baseline.chain);
-    const altMin = minimum(path.chain);
-    const cashDelta = alternative.state.cash_chf - original.state.cash_chf;
-    const worthDelta = alternative.state.net_worth_chf - original.state.net_worth_chf;
-    const flowFields = [['income_chf', 'income'], ['expenses_chf', 'living costs'], ['one_off_costs_chf', 'one-off costs'], ['debt_payments_chf', 'debt payments'], ['investment_contribution_chf', 'investment contributions']];
-    const drivers = flowFields.map(([field, label]) => ({ label, delta: pairs.reduce((sum, [node, base]) => sum + (node.state.cash_flow?.[field] || 0) - (base.state.cash_flow?.[field] || 0), 0) }))
-      .filter(driver => Math.abs(driver.delta) >= 1).sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta)).slice(0, 3);
-    const table = el('table', {}, el('thead', {}, el('tr', {}, ...['Measure', baselineLabel, path.label].map(text => el('th', { text })))));
-    const rows = [
-      ['Cash at horizon', money(original.state.cash_chf), money(alternative.state.cash_chf)],
-      ['Net worth at horizon', money(original.state.net_worth_chf), money(alternative.state.net_worth_chf)],
-      ['Minimum liquidity through horizon', money(baseMin), money(altMin)],
-    ];
-    table.append(el('tbody', {}, ...rows.map(row => el('tr', {}, ...row.map(text => el('td', { text }))))));
-    const insight = `At ${alternative.date}, this alternative has ${moneySigned(cashDelta)} cash and ${moneySigned(worthDelta)} net worth compared with the original. Its minimum liquidity is ${money(altMin)}${altMin < 0 ? ', so funding is needed to cover the gap' : ', which remains nonnegative'}.`;
-    container.append(el('article', { class: 'comparison-card' }, el('h4', { text: `${path.code} · ${path.label}` }),
-      el('p', { text: `Equal horizon at month ${horizon} (${alternative.date}).` }),
-      el('div', { class: 'comparison-table' }, table), el('p', { text: insight }),
-      el('p', { text: `Largest cash difference ${largestGap ? `${moneySigned(largestGap.delta)} on ${largestGap.date}` : 'unavailable'}. Largest cash shortfall versus original ${gap ? `${moneySigned(gap.delta)} on ${gap.date}` : 'unavailable'}. Sustained net-worth break-even ${breakEven < 0 ? 'not reached by this horizon' : pairs[breakEven][0].date}.` }),
-      el('p', { text: drivers.length ? `Largest cumulative differences from the fork: ${drivers.map(driver => `${driver.label} ${moneySigned(driver.delta)}`).join(', ')}.` : 'No cash-flow differences were recorded after the fork.' })));
   }
 }
 
@@ -3882,7 +3825,7 @@ function showComposer(section, node, text = '', presetId = null) {
   textarea.value = text || state.branchDraft || '';
   const label = el('label', { for: 'branch-event' });
   const submit = actionButton('Get the numbers', 'submit');
-  const offline = el('button', { type: 'button', class: 'text-button', text: 'Explore the fictional demo without AI', hidden: true, onclick: () => { state.branchDraft = textarea.value; byId('offline-demo').click(); } });
+  const offline = el('button', { type: 'button', class: 'text-button', text: 'Explore the fictional demo without AI', hidden: true, onclick: () => { state.branchDraft = textarea.value; loadAlexiaDemo(); } });
   const refresh = () => {
     const kind = state.presets.find(preset => preset.id === selected);
     for (const chip of chips.children) chip.setAttribute('aria-pressed', String(chip.dataset.id === selected));
@@ -4598,7 +4541,7 @@ byId('intake-form').addEventListener('submit', async event => {
     showStage('tuning');
   } catch (error) {
     byId('intake-error').textContent = error.message;
-    byId('offline-demo').focus();
+    byId('offline-demo')?.focus();
   } finally {
     setButtonLoading(button, false, 'Reading your story…', 'Explore my scenario');
   }
@@ -4661,7 +4604,7 @@ byId('test-data').addEventListener('click', async () => {
 
 async function loadAlexiaDemo() {
   const button = byId('offline-demo');
-  button.disabled = true;
+  if (button) button.disabled = true;
   try {
     const response = await fetch('/api/demo/alexia');
     const result = await response.json();
@@ -4676,10 +4619,10 @@ async function loadAlexiaDemo() {
   } catch (error) {
     byId('intake-error').textContent = error.message;
   } finally {
-    button.disabled = false;
+    if (button) button.disabled = false;
   }
 }
-byId('offline-demo').addEventListener('click', loadAlexiaDemo);
+byId('offline-demo')?.addEventListener('click', loadAlexiaDemo);
 
 function renderStructuredComparison(container, result) {
   container.replaceChildren();
@@ -4772,7 +4715,7 @@ function renderStructuredComparison(container, result) {
   for (const limitation of bundle.limitations || []) container.append(el('p', { text: limitation }));
 }
 
-byId('starter-comparison').addEventListener('click', async () => {
+byId('starter-comparison')?.addEventListener('click', async () => {
   const container = byId('starter-result');
   try {
     const response = await fetch('/api/comparisons/alexia');
@@ -4784,7 +4727,7 @@ byId('starter-comparison').addEventListener('click', async () => {
   }
 });
 
-byId('run-project').addEventListener('click', async () => {
+byId('run-project')?.addEventListener('click', async () => {
   const container = byId('project-result');
   try {
     const result = await request('/api/project', JSON.parse(byId('project-input').value));
@@ -4801,7 +4744,7 @@ const projectControls = [
   ['project-month', 'start_month'],
 ];
 for (const [id, field] of projectControls) {
-  byId(id).addEventListener('change', event => {
+  byId(id)?.addEventListener('change', event => {
     try {
       const input = byId('project-input');
       const data = JSON.parse(input.value);
@@ -4816,7 +4759,7 @@ for (const [id, field] of projectControls) {
     }
   });
 }
-byId('project-input').addEventListener('change', event => {
+byId('project-input')?.addEventListener('change', event => {
   try {
     const data = JSON.parse(event.target.value);
     byId('project-cash').value = data.profile.cash_chf ?? '';

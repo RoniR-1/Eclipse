@@ -1308,6 +1308,11 @@ class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(WEB), **kwargs)
 
+    def end_headers(self):
+        if not any(line.lower().startswith(b"cache-control:") for line in getattr(self, "_headers_buffer", [])):
+            self.send_header("Cache-Control", "no-store")
+        super().end_headers()
+
     def send_json(self, status, data):
         body = json.dumps(data, allow_nan=False).encode()
         self._response_started = True
