@@ -106,6 +106,8 @@ For a CSV-backed opening state, use `load_synthetic_profile(data_dir, profile_id
 
 Selecting a milestone opens **What if something changed?**. A user picks an event type, describes the event in their own words, or both. The AI turns the request into editable building blocks and sets every number; they are shown in a review card and only simulated after the user confirms.
 
+**When it happens** chooses the month the event takes effect, from every month of the selected point's path, not only the milestones on screen. It defaults to the selected point. The AI estimates the amounts for the situation in that month, and both **Create branch** and **Add to this path** start from it. The month can also be changed in the review card; if it then differs from the month the amounts were estimated for, the card says so. The browser sends the point of that month as the parent (or `node_id`), so the server and run-file replay need nothing extra.
+
 | Block | Meaning |
 | --- | --- |
 | Monthly change | Income or expense change per month, with a start offset and a duration (0 = permanent), for example −3,000 income for 24 months, then +1,000 from month 24 |

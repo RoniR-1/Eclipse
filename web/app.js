@@ -39,7 +39,7 @@ const state = {
   treeHoverId: null,
   treeRenderData: null,
   sensitivityOpen: false,
-  hideRecaps: false,
+  hideRecaps: true, // recap points are hidden until the user asks for them
   graphBuilder: { metricId: 'net_worth_chf', selectedBranchIds: [], zoom: null },
   theme: 'dark',
   run: null, // inputs needed to replay this run exactly (see financial_twin/reproduce.py)
@@ -4100,10 +4100,12 @@ function showComposer(section, node, text = '', presetId = null) {
     chips.append(chip);
   }
   refresh();
-  const form = el('form', {}, label, textarea, error, submit);
+  const when = whenField(node);
+  const form = el('form', {}, label, textarea, when.element, error, submit);
   form.addEventListener('submit', async event => {
     event.preventDefault();
     const details = textarea.value.trim();
+    const point = when.point();   // the AI estimates the amounts for the situation in that month
     if (!selected && !details) { error.textContent = 'Choose an event type or describe the event.'; return; }
     error.textContent = '';
     const buttons = [...section.querySelectorAll('button')];
@@ -4111,8 +4113,10 @@ function showComposer(section, node, text = '', presetId = null) {
     setButtonLoading(submit, true, 'Researching the numbers…', 'Get the numbers');
     const revision = state.revision;
     try {
-      const result = await request('/api/branch/propose', { parent: node, preset: selected || undefined, event: details || undefined, currency: state.currency.code });
-      if (revision === state.revision && state.selectedId === node.id) renderReview(section, node, result.proposal, details, selected);
+      const result = await request('/api/branch/propose', { parent: point, preset: selected || undefined, event: details || undefined, currency: state.currency.code });
+      if (revision === state.revision && state.selectedId === node.id) {
+        renderReview(section, point, result.proposal, details, selected, { origin: node, estimatedFor: point });
+      }
     } catch (problem) {
       error.textContent = problem.message;
       offline.hidden = false;
@@ -4218,7 +4222,7 @@ function showNewBranch(node, nodes, revision) {
   }
 }
 
-function renderReview(section, node, proposal, text, presetId = null) {
+function renderReview(section, node, proposal, text, presetId = null, { origin = node, estimatedFor = node } = {}) {
   const plan = structuredClone(proposal);
   section.replaceChildren();
   // Heading with the AI's assumptions and sources behind an (i), then the event name as an editable title.
@@ -4231,6 +4235,12 @@ function renderReview(section, node, proposal, text, presetId = null) {
   section.append(el('h3', { class: 'review-heading with-info' }, 'Check the numbers ', info),
     el('div', { class: 'review-title' }, title));
   if (plan.warnings?.length) section.append(el('ul', { class: 'proposal-warnings' }, ...plan.warnings.map(item => el('li', { text: localizeAmounts(item) }))));
+
+  // When the event happens. "Create branch" branches from that month and "Add to this path" adds it there.
+  let point = node;
+  const estimateNote = el('p', { class: 'when-note', hidden: true });
+  const when = whenField(node, chosen => { point = chosen; refreshPoint(); });
+  section.append(when.element, estimateNote);
 
   // One sentence row per amount, with Edit (opens its fields in place) and ×. "+ Add…" adds more.
   const kinds = [['changes', 'Monthly change'], ['one_offs', 'One-off'], ['assets', 'Purchase']];
@@ -4278,7 +4288,8 @@ function renderReview(section, node, proposal, text, presetId = null) {
   };
   shock.addEventListener('input', () => { plan.investment_multiplier = 1 + Number(shock.value) / 100; });
   redraw();
-  const options = branchOptions(node);
+  let options = branchOptions(point);
+  const optionsSlot = el('div', {}, options.element);
   const error = el('p', { class: 'form-error', role: 'alert' });
   const create = actionButton('Create branch');
   create.addEventListener('click', async () => {
@@ -4288,16 +4299,16 @@ function renderReview(section, node, proposal, text, presetId = null) {
     try {
       const name = title.value.trim() || plan.title;
       const sequence = state.run ? state.run.next_sequence : undefined;
-      const result = await request('/api/branch/apply', { sequence, parent: node, event: name, months: options.months(), variables: options.variables(), proposal: { ...plan, title: name } });
-      if (revision === state.revision && state.nodes.has(node.id) && state.run && result.branch) {
+      const result = await request('/api/branch/apply', { sequence, parent: point, event: name, months: options.months(), variables: options.variables(), proposal: { ...plan, title: name } });
+      if (revision === state.revision && state.nodes.has(point.id) && state.run && result.branch) {
         state.run.branches.push(result.branch);
         (state.run.operations ||= []).push({ type: 'branch', branch: structuredClone(result.branch) });
         state.run.next_sequence = Math.max(state.run.next_sequence, (result.branch.sequence ?? 0) + 1);
       }
-      if (revision === state.revision && state.nodes.has(node.id) && result.nodes.length && result.comparison_bundle) {
+      if (revision === state.revision && state.nodes.has(point.id) && result.nodes.length && result.comparison_bundle) {
         state.pathReports.set(result.nodes.at(-1).id, result.comparison_bundle);
       }
-      showNewBranch(node, result.nodes, revision);
+      showNewBranch(point, result.nodes, revision);
     } catch (problem) {
       error.textContent = problem.message;
     } finally {
@@ -4305,14 +4316,26 @@ function renderReview(section, node, proposal, text, presetId = null) {
     }
   });
   // Second choice: add the event to the path this point is on, instead of branching off it.
-  const following = followingNode(node);
+  let following = followingNode(point);
   const pathLabel = pathName(node);
   const append = el('button', { type: 'button', class: 'ghost-button wide append-button', text: 'Add to this path' });
+  const appendExplanation = () => (following
+    ? `Instead of a new branch, the event is added to ${pathLabel} in ${formatNiceDate(point.date)}. The months after it are recalculated with it, keeping the later events and the branches that split off later. Branches that split off at that month stay as they are.`
+    : `Instead of a new branch, the event is added to ${pathLabel}. ${formatNiceDate(point.date)} is its last month, so the path is extended by the period chosen above.`);
+  const appendText = el('p', { text: appendExplanation() });
   const appendInfo = el('details', { class: 'info-tip' },
     el('summary', { 'aria-label': 'What “Add to this path” does', title: 'What “Add to this path” does', text: 'i' }),
-    el('div', { class: 'info-tip-body' }, el('p', { text: following
-      ? `Instead of a new branch, the event is added to ${pathLabel} at this point. The months after it are recalculated with it, keeping the later events and the branches that split off later. Branches that split off at this point stay as they are.`
-      : `Instead of a new branch, the event is added to ${pathLabel}. This is its last point, so the path is extended by the period chosen above.` })));
+    el('div', { class: 'info-tip-body' }, appendText));
+  // Moving the event to another month changes the branch options, what "Add to this path" does, and whether
+  // the amounts still match the month the AI estimated them for.
+  function refreshPoint() {
+    options = branchOptions(point);
+    optionsSlot.replaceChildren(options.element);
+    following = followingNode(point);
+    appendText.textContent = appendExplanation();
+    estimateNote.hidden = point.id === estimatedFor.id;
+    estimateNote.textContent = `The amounts were estimated for ${formatNiceDate(estimatedFor.date)}; check that they still fit ${formatNiceDate(point.date)}.`;
+  }
   append.addEventListener('click', async () => {
     error.textContent = '';
     append.disabled = create.disabled = true;
@@ -4322,10 +4345,10 @@ function renderReview(section, node, proposal, text, presetId = null) {
       const name = title.value.trim() || plan.title;
       const sequence = state.run ? state.run.next_sequence : undefined;
       const result = await request('/api/branch/append', {
-        sequence, nodes: [...state.nodes.values()], node_id: node.id, event: name,
+        sequence, nodes: [...state.nodes.values()], node_id: point.id, event: name,
         proposal: { ...plan, title: name }, months: following ? undefined : options.months(),
       });
-      showAppendedEvent(node, name, result, revision);
+      showAppendedEvent(point, name, result, revision);
     } catch (problem) {
       error.textContent = problem.message;
     } finally {
@@ -4334,8 +4357,52 @@ function renderReview(section, node, proposal, text, presetId = null) {
     }
   });
   section.append(rows, addMenu,
-    options.element, error, create, el('div', { class: 'append-row' }, append, appendInfo),
-    el('button', { type: 'button', class: 'back-button', text: '← Choose a different event', onclick: () => showComposer(section, node, text, presetId) }));
+    optionsSlot, error, create, el('div', { class: 'append-row' }, append, appendInfo),
+    el('button', { type: 'button', class: 'back-button', text: '← Choose a different event', onclick: () => showComposer(section, origin, text, presetId) }));
+}
+
+// Every month of the path a point is on, in order (the Original path includes the starting point).
+function pathPoints(node) {
+  const path = node.branch_id === 'root' ? 'main' : node.branch_id;
+  return [...state.nodes.values()]
+    .filter(item => item.branch_id === path || (path === 'main' && item.branch_id === 'root'))
+    .sort((a, b) => a.month - b.month);
+}
+
+// "When it happens": a month and a year of this path, starting at the selected point. The event takes
+// effect at that month's point. The month menu only offers months the path covers in the chosen year.
+const MONTH_NAMES = Array.from({ length: 12 }, (_, index) =>
+  new Intl.DateTimeFormat('en-US', { month: 'long', timeZone: 'UTC' }).format(new Date(Date.UTC(2000, index, 1))));
+
+function whenField(node, onChange = () => {}) {
+  const byYear = new Map();   // "2027" -> Map("06" -> point)
+  for (const item of pathPoints(node)) {
+    const [year, month] = item.date.split('-');
+    if (!byYear.has(year)) byYear.set(year, new Map());
+    byYear.get(year).set(month, item);
+  }
+  const yearSelect = el('select', { id: 'event-when-year', 'aria-label': 'Year' },
+    ...[...byYear.keys()].map(year => el('option', { value: year, text: year })));
+  const monthSelect = el('select', { id: 'event-when', 'aria-label': 'Month' });
+  let chosen = node;
+  const fillMonths = (year, preferred) => {
+    const months = [...byYear.get(year).keys()];
+    monthSelect.replaceChildren(...months.map(month => el('option', { value: month, text: MONTH_NAMES[Number(month) - 1] })));
+    // Keep the month if the year has it, otherwise take the closest one it has.
+    monthSelect.value = months.includes(preferred) ? preferred
+      : months.reduce((best, month) => (Math.abs(month - preferred) < Math.abs(best - preferred) ? month : best));
+    chosen = byYear.get(year).get(monthSelect.value);
+  };
+  const [startYear, startMonth] = node.date.split('-');
+  yearSelect.value = startYear;
+  fillMonths(startYear, startMonth);
+  monthSelect.addEventListener('change', () => { chosen = byYear.get(yearSelect.value).get(monthSelect.value); onChange(chosen); });
+  yearSelect.addEventListener('change', () => { fillMonths(yearSelect.value, monthSelect.value); onChange(chosen); });
+  return {
+    element: el('div', { class: 'when-field' }, el('label', { for: 'event-when', text: 'When it happens' }),
+      el('div', { class: 'when-selects' }, el('div', { class: 'select-wrap' }, monthSelect), el('div', { class: 'select-wrap' }, yearSelect))),
+    point: () => chosen,
+  };
 }
 
 // The next point on the same path, if any (the starting point continues on the Original path).
@@ -5300,7 +5367,7 @@ function renderScorecard(card) {
     el('h3', { text: best ? `Closest to your goals: ${pathLabel(best.branch_id)}` : 'No goals can be scored yet' }),
     el('p', { class: 'goals-summary', text: best ? `${best.goals_met} of ${best.goals_scored} goals met (${best.robust} even if estimates are off). Every path is judged up to ${card.horizon}.` : `Extend the projection or adjust your goals to compare paths. The current horizon is ${card.horizon}.` }),
     el('div', { class: 'goals-table-wrap' }, table),
-    el('p', { class: 'goals-legend', text: '✓ met · ~ only if estimates turn out better · ✗ missed · — not scored. Amounts show how far above or below the target a path is. Explain shows what would close the gap.' }),
+    el('p', { class: 'goals-legend', text: '✓ met · ~ only if estimates turn out better · ✗ missed · — not scored' }),
     el('p', { class: 'goals-legend', text: 'Each goal is checked independently. The same cash can count toward multiple goals, so meeting each target does not establish that all planned spending can be funded.' }),
     el('div', { id: 'goals-explain', class: 'goals-explain' }),
     el('p', { class: 'range-note', text: card.method }));
