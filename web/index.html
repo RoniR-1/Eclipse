@@ -84,7 +84,7 @@
 
               <div class="form-bottom">
                 <div class="time-field">
-                  <label for="years">Look ahead</label>
+                  <label for="years">Explore ahead</label>
                   <div class="select-wrap">
                     <select id="years" name="years">
                       <option value="5" selected>5 years</option>
@@ -100,10 +100,13 @@
               </div>
               <p class="form-error" id="intake-error" role="alert"></p>
             </form>
+            <p class="disclaimer">Eclipse explores <strong>what-if scenarios for a fictional household</strong>. It does not forecast your future and is not financial advice. Please don’t enter real personal or confidential financial details.</p>
             <details class="data-use">
               <summary>How your data is used</summary>
               <p>Your story is sent to the AI provider to read your numbers. A new event sends its description and the figures it needs, and a named public place or programme, such as a university, may be looked up on the web. How long the provider keeps requests depends on its terms.</p>
               <p>Checked AI answers are saved on this server, so the same story gives the same numbers. Figures and sources for public milestones are kept in its database and reused for 180 days. Both stay until the operator deletes them. Run files you download stay on your device until you delete them.</p>
+              <p>Goals you describe in your own words are sent to the AI provider in the same way. This browser keeps your goals, theme, display currency and whether you have seen the tree tip, until you clear them.</p>
+              <button type="button" class="text-button clear-local-data">Clear what this browser saved</button>
             </details>
           </div>
         </div>
@@ -160,13 +163,15 @@
           <div class="results-header">
             <div>
               <div class="eyebrow"><span id="active-path-dot"></span> <span id="active-path-kicker">ORIGINAL PATH</span></div>
-              <h1>A look <em>ahead.</em></h1>
-              <p id="active-path-subtitle">Your 5-year projection.</p>
+              <h1>Explore <em>ahead.</em></h1>
+              <p id="active-path-subtitle">Your 5-year starting path.</p>
+              <p class="results-disclaimer">Explorations, not forecasts: every path follows from the assumptions shown, and none of it is financial advice. <button type="button" class="text-button open-limits">Model limits</button></p>
             </div>
             <div class="results-actions">
               <button class="text-button" id="return-to-original" type="button" hidden><span aria-hidden="true">←</span> Original path</button>
               <button class="ghost-button recaps-toggle" id="toggle-recaps-timeline" type="button" aria-pressed="false" title="Hide periodic recap points, leaving only starting points, events and endpoints">Hide recaps</button>
               <button class="ghost-button goals-open" type="button" title="Set your goals and find the path that comes closest">Goals <span aria-hidden="true">◎</span></button>
+              <button class="ghost-button compare-open" type="button" title="Compare every path over the same years, in plain language">Compare paths <span aria-hidden="true">⇄</span></button>
               <button class="ghost-button" id="switch-to-tree" type="button">Full tree <span aria-hidden="true">⑂</span></button>
               <label class="currency-pill" title="Currency for every amount shown. Calculations stay in CHF.">
                 <span class="visually-hidden">Currency</span>
@@ -266,6 +271,7 @@
             <div class="tree-top-left">
               <button class="ghost-button" id="back-to-timeline" type="button">← Back to timeline</button>
               <button class="ghost-button goals-open" type="button" title="Set your goals and find the path that comes closest">Goals <span aria-hidden="true">◎</span></button>
+              <button class="ghost-button compare-open" type="button" title="Compare every path over the same years, in plain language">Compare paths <span aria-hidden="true">⇄</span></button>
               <button class="ghost-button recaps-toggle" id="toggle-recaps-tree" type="button" aria-pressed="false" title="Hide periodic recap points, leaving only starting points, events and endpoints">Hide recaps</button>
               <button type="button" class="ghost-button range-toggle" id="range-toggle-tree" aria-pressed="false" title="Show how far each path could move if its estimates are off">Show range</button>
               <label class="currency-pill" title="Currency for every amount shown. Calculations stay in CHF.">
@@ -327,7 +333,7 @@
       </section>
     </main>
 
-    <footer><span>Eclipse</span></footer>
+    <footer><span>Eclipse</span><span class="footer-note">Explorations of fictional scenarios, not forecasts or financial advice.</span><button type="button" class="text-button open-limits">Model limits &amp; data</button></footer>
   </div>
 
   <div id="toast-region" class="toast-region" aria-live="polite" aria-atomic="true"></div>
@@ -345,10 +351,46 @@
       <button type="button" class="ghost-button" id="goals-read"><span class="btn-label">Read my goals</span></button>
     </div>
     <p class="form-error" id="goals-error" role="alert"></p>
+    <div id="goals-unsupported" class="goals-unsupported"></div>
     <div id="goals-list" class="goals-list"></div>
     <button type="button" class="add-block" id="goals-add">+ Add a goal</button>
     <button type="button" class="primary-button wide" id="goals-score"><span class="btn-label">Find the best path</span><span class="btn-icon" aria-hidden="true">✳</span></button>
     <div id="goals-result" class="goals-result"></div>
+  </dialog>
+
+  <dialog id="compare-dialog" class="goals-dialog" aria-labelledby="compare-title">
+    <div class="goals-head">
+      <span class="card-kicker">COMPARE PATHS</span>
+      <button type="button" class="goals-close" id="compare-close" aria-label="Close comparison">×</button>
+    </div>
+    <h2 id="compare-title">Every path over the same years</h2>
+    <p class="goals-hint">Each path is compared up to the same end date; paths that end earlier are continued at their last situation. Differences are against the original path. Explain says, in plain words, what makes a path different.</p>
+    <p class="form-error" id="compare-error" role="alert"></p>
+    <div id="compare-result" class="goals-result"><p class="range-pending">Calculating…</p></div>
+  </dialog>
+
+  <dialog id="limits-dialog" class="limits-dialog" aria-labelledby="limits-title">
+    <div class="goals-head">
+      <span class="card-kicker">ABOUT THESE RESULTS</span>
+      <button type="button" class="goals-close" id="limits-close" aria-label="Close">×</button>
+    </div>
+    <h2 id="limits-title">What the model does, and what it doesn’t</h2>
+    <p>Eclipse calculates what follows <em>if</em> the assumptions shown hold. It explores options for a fictional household; it does not predict a future and is not personalised financial advice.</p>
+    <h3>Model limits</h3>
+    <ul>
+      <li><strong>Net income only.</strong> Amounts are after tax. Income tax, AHV/IV, pension-fund (2nd pillar) and pillar 3a contributions are not modelled separately.</li>
+      <li><strong>Calculated in CHF.</strong> The currency selector only converts what is shown, using a dated exchange rate; every calculation stays in CHF.</li>
+      <li><strong>Inflation.</strong> Income and living costs rise with the price index. One-off costs, loan payments and costs fixed by contract stay at their stated amounts.</li>
+      <li><strong>No automatic financing.</strong> Negative cash is shown as a funding gap. The model never borrows or sells investments for you.</li>
+      <li><strong>Steady returns.</strong> Investments grow at a fixed assumed rate; market swings appear only in the uncertainty range.</li>
+      <li><strong>The range is not a probability.</strong> “Show range” shows how far a path moves if estimates are off by set amounts. It is a sensitivity check, not the chance of an outcome.</li>
+      <li><strong>Fictional defaults.</strong> Missing values can come from the synthetic LauzHack 2026 data, whose spending barely varies between households. They may poorly represent your situation.</li>
+      <li><strong>AI estimates can be wrong.</strong> The AI reads your story and suggests event figures; source badges show which numbers it estimated. Review and edit them. The calculations themselves are done by the engine, not the AI.</li>
+      <li><strong>Goals.</strong> Each goal is judged on its own, up to the projection horizon; two goals do not share one pot of money.</li>
+    </ul>
+    <h3>Your data</h3>
+    <p>Your story, event descriptions and goal descriptions are sent to the AI provider configured on the server. Checked AI answers are saved on the server so the same input gives the same numbers, and figures for public milestones are reused for 180 days; both stay until the operator deletes them. This browser keeps your goals and display settings until you clear them. Run files you download stay on your device.</p>
+    <button type="button" class="ghost-button clear-local-data">Clear what this browser saved</button>
   </dialog>
 
   <dialog id="confirm-dialog" class="confirm-dialog" aria-labelledby="confirm-title" aria-describedby="confirm-message">

@@ -161,17 +161,32 @@ The pessimistic run moves every input to its unfavourable side at once and the o
 
 ## Goals scorecard
 
-**Goals** (in the results header and the tree's top bar) opens a panel where users describe their goals in their own words or add them in a form, then rank every path on screen with **Find the best path**. Goals are kept in the browser (`localStorage`).
+**Goals** (in the results header and the tree's top bar) opens a panel where users describe their goals in their own words or add them in a form, then rank every path on screen with **Find the best path** and open **Explain** for any path. Goals are kept in the browser (`localStorage`).
 
-The AI does one thing: `POST /api/goals/parse` turns the user's sentence into structured goals (`financial_twin/goals.py`, `GOALS_SCHEMA`), through the AI cache, for the user to review and edit. Nothing is trained, and the AI never ranks. `POST /api/goals/score` is deterministic: it takes the nodes on screen and the goals, computes the uncertainty range (`financial_twin/uncertainty.py`) and checks every path:
+**AI step.** `POST /api/goals/parse` is the only AI call (through the AI cache). It turns the user's sentence into measurable goals for review (`financial_twin/goals.py`, `GOALS_SCHEMA`). Goals with a clear financial stand-in are translated with a visible note, for example buying a home becomes cash for a 20% down payment plus about 5% purchase costs, and retiring becomes net worth of 25 × yearly living costs (the 4% rule, an assumption). Goals that cannot be measured with money and dates come back in `unsupported` with a reason and are not scored. Nothing is trained and the AI never ranks.
 
-| Goal type | Met when |
+**Goal types**
+
+| Type | Met when |
 | --- | --- |
-| `cash_by_date` | cash at the goal month ≥ target (e.g. a down payment) |
+| `cash_by_date` | cash at the goal month ≥ target |
 | `net_worth_by_date` | net worth at the goal month ≥ target |
-| `never_short` | cash never negative over the path |
+| `never_short` | cash never negative over the window |
+| `debt_free_by_date` | debt at the goal month is zero; a later loan counts again |
+| `monthly_surplus` | average monthly net cash flow from the date onwards ≥ target |
+| `reserve_months` | cash always ≥ N × that month's living costs |
 
-Per goal and path the response gives the gap (value − target), the closeness (value ÷ target capped at 100%, or the share of months with cash ≥ 0) and a status: *robust* (met even in the pessimistic range), *fragile* (met, but not pessimistically), *within reach* (met only in the optimistic range) or *missed*. A path's score is the priority-weighted mean closeness (high 3, medium 2, low 1); ties go to more robust goals, then higher final net worth. Goals are judged independently, so two cash goals do not share one pot of money, and a goal dated after a path ends is judged at its last month. `tests/test_goals.py` checks hand-calculated statuses and gaps, the weighting, ranking, validation and the parsing step.
+**Fair comparison.** `POST /api/goals/score` judges every path over the same window, from the start to the scenario horizon. Paths that end earlier are continued for scoring only (`engine.simulate` from their last node, at their last situation); the continued months are flagged and never added to the tree. Goals dated after the horizon are reported as *beyond horizon* and left out of the score.
+
+**Scoring.** Per goal and path: the gap (value − target), the closeness (value ÷ target capped at 100%, or the share of months that meet the goal) and a status: *robust* (met even in the pessimistic uncertainty range), *fragile* (met, but not pessimistically), *within reach* (met only optimistically), *met* (types without a range check), *missed* or *beyond horizon*. A path's score is the priority-weighted mean closeness (high 3, medium 2, low 1) over the scored goals; ties go to more robust goals, then higher net worth at the horizon. Goals are judged independently, so two cash goals do not share one pot of money.
+
+**Explanations.** Each goal and path also gets a headline and levers, built from fixed templates and calculated numbers: *money* (gap ÷ months until the goal date), *time* (the month the path reaches the target, or the trend beyond the horizon), *reachable* (what the path reaches by the date), *why* (the cash flow that differs most from the original path up to the goal date: income, living costs, one-off costs, loan payments or money moved into investments), *safety* (the buffer a fragile goal needs) and the stand-in note. `tests/test_goals.py` checks hand-calculated statuses, gaps and levers, the common horizon, every goal type, the weighting, validation and the parsing step.
+
+## Compare paths
+
+**Compare paths** (next to Goals) shows every path over the same years. `POST /api/paths/compare` continues paths that end early to the common horizon (as the goals scorecard does) and returns, per path: net worth and cash at the horizon and their difference from the original path, the lowest cash and when cash first runs out (months short), the month a path overtakes the original path and stays ahead, the net-worth range if estimates are off, and plain-language sentences (`financial_twin/path_compare.py`). The sentences come from fixed templates: the net-worth difference from the original path is split into income, living costs, one-off costs, loan interest, investment returns and the value of things bought or sold. A purchase's cash payment is reported together with the value of what it bought, so buying a home or car is not shown as a loss. `tests/test_path_compare.py` checks a raise, a study break that is caught up later, a purchase, a cash shortfall and continuation.
+
+**One goal list.** Goals mentioned in the story (the engine's scenario goals, checked per node with cash set aside for goals already met) are imported into the Goals panel as *cash by a date* goals marked "From your story" when the panel opens. Once the paths are scored, the node details show the scorecard's verdict for that node's path (**Your goals on this path**), so the panel and the details agree; before scoring they show the story goals with a button to compare every path.
 
 ## Check the implementation
 

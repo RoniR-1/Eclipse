@@ -614,7 +614,11 @@ def apply_branch(data):
 
 
 def parse_goals(data, api_key):
-    """Turn the user's own words into structured goals for review. The only AI step of the scorecard."""
+    """Turn the user's own words into structured goals for review. The only AI step of the scorecard.
+
+    Goals that cannot be measured with money and dates come back in "unsupported" instead of being forced
+    into a type; stand-ins (e.g. a home → a down payment) carry a note explaining the translation.
+    """
     from financial_twin.goals import GOALS_SCHEMA, normalize_goals, parse_prompt
     text = data.get("text")
     if not isinstance(text, str) or not text.strip() or len(text) > 2000:
@@ -622,30 +626,46 @@ def parse_goals(data, api_key):
     start = data.get("start_date") or date.today().isoformat()
     if not isinstance(start, str):
         raise ValueError("start_date must be an ISO date.")
-    prompt = parse_prompt(text.strip(), start)
+    costs = data.get("monthly_costs_chf")
+    costs = costs if isinstance(costs, (int, float)) and not isinstance(costs, bool) and costs > 0 else None
+    prompt = parse_prompt(text.strip(), start, costs)
     raw = cached_ai_answer("goals", prompt, GOALS_SCHEMA)
     cached = raw is not None
     if not cached:
         raw = gemini_json(prompt, GOALS_SCHEMA, api_key)
-    items = raw.get("goals") if isinstance(raw, dict) else None
-    if not isinstance(items, list) or not items:
+    if not isinstance(raw, dict):
+        raise ValueError("The AI returned an unreadable answer. Please try again.")
+    items = raw.get("goals") if isinstance(raw.get("goals"), list) else []
+    unsupported = [{"text": str(item.get("text", ""))[:120], "reason": str(item.get("reason", ""))[:200]}
+                   for item in raw.get("unsupported") or [] if isinstance(item, dict)][:8]
+    if not items and not unsupported:
         raise ValueError("No goals were recognised. Try naming an amount and a date, e.g. CHF 20,000 by 2028.")
     try:
-        goals = normalize_goals(items[:8])
+        goals = normalize_goals(items[:8]) if items else []
     except ValueError as exc:
         raise ValueError(f"The AI's reading needs a fix: {exc} You can also enter goals in the form.") from exc
     if not cached:
         store_ai_answer("goals", prompt, GOALS_SCHEMA, raw)
-    return {"goals": goals, "cached": cached}
+    return {"goals": goals, "unsupported": unsupported, "cached": cached}
 
 
 def score_goals(data):
-    """Rank every path on screen against the goals. Deterministic: no AI call."""
-    from financial_twin.goals import scorecard
+    """Rank every path on screen against the goals over one common horizon. Deterministic: no AI call."""
+    from financial_twin.goals import extend_to_horizon, scorecard
     from financial_twin.uncertainty import analyse
-    nodes = data.get("nodes")
+    nodes, horizon = extend_to_horizon(data.get("nodes"), data.get("horizon_months"))
     ranges = analyse(nodes)["nodes"] if data.get("robust", True) else None
-    return scorecard(nodes, data.get("goals"), ranges)
+    return scorecard(nodes, data.get("goals"), ranges, horizon)
+
+
+def compare_all_paths(data):
+    """Every path over the common horizon with a plain-language explanation. Deterministic: no AI call."""
+    from financial_twin.goals import extend_to_horizon
+    from financial_twin.path_compare import compare_paths
+    from financial_twin.uncertainty import analyse
+    nodes, _ = extend_to_horizon(data.get("nodes"), data.get("horizon_months"))
+    ranges = analyse(nodes)["nodes"] if data.get("robust", True) else None
+    return compare_paths(nodes, ranges)
 
 
 def run_branch(data, api_key):
@@ -1414,7 +1434,7 @@ class Handler(SimpleHTTPRequestHandler):
             if self.headers.get_content_type() != "application/json":
                 raise ValueError("Content-Type must be application/json.")
             length = int(self.headers.get("Content-Length", "0"))
-            limit = 67108864 if self.path in ("/api/edit-nodes", "/api/branch/append", "/api/path-report", "/api/uncertainty", "/api/goals/score") else 10000000 if self.path == "/api/project" else 100000
+            limit = 67108864 if self.path in ("/api/edit-nodes", "/api/branch/append", "/api/path-report", "/api/uncertainty", "/api/goals/score", "/api/paths/compare") else 10000000 if self.path == "/api/project" else 100000
             if length <= 0 or length > limit:
                 raise ValueError("Invalid request size.")
             data = json.loads(self.rfile.read(length))
@@ -1448,6 +1468,8 @@ class Handler(SimpleHTTPRequestHandler):
                 response = parse_goals(data, key.strip())
             elif self.path == "/api/goals/score":
                 response = score_goals(data)
+            elif self.path == "/api/paths/compare":
+                response = compare_all_paths(data)
             elif self.path == "/api/uncertainty":
                 from financial_twin.uncertainty import DEFAULT_UNCERTAINTY, analyse
                 response = analyse(data.get("nodes"), data.get("uncertainty", DEFAULT_UNCERTAINTY))
@@ -1475,8 +1497,13 @@ def main():
     load_env()
     AI_CACHE_DIR = Path(os.environ.get("AI_CACHE_DIR", "").strip() or ROOT / ".local" / "ai-cache")
     currency.RATES_FILE = ROOT / ".local" / "exchange-rates.json"
-    from financial_twin.database import initialize_from_environment
-    initialize_from_environment()
+    if os.environ.get("DATABASE_URL", "").strip():
+        from financial_twin.database import initialize_from_environment
+        initialize_from_environment()
+    else:
+        # The database only caches public event figures (education, housing presets). Everything else,
+        # including the offline Alexia demo and Test data, works without it.
+        print("No DATABASE_URL set: starting without the database; cached event presets are off.", flush=True)
     port = int(os.environ.get("PORT", "8000"))
     host = os.environ.get("HOST", "127.0.0.1")
     server = ThreadingHTTPServer((host, port), Handler)

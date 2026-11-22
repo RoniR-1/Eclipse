@@ -4237,7 +4237,7 @@ dialog.goals-dialog {
 .goal-row { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; background: var(--input-bg); }
 .goal-row-top { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
 .goal-row-top input { flex: 1; height: 36px; padding: 6px 10px; }
-.goal-row-fields { display: grid; grid-template-columns: minmax(190px, 1.4fr) minmax(120px, 1fr) minmax(150px, 1fr) minmax(150px, 1fr); gap: 8px; }
+.goal-row-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; }
 .goal-field { display: flex; flex-direction: column; gap: 4px; font-size: 11px; font-weight: 600; color: var(--text-muted); margin: 0; }
 .goal-field[hidden] { display: none; }
 .goal-field input, .goal-field select { height: 36px; padding: 6px 9px; font-size: 13px; }
@@ -4260,3 +4260,48 @@ dialog.goals-dialog {
 @media (max-width: 700px) { .goal-row-fields { grid-template-columns: 1fr 1fr; } .goals-ai { grid-template-columns: 1fr; } }
 html[data-theme="light"] dialog.goals-dialog { background: var(--surface); }
 dialog.goals-dialog p.goals-hint, dialog.goals-dialog p.goals-summary, dialog.goals-dialog p.goals-legend { color: var(--text-muted); }
+.goal-note { font-size: 12px; color: var(--text-muted); margin: 8px 0 0; line-height: 1.45; }
+.goals-unsupported { font-size: 12px; color: var(--text-secondary); }
+.goals-unsupported ul { margin: 4px 0 8px 18px; padding: 0; }
+.goals-unsupported-title { margin: 6px 0 0; color: var(--text-muted); }
+.goal-cell.is-met { color: var(--ok); }
+.goal-cell.is-beyond_horizon { color: var(--text-muted); }
+.goals-actions { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
+.goals-explain h3 { font-size: 17px; margin: 22px 0 8px; }
+.goal-explain { border: 1px solid var(--border); border-left-width: 4px; border-radius: 10px; padding: 10px 14px; margin: 8px 0; background: var(--input-bg); }
+.goal-explain.is-robust, .goal-explain.is-met { border-left-color: var(--ok); }
+.goal-explain.is-fragile { border-left-color: #d9a43a; }
+.goal-explain.is-within_reach { border-left-color: #6aa3d9; }
+.goal-explain.is-missed { border-left-color: var(--danger); }
+.goal-explain-head { display: flex; gap: 8px; align-items: baseline; }
+.goal-explain-status { font-size: 12px; color: var(--text-muted); }
+.goal-explain-headline { font-size: 14px; margin: 4px 0 6px; color: var(--text-strong); }
+.goal-levers { list-style: none; padding: 0; margin: 0; display: grid; gap: 4px; }
+.goal-levers li { display: grid; grid-template-columns: 82px 1fr; gap: 8px; font-size: 13px; color: var(--text-secondary); line-height: 1.45; }
+.lever-kind { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--accent-bright); padding-top: 2px; }
+
+/* Disclaimers and model limits */
+.disclaimer { font-size: 12.5px; line-height: 1.55; color: var(--text-secondary); margin: 14px 0 6px; }
+.disclaimer strong { color: var(--text-strong); font-weight: 600; }
+.results-disclaimer { font-size: 12.5px; color: var(--text-muted); margin: 6px 0 0; max-width: 62ch; line-height: 1.5; }
+.results-disclaimer .text-button, footer .text-button, .data-use .text-button { font-size: inherit; padding: 0; width: auto; }
+footer { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+.footer-note { font-size: 12px; color: var(--text-muted); }
+dialog.limits-dialog {
+  max-width: none; width: min(760px, calc(100vw - 32px)); max-height: calc(100vh - 48px); overflow-y: auto;
+  background: var(--surface); color: var(--text); border: 1px solid var(--border-strong); border-radius: 16px; padding: 22px 26px;
+}
+dialog.limits-dialog::backdrop { background: rgba(0, 0, 0, 0.45); backdrop-filter: blur(3px); }
+.limits-dialog h2 { font-family: var(--font-serif); font-weight: 400; font-size: 30px; margin: 6px 0 8px; }
+.limits-dialog h3 { font-size: 15px; margin: 18px 0 6px; color: var(--accent-bright); }
+.limits-dialog p, .limits-dialog li { font-size: 13.5px; line-height: 1.6; color: var(--text-secondary); }
+.limits-dialog ul { padding-left: 18px; margin: 0; display: grid; gap: 6px; }
+.limits-dialog strong { color: var(--text-strong); }
+.limits-dialog .ghost-button { margin-top: 12px; width: auto; }
+
+/* Compare paths */
+.goals-table td.is-up { color: var(--ok); }
+.goals-table td.is-down { color: var(--danger); }
+.goals-table tr.is-original td { background: var(--accent-soft); }
+.compare-sentences { margin: 0; padding-left: 18px; display: grid; gap: 6px; font-size: 13.5px; line-height: 1.55; color: var(--text-secondary); }
+.goal-result.goal-explain { margin: 6px 0; }
