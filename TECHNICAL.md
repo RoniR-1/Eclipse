@@ -122,11 +122,25 @@ The event types in `financial_twin/branching.py` (Study, Career change, Relocate
 | `GET /api/branch/presets` | Event types: id, label and an example of useful details |
 | `POST /api/branch/propose` | `{parent, preset?, event?}` with at least one of them → `{proposal, origin}`. Uses a cached proposal when available, otherwise asks the provider. |
 | `POST /api/branch/apply` | `{parent, event, months, variables, proposal}` → branch nodes. Deterministic; the first node stores the applied proposal as `branch_proposal`. |
+| `POST /api/branch/append` | `{nodes, node_id, event, proposal, sequence?, months?}` → the recalculated points. Adds the event to the selected point's path instead of branching; see below. Deterministic. |
 | `POST /api/branch` | One step (propose and apply without review), kept for compatibility |
 
 `/api/branch/apply` splits the engine's phases at every block boundary, so temporary changes end on time and their start and end appear as milestones. The random test scenario, which must work without the AI, builds its branches from fixed sample events (`SAMPLES`); these are not offered to users. `tests/test_branching.py` checks durations, purchase accounting, money received, warnings, every preset and the AI and no-AI paths.
 
 A reviewed building-block branch continues the selected node’s balance sheet and scheduled commitments. Recurring changes split the inherited phases at their effective start and end. The fork record identifies inherited, added and replaced commitments.
+
+### Adding an event to a path
+
+The review card also offers **Add to this path**. Instead of starting a branch, the event is added to the path the selected point is on, and every later month of that path is simulated again with it:
+
+- **Effect:** the event takes effect from the selected point, like a branch: monthly changes, one-off amounts, purchases with their loans and the investment change. It is added on top of what the path had already planned, so the path keeps its own later phases and costs.
+- **Later events stay.** Events further along the path (purchases, loans, other added events) are applied again on top of the new figures, using the same re-simulation as **Edit this point** (`resimulate_node` in `financial_twin/server.py`).
+- **Branches that split off later** get the parts of the event that had started by the time they split off. Since a branch replaces the plans made after its fork, a change or one-off scheduled after that is not theirs. Their own event is applied on top.
+- **Branches that split off at the selected point itself** are alternatives to the event and stay unchanged. So do earlier points and every other path.
+- **IDs stay:** the recalculated points keep their IDs, so nothing else on screen needs to change. The point after the selected one shows the event's name as a milestone and lists what it assumes under **Event added here**. Several events can be added at the same point; their effects add up.
+- **Last point:** if the selected point is the last one on its path, the path is extended by the period chosen in the card.
+
+Each addition is recorded in the run file's `branches` list as `kind: "append"` with its proposal, so replay repeats it in order. `tests/test_append_event.py` checks the recalculated future, accounting identities on every month, later branches, extensions, two events at one point, an earlier addition keeping a later one, a later edit keeping the addition, exact replay, and the HTTP endpoint.
 
 ## Uncertainty range
 
@@ -159,9 +173,10 @@ Run `.local/venv/bin/python -m unittest discover -s tests -v` from the workspace
 | `test_reproducibility.py` | Identical results from identical inputs, seeds, deterministic branch IDs and exact replay of run files. |
 | `test_ai_cache.py` | Same input, same numbers: with a fake AI that answers differently every time, the same story or branch event still gives identical numbers, also through the HTTP API, after a restart and under concurrent requests; invalid answers are not cached. |
 | `test_currency.py` | Currencies: amounts written in other currencies (symbols, codes, words, `k`/`million`, Swiss and European separators) are converted to CHF exactly, CHF amounts and bare numbers are left alone, live rates are reused, offline falls back to saved and then built-in rates, the AI gets the story, branch events and branch proposals in CHF, and unsupported currencies are rejected. No test uses the network. |
+| `test_append_event.py` | Adding an event to an existing path: the later months are recalculated with it, earlier points and alternatives at the same point stay, later branches keep their own event and only get what had started before they split off, accounting holds every month, the last point extends the path, events add up, later edits keep them, and run files replay them exactly. |
 | `test_api_keys.py` | Taking turns across `AI_API_KEY_1`, `AI_API_KEY_2`, …, failover on rate limits and rejected keys, rest periods, and `scripts/check_keys.py`. |
 | `test_event_resolver.py`, `test_event_cache_postgres.py` | Reference figures for named institutions and places: cache hits and refreshes, aliases, grounded citations and failed lookups (the PostgreSQL test needs `TEST_DATABASE_URL`). |
-| `test_frontend.py`, `web/app.test.mjs` | Browser logic: branch and Original-path deletion, the confirmation flow, the tree index, timeline milestones, health flags, number formatting, HTML escaping, and that a run file written by the browser replays exactly in Python. |
+| `test_frontend.py`, `web/app.test.mjs` | Browser logic: branch and Original-path deletion, cutting a path from a later point (with the branches that split off after it), the confirmation flow, the tree index, timeline milestones, health flags, number formatting, HTML escaping, and that a run file written by the browser replays exactly in Python. |
 | `test_projection.py`, `test_loaders.py`, `test_database.py` | The projection engine, the challenge data loaders and the PostgreSQL seed (needs `TEST_DATABASE_URL`). |
 
 `tests/test_projection.py` runs without the challenge data, except for one ledger replay. That test feeds the monthly income and spending of profiles P00001–P00050 from `synthetic-transactions.csv` through the projection recurrence and requires every month to match `closing_cash_chf` in `synthetic-cash-balances.csv`. It looks for the data in `ai-financial-twin-lauzhack-2026-main/Data` or `ai-financial-twin-lauzhack-2026/Data` inside the repository, or in `../ai-financial-twin-lauzhack-2026-main/Data`, and is skipped when none exists.
@@ -199,7 +214,7 @@ A run file records everything the calculation needs:
 | --- | --- |
 | `source`, `seed`, `start_date` | `simulate` for a story-based run; `test` for the **Test** button's random data, which is regenerated from its seed. The seed is shown when the test data is generated. |
 | `scenario`, `variables`, `years`, `units` | The engine inputs for the original path: the scenario the AI extracted, the slider values, the horizon, CHF and monthly steps. |
-| `operations` | Ordered successful node edits and branches. Replay applies each against the state that existed at that step. Older files use the branch list. |
+| `operations` | Ordered successful node edits, branches and events added to an existing path (`append`). Replay applies each against the state that existed at that step. Older files use the branch list. |
 | `branches` | Every branch in creation order, with the change the AI produced for it and a sequence number that makes its node IDs deterministic. |
 | `kept_node_ids`, `expected` | The nodes still on screen after any deletions, and their cash, net worth, total assets, total debt and net cash flow. |
 | `environment` | The Python and NumPy versions that produced the results. |

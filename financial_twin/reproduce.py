@@ -10,6 +10,9 @@ or the database:
 - ``branches``: every branch in creation order, with what the AI produced for it, so replay does
   not need to ask the AI again: a ``change`` for a one-step branch (/api/branch) or the reviewed
   building-block ``proposal`` (/api/branch/apply). Each branch has a ``sequence`` number that makes its node IDs deterministic.
+- ``operations``: everything done after the main path, in order: ``branch`` (one of the branches above),
+  ``edit`` (a node edit from /api/edit-nodes) and ``append`` (an event added to an existing path,
+  /api/branch/append). Replay repeats them in this order. Files without it replay ``branches``.
 - ``kept_node_ids``: the nodes still on screen after any deletions.
 - ``expected``: the values that were on screen, which replay must match exactly.
 - ``environment``: the Python and NumPy versions that produced the results.
@@ -26,7 +29,7 @@ from copy import deepcopy
 
 from financial_twin.branching import apply_proposal
 from financial_twin.engine import LEGACY_PROVENANCE_IDS
-from financial_twin.server import VARIABLES, apply_branch_change, edit_nodes, environment, random_test, run_simulation
+from financial_twin.server import VARIABLES, append_event, apply_branch_change, edit_nodes, environment, random_test, run_simulation
 
 RUN_FORMAT = "financial-twin-run/1"
 EXPECTED_FIELDS = ("cash_chf", "net_worth_chf", "total_assets_chf", "total_debt_chf")
@@ -92,6 +95,17 @@ def _replay(run):
         if operation.get("type") == "edit":
             edited = edit_nodes({"nodes": list(by_id.values()), "node_id": operation["node_id"], "edits": operation["edits"]})
             by_id.update({node["id"]: node for node in edited["nodes"]})
+            continue
+        # An event added to an existing path (/api/branch/append). Older run files listed these in
+        # `branches` with kind "append".
+        if operation.get("type") == "append" or operation.get("type") == "branch" and operation["branch"].get("kind") == "append":
+            added = operation.get("append") or operation["branch"]
+            if added["node_id"] not in by_id:
+                raise ValueError(f"Event {added.get('event')!r} was added after unknown node {added['node_id']}.")
+            result = append_event({"nodes": list(by_id.values()), "node_id": added["node_id"], "event": added["event"],
+                                   "proposal": added["proposal"], "sequence": added["sequence"],
+                                   "months": added.get("months"), "extend": "months" in added})
+            by_id.update({node["id"]: node for node in result["nodes"]})
             continue
         if operation.get("type") != "branch":
             raise ValueError(f"Unknown run operation: {operation.get('type')!r}.")

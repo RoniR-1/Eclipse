@@ -101,6 +101,46 @@ describe('branch deletion', () => {
     assert.ok(calls.some(([name, stage]) => name === 'showStage' && stage === 'tuning'));
   });
 
+  test('deleting from a later point cuts the branch there and keeps its earlier points', async () => {
+    assert.deepEqual([...app.nodesFrom('a4')].sort(), ['a4', 'a5', 'b5', 'b6']);
+    await app.deleteFromNode('a5');
+    assert.deepEqual(ids(), ['a3', 'a4', 'b5', 'b6', 'c5', 'm1', 'm2', 'm3', 'm4', 'm5', 'm6', 'root'],
+      'only a5 goes: the nested branch B split off from a4, which stays');
+    assert.equal(app.state.selectedId, 'a4');
+    assert.equal(app.state.activeBranchId, 'A');
+    const [, options] = calls.find(([name]) => name === 'confirmDialog');
+    assert.equal(options.confirmLabel, 'Delete this path from here');
+    assert.match(options.message, /\(1 point\)\. Earlier points stay/);
+  });
+
+  test('cutting a branch takes the branches that split off after the cut', async () => {
+    await app.deleteFromNode('a4');
+    assert.deepEqual(ids(), ['a3', 'c5', 'm1', 'm2', 'm3', 'm4', 'm5', 'm6', 'root']);
+    const [, options] = calls.find(([name]) => name === 'confirmDialog');
+    assert.match(options.message, /\(2 points\), and the 1 branch that split off/);
+  });
+
+  test('cutting the original path keeps it up to that point and the branches before it', async () => {
+    await app.deleteFromNode('m4');
+    assert.deepEqual(ids(), ['a3', 'a4', 'a5', 'b5', 'b6', 'm1', 'm2', 'm3', 'root'], 'C split off at m4, so it goes');
+    assert.equal(app.state.activeBranchId, 'main');
+    assert.equal(app.state.selectedId, 'm3');
+  });
+
+  test('on a branch\'s first point the whole branch goes, as before', async () => {
+    assert.ok(app.isBranchStart(app.state.nodes.get('a3')) && !app.isBranchStart(app.state.nodes.get('a4')));
+    await app.deleteFromNode('b5');
+    assert.deepEqual(ids(), ['a3', 'a4', 'a5', 'c5', 'm1', 'm2', 'm3', 'm4', 'm5', 'm6', 'root']);
+    await app.deleteFromNode('m1');
+    assert.ok(app.state.nodes.has('m2') && !app.state.nodes.has('m6'), 'the Original path keeps the history A grew out of');
+  });
+
+  test('cancelling a cut changes nothing', async () => {
+    answerConfirm(false);
+    await app.deleteFromNode('a4');
+    assert.equal(app.state.nodes.size, 13);
+  });
+
   test('a branch that finished loading while the pop-up was open is removed too', async () => {
     const late = node('x7', 'a5', 'X', 6, { event: 'Late branch' });
     answerConfirm(true);
@@ -108,6 +148,37 @@ describe('branch deletion', () => {
     app.state.nodes.set(late.id, late); // arrives before the user confirms
     await pending;
     assert.ok(!app.state.nodes.has('x7'));
+  });
+});
+
+describe('adding an event to a path', () => {
+  test('the next point is on the same path, and the starting point continues on the Original path', () => {
+    assert.equal(app.followingNode(app.state.nodes.get('a3')).id, 'a4');
+    assert.equal(app.followingNode(app.state.nodes.get('a4')).id, 'a5', 'not b5, which starts another branch');
+    assert.equal(app.followingNode(app.state.nodes.get('root')).id, 'm1');
+    assert.equal(app.followingNode(app.state.nodes.get('a5')), null, 'the last point of a path');
+  });
+
+  test('the recalculated points replace the old ones, and the run file records the event', () => {
+    app.state.resultsView = 'tree';
+    app.state.run = { source: 'test', branches: [], operations: [], next_sequence: 4 };
+    const revision = app.state.revision;
+    const recalculated = [{ ...app.state.nodes.get('a4'), event_summary: 'Raise' }, { ...app.state.nodes.get('a5'), state: { ...app.state.nodes.get('a5').state, cash_chf: 999 } }];
+    app.showAppendedEvent(app.state.nodes.get('a3'), 'Raise', { nodes: recalculated, record: { kind: 'append', sequence: 4, node_id: 'a3' } }, revision);
+    assert.equal(app.state.nodes.get('a4').event_summary, 'Raise');
+    assert.equal(app.state.nodes.get('a5').state.cash_chf, 999);
+    assert.equal(app.state.nodes.size, 13, 'no new branch');
+    assert.deepEqual(plain(app.state.run.operations.at(-1)), { type: 'append', append: { kind: 'append', sequence: 4, node_id: 'a3' } });
+    assert.equal(app.state.run.branches.length, 0, 'branches lists only branches');
+    assert.equal(app.state.run.next_sequence, 5);
+    assert.equal(app.state.selectedId, 'a4');
+    assert.equal(app.state.activeBranchId, 'A');
+    assert.ok(calls.some(([name, message]) => name === 'showToast' && /Added “Raise” to .* · 1 later point recalculated/.test(message)));
+  });
+
+  test('an answer for an outdated timeline is ignored', () => {
+    app.showAppendedEvent(app.state.nodes.get('a3'), 'Raise', { nodes: [{ ...app.state.nodes.get('a4'), event_summary: 'Late' }] }, app.state.revision - 1);
+    assert.equal(app.state.nodes.get('a4').event_summary, 'Monthly update');
   });
 });
 
@@ -178,11 +249,12 @@ describe('formatting', () => {
   });
 
   test('signed and compact amounts', () => {
-    assert.match(app.moneySigned(1500), /^\+CHF\s1.500$/);
-    assert.match(app.moneySigned(-1500), /^−CHF\s1.500$/);
+    assert.match(app.moneySigned(1500), /^CHF\s\+1.500$/);
+    assert.match(app.moneySigned(-1500), /^CHF\s-1.500$/, 'the sign goes after the currency');
+    assert.match(app.money(-1500), /^CHF\s-1.500$/);
     assert.equal(app.moneySigned(0.2), 'CHF 0');
     assert.equal(app.compactChf(2_500_000), 'CHF 2.5M');
-    assert.equal(app.compactChf(-45_400), '−CHF 45k');
+    assert.equal(app.compactChf(-45_400), 'CHF -45k');
     assert.equal(app.compactChf(1_250), 'CHF 1.3k');
     assert.equal(app.compactChf(999.6), 'CHF 1000');
   });
@@ -380,7 +452,7 @@ test('structured comparison labels its baseline and reports signed cash differen
     baseline_path: 'Work', paths: { Work: { metrics: { closing_cash_chf: 100, closing_net_worth_chf: 120, min_cash_chf: 10 } },
       Study: { metrics: { closing_cash_chf: 80, closing_net_worth_chf: 90, min_cash_chf: -5 } } }, limitations: [] } });
   assert.match(container.children[0].textContent, /Baseline: Work/);
-  assert.match(container.children[3].textContent, /cash difference −CHF\s20/);
+  assert.match(container.children[3].textContent, /cash difference CHF\s-20/);
 });
 
 test('comparison presents dated shortfall, sustained break-even and sensitivity drivers', () => {
@@ -396,9 +468,9 @@ test('comparison presents dated shortfall, sustained break-even and sensitivity 
       Work: { metrics: { closing_cash_chf: 160, closing_net_worth_chf: 160, min_cash_chf: 100 } },
       Study: { metrics: { closing_cash_chf: 170, closing_net_worth_chf: 175, min_cash_chf: 80 },
         sensitivity_summary: { drivers: [{ label: 'Tuition', unit: 'CHF', terminal_cash_delta_chf: -15 }] } } }, limitations: [] } });
-  assert.match(container.children[4].textContent, /−CHF\s40 on 2026-02/);
+  assert.match(container.children[4].textContent, /CHF\s-40 on 2026-02/);
   assert.match(container.children[4].textContent, /break-even 2026-03/);
-  assert.match(container.children[6].textContent, /Tuition \(input change unavailable\) changes terminal cash by −CHF\s15/);
+  assert.match(container.children[6].textContent, /Tuition \(input change unavailable\) changes terminal cash by CHF\s-15/);
 });
 
 describe('custom comparison graphs', () => {
@@ -438,8 +510,8 @@ describe('display currency', () => {
     assert.match(app.money(5000), /^CHF\s5,000$/, 'comma thousands separators, not apostrophes');
     app.setCurrency('EUR', [EUR, SEK]);
     same(app.money(8000), '€10,000');
-    same(app.money(-800), '-€1,000');
-    same(app.moneySigned(800), '+€1,000');
+    same(app.money(-800), '€-1,000');
+    same(app.moneySigned(800), '€+1,000');
     same(app.moneySigned(0.2), '€0');
     same(app.compactChf(2_000_000), '€2.5M');
     same(app.formatVariable(chf, 4000), '€5,000');
@@ -455,7 +527,7 @@ describe('display currency', () => {
   });
 
   test('amounts quoted in server text are shown in the chosen currency', () => {
-    same(app.localizeAmounts('Cash changes by CHF -800 to CHF 8,000.'), 'Cash changes by -€1,000 to €10,000.');
+    same(app.localizeAmounts('Cash changes by CHF -800 to CHF 8,000.'), 'Cash changes by €-1,000 to €10,000.');
     same(app.localizeAmounts('You have CHF 12,000.00 (written as €15,000) saved.'), 'You have €15,000 saved.');
     app.setCurrency('CHF');
     same(app.localizeAmounts('You have CHF 12,000.00 (written as €15,000).'), 'You have CHF 12,000.00 (written as €15,000).');

@@ -831,6 +831,66 @@ def apply_branch_change(parent, event, months, variables, change, sequence=None,
     return result
 
 
+def _carry_node_fields(revised, original, branch_parent=None, event_state=None):
+    """Keep a re-simulated node's identity and the event it records."""
+    revised["id"] = original["id"]
+    revised["parent_id"] = original["parent_id"]
+    for key in ("event_summary", "event_narrative", "event_state", "branch_proposal", "appended_events"):
+        if key in original:
+            revised[key] = deepcopy(event_state if key == "event_state" and branch_parent is not None else original[key])
+    if "branch_commitments" in original:
+        revised["branch_commitments"] = branch_commitments(branch_parent, revised)
+
+
+def resimulate_node(original, parent, scenario, old_parent):
+    """Re-simulate the month `original` covers from a revised `parent` (changed in place), with `scenario`.
+
+    An event that took effect at `original` (a branch start or an appended event, recorded in its
+    `event_state`) is applied again on top of the revised parent, so later events survive a change
+    made earlier on the path. Used by /api/edit-nodes and /api/branch/append.
+    """
+    branch_parent = deepcopy(parent) if "branch_commitments" in original else None
+    event_state = original.get("event_state")
+    if not event_state and original["branch_id"] != "main" and original["branch_id"] != old_parent["branch_id"]:
+        before = old_parent["state"]
+        after_assets = deepcopy(original["state"]["assets"])
+        for asset in after_assets:
+            contribution = original["state"]["cash_flow"]["investment_contribution_chf"] if asset["id"] == "__contributions__" else 0
+            asset["value_chf"] = max(0, asset["value_chf"] - contribution) / ((1 + asset["annual_return"]) ** (1 / 12)) if asset["annual_return"] > -1 else 0
+        after_debts = deepcopy(original["state"]["debts"])
+        for debt in after_debts:
+            if debt["principal_chf"] > 0:
+                debt["principal_chf"] = (debt["principal_chf"] + debt["monthly_payment_chf"]) / (1 + debt["annual_interest_rate"] / 12)
+        event_state = {"assets": after_assets, "debts": after_debts,
+                       "parent_assets": before["assets"], "parent_debts": before["debts"]}
+    if event_state:
+        parent["state"]["cash_chf"] += event_state.get("borrowing_proceeds_chf", 0)
+        for kind in ("assets", "debts"):
+            before = {item["id"]: item for item in event_state["parent_" + kind]}
+            after = {item["id"]: item for item in event_state[kind]}
+            value_key = "value_chf" if kind == "assets" else "principal_chf"
+            for item in parent["state"][kind]:
+                if item["id"] in before and item["id"] in after and before[item["id"]][value_key]:
+                    item[value_key] *= after[item["id"]][value_key] / before[item["id"]][value_key]
+            parent["state"][kind].extend(deepcopy(item) for key, item in after.items() if key not in before)
+        if branch_parent is not None:
+            event_state = {**deepcopy(event_state),
+                           "parent_assets": deepcopy(branch_parent["state"]["assets"]),
+                           "parent_debts": deepcopy(branch_parent["state"]["debts"]),
+                           "assets": deepcopy(parent["state"]["assets"]),
+                           "debts": deepcopy(parent["state"]["debts"])}
+    parent["scenario"] = scenario
+    revised = simulate(parent, 1, preferences=original["state"]["active_variables"]["preferences"], branch_id=original["branch_id"])[0]
+    if event_state:
+        proceeds = event_state.get("borrowing_proceeds_chf", 0)
+        revised["state"]["cash_flow"]["borrowing_proceeds_chf"] = proceeds
+        revised["state"]["cash_flow"]["cash_change_after_transfers_chf"] += proceeds
+    if revised["date"] <= parent["date"]:
+        raise ValueError("The date would place a later node before its parent.")
+    _carry_node_fields(revised, original, branch_parent, event_state)
+    return revised
+
+
 def edit_nodes(data):
     nodes = data.get("nodes")
     edits = data.get("edits")
@@ -971,58 +1031,156 @@ def edit_nodes(data):
                 scenario["one_off_costs"] = [cost for cost in costs if cost["month"] != month]
                 if edits["one_off_cost_chf"]:
                     scenario["one_off_costs"].append({"month": month, "description": "Edited cost", "amount_chf": edits["one_off_cost_chf"]})
-        branch_parent = None
         if original["parent_id"] is None:
             revised = create_root(scenario)
+            _carry_node_fields(revised, original)
         else:
             parent = deepcopy(result.get(original["parent_id"], old[original["parent_id"]]))
-            branch_parent = deepcopy(parent) if "branch_commitments" in original else None
-            event_state = original.get("event_state")
-            if not event_state and original["branch_id"] != "main" and original["branch_id"] != old[original["parent_id"]]["branch_id"]:
-                before = old[original["parent_id"]]["state"]
-                after_assets = deepcopy(original["state"]["assets"])
-                for asset in after_assets:
-                    contribution = original["state"]["cash_flow"]["investment_contribution_chf"] if asset["id"] == "__contributions__" else 0
-                    asset["value_chf"] = max(0, asset["value_chf"] - contribution) / ((1 + asset["annual_return"]) ** (1 / 12)) if asset["annual_return"] > -1 else 0
-                after_debts = deepcopy(original["state"]["debts"])
-                for debt in after_debts:
-                    if debt["principal_chf"] > 0:
-                        debt["principal_chf"] = (debt["principal_chf"] + debt["monthly_payment_chf"]) / (1 + debt["annual_interest_rate"] / 12)
-                event_state = {"assets": after_assets, "debts": after_debts,
-                               "parent_assets": before["assets"], "parent_debts": before["debts"]}
-            if event_state:
-                parent["state"]["cash_chf"] += event_state.get("borrowing_proceeds_chf", 0)
-                for kind in ("assets", "debts"):
-                    before = {item["id"]: item for item in event_state["parent_" + kind]}
-                    after = {item["id"]: item for item in event_state[kind]}
-                    value_key = "value_chf" if kind == "assets" else "principal_chf"
-                    for item in parent["state"][kind]:
-                        if item["id"] in before and item["id"] in after and before[item["id"]][value_key]:
-                            item[value_key] *= after[item["id"]][value_key] / before[item["id"]][value_key]
-                    parent["state"][kind].extend(deepcopy(item) for key, item in after.items() if key not in before)
-                if branch_parent is not None:
-                    event_state = {**deepcopy(event_state),
-                                   "parent_assets": deepcopy(branch_parent["state"]["assets"]),
-                                   "parent_debts": deepcopy(branch_parent["state"]["debts"]),
-                                   "assets": deepcopy(parent["state"]["assets"]),
-                                   "debts": deepcopy(parent["state"]["debts"])}
-            parent["scenario"] = scenario
-            revised = simulate(parent, 1, preferences=original["state"]["active_variables"]["preferences"], branch_id=original["branch_id"])[0]
-            if event_state:
-                proceeds = event_state.get("borrowing_proceeds_chf", 0)
-                revised["state"]["cash_flow"]["borrowing_proceeds_chf"] = proceeds
-                revised["state"]["cash_flow"]["cash_change_after_transfers_chf"] += proceeds
-            if revised["date"] <= parent["date"]:
-                raise ValueError("The date would place a later node before its parent.")
-        revised["id"] = original["id"]
-        revised["parent_id"] = original["parent_id"]
-        for key in ("event_summary", "event_narrative", "event_state"):
-            if key in original:
-                revised[key] = deepcopy(event_state if key == "event_state" and branch_parent is not None else original[key])
-        if "branch_commitments" in original:
-            revised["branch_commitments"] = branch_commitments(branch_parent, revised)
+            revised = resimulate_node(original, parent, scenario, old[original["parent_id"]])
         result[original["id"]] = revised
     return {"nodes": list(result.values())}
+
+
+def _timeline(nodes):
+    """Index timeline nodes by ID after checking that every node leads back to the starting point."""
+    if not isinstance(nodes, list) or not all(isinstance(node, dict) for node in nodes):
+        raise ValueError("Provide the timeline nodes.")
+    old = {node.get("id"): node for node in nodes}
+    if len(old) != len(nodes):
+        raise ValueError("Invalid timeline nodes.")
+    for node in nodes:
+        seen = set()
+        current = node
+        while current["parent_id"] is not None:
+            if current["id"] in seen or current["parent_id"] not in old:
+                raise ValueError("Invalid timeline structure.")
+            seen.add(current["id"])
+            current = old[current["parent_id"]]
+    return old
+
+
+def append_identifier(node_id, title, plan, sequence):
+    """Deterministic ID for an appended event: same point, event, proposal and sequence give the same ID."""
+    payload = json.dumps([node_id, title, plan, sequence], sort_keys=True, separators=(",", ":"), allow_nan=False)
+    return "a" + sha256(payload.encode()).hexdigest()[:23]
+
+
+def append_event(data):
+    """Add an event to a path after a point, instead of starting a new branch there.
+
+    The event takes effect at the chosen point and every later month of that path is simulated again
+    with it, keeping the events further along (later appended events, purchases, nested branches).
+    Branches that split off later see the parts of the event that had started by then; branches that
+    split off at the chosen point itself are alternatives to it and are left unchanged.
+    If the point is the last one on its path, the path is extended by `months` months instead.
+    Deterministic: no AI call. The returned `record` lets replay repeat it (financial_twin/reproduce.py).
+    """
+    from financial_twin.branching import _split_phases
+    old = _timeline(data.get("nodes"))
+    point = old.get(data.get("node_id"))
+    if point is None:
+        raise ValueError("Choose a point on the timeline.")
+    sequence = data.get("sequence")
+    if sequence is not None and (isinstance(sequence, bool) or not isinstance(sequence, int) or sequence < 0):
+        raise ValueError("Sequence must be a nonnegative integer.")
+    plan = normalize_proposal(data.get("proposal"), point)
+    event = data.get("event")
+    title = (event.strip() if isinstance(event, str) and event.strip() else plan["title"])[:120]
+    replayable = {key: value for key, value in plan.items() if key != "warnings"}
+    event_id = append_identifier(point["id"], title, replayable, sequence)
+    month = point["month"]
+    path = "main" if point["branch_id"] == "root" else point["branch_id"]
+
+    # What the event changes, in the same terms as a branch (see branching.apply_proposal).
+    changes = [{"kind": c["kind"], "label": c["label"], "amount": c["amount_chf"],
+                "start": month + c["start_offset_months"],
+                "end": month + c["start_offset_months"] + c["duration_months"] if c["duration_months"] else None}
+               for c in plan["changes"] if c["amount_chf"]]
+    costs = []
+    for item in plan["one_offs"]:
+        at = month + item["offset_months"]
+        if item["amount_chf"] > 0:
+            costs.append({"month": at, "description": item["label"], "amount_chf": item["amount_chf"]})
+        elif item["amount_chf"] < 0:   # money received is one month of extra income
+            changes.append({"kind": "income", "label": item["label"], "amount": -item["amount_chf"], "start": at, "end": at + 1})
+    jumped = deepcopy(point)
+    for asset in jumped["state"]["assets"]:
+        if is_investment_asset(asset):
+            asset["value_chf"] *= plan["investment_multiplier"]
+    for index, item in enumerate(plan["assets"]):
+        jumped["state"]["assets"].append({
+            "id": f"event-asset-{event_id}-{index}", "type": item["kind"], "name": item["label"],
+            "value_chf": item["price_chf"], "annual_return": item["annual_value_change"], "annual_volatility": 0})
+        if item["loan_chf"]:
+            jumped["state"]["debts"].append({
+                "id": f"event-debt-{event_id}-{index}", "name": f"{item['label']} loan",
+                "principal_chf": item["loan_chf"], "annual_interest_rate": item["annual_interest_rate"],
+                "monthly_payment_chf": item["monthly_payment_chf"]})
+        upfront = item["down_payment_chf"] + item["transaction_costs_chf"]
+        if upfront:
+            costs.append({"month": month, "description": f"{item['label']} (down payment and costs)", "amount_chf": upfront})
+
+    def with_event(scenario, cutoff=None):
+        """The scenario with the event added on top of what was already planned. With `cutoff`, only the
+        parts that started before a later branch split off (that branch replaced the plans after it)."""
+        kept_changes = [c for c in changes if cutoff is None or c["start"] < cutoff]
+        kept_costs = [c for c in costs if cutoff is None or c["month"] < cutoff]
+        updated = deepcopy(scenario)
+        if kept_changes or cutoff is None:   # a later branch with nothing to add keeps its phases as they were
+            updated["phases"] = _split_phases(updated["phases"], month, kept_changes, title)
+        updated["one_off_costs"] = [*updated["one_off_costs"], *deepcopy(kept_costs)]
+        return updated
+
+    record = {"kind": "append", "sequence": sequence, "node_id": point["id"], "event": title, "proposal": replayable}
+    appended = {"id": event_id, "title": title, "month": month, "proposal": plan}
+    # Replay passes extend=True for an extension, since it still has the points a deletion removed on screen.
+    following = None if data.get("extend") else next(
+        (node for node in old.values() if node["parent_id"] == point["id"] and node["branch_id"] == path), None)
+    event_state = {"assets": deepcopy(jumped["state"]["assets"]), "debts": deepcopy(jumped["state"]["debts"]),
+                   "parent_assets": deepcopy(point["state"]["assets"]), "parent_debts": deepcopy(point["state"]["debts"])}
+
+    if following is None:
+        months = data.get("months")
+        if isinstance(months, bool) or not isinstance(months, int) or not 1 <= months <= 600:
+            raise ValueError("This is the last point of the path: choose for how many months to extend it.")
+        jumped["scenario"] = with_event(point["scenario"])
+        nodes = simulate(jumped, months, preferences=point["state"]["active_variables"]["preferences"], branch_id=path)
+        first = nodes[0]
+        first["event_state"] = event_state
+        record["months"] = months
+    else:
+        children = {}
+        for node in old.values():
+            children.setdefault(node["parent_id"], []).append(node)
+        revised, cutoff = {}, {}
+        pending = [following]
+        while pending:
+            original = pending.pop(0)
+            pending.extend(children.get(original["id"], []))
+            parent_old = old[original["parent_id"]]
+            if original["branch_id"] == path:
+                cutoff[original["id"]] = None
+            elif parent_old["branch_id"] == path:
+                cutoff[original["id"]] = parent_old["month"]   # where this branch split off the path
+            else:
+                cutoff[original["id"]] = cutoff[original["parent_id"]]
+            parent = deepcopy(jumped if original is following else revised[original["parent_id"]])
+            revised[original["id"]] = resimulate_node(original, parent, with_event(original["scenario"], cutoff[original["id"]]), parent_old)
+            if original is following:
+                # The combined change at this point (an event already there plus this one), so later
+                # edits rebuild both (see resimulate_node).
+                before = following.get("event_state") or {}
+                revised[original["id"]]["event_state"] = {
+                    **{key: before[key] for key in ("borrowing_proceeds_chf",) if key in before},
+                    "assets": deepcopy(parent["state"]["assets"]), "debts": deepcopy(parent["state"]["debts"]),
+                    "parent_assets": deepcopy(point["state"]["assets"]), "parent_debts": deepcopy(point["state"]["debts"])}
+        nodes = list(revised.values())
+        first = revised[following["id"]]
+
+    previous = (following or {}).get("event_summary")
+    first["event_summary"] = f"{previous} · {title}" if previous and previous != "Monthly update" else title
+    first["appended_events"] = [*(following or {}).get("appended_events", []), appended]
+    return {"nodes": nodes, "record": record, "appended": appended, "point_id": point["id"]}
 
 
 TEST_EVENTS = [
@@ -1221,7 +1379,7 @@ class Handler(SimpleHTTPRequestHandler):
             if self.headers.get_content_type() != "application/json":
                 raise ValueError("Content-Type must be application/json.")
             length = int(self.headers.get("Content-Length", "0"))
-            limit = 67108864 if self.path in ("/api/edit-nodes", "/api/path-report", "/api/uncertainty") else 10000000 if self.path == "/api/project" else 100000
+            limit = 67108864 if self.path in ("/api/edit-nodes", "/api/branch/append", "/api/path-report", "/api/uncertainty") else 10000000 if self.path == "/api/project" else 100000
             if length <= 0 or length > limit:
                 raise ValueError("Invalid request size.")
             data = json.loads(self.rfile.read(length))
@@ -1244,6 +1402,8 @@ class Handler(SimpleHTTPRequestHandler):
                 if not isinstance(key, str):
                     raise ValueError("Invalid API key.")
                 response = propose_branch(data, key.strip())
+            elif self.path == "/api/branch/append":
+                response = append_event(data)
             elif self.path == "/api/branch/apply":
                 response = apply_branch(data)
             elif self.path == "/api/uncertainty":
