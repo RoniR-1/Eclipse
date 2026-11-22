@@ -6,6 +6,14 @@ AI Financial Twin is a modular monolith. One Python process serves the static br
 
 The calculation boundary is a layered, neuro-symbolic design. The non-deterministic layer interprets stories and proposes structured financial changes, optionally using grounded search. The deterministic layer validates those inputs and calculates monthly accounting results in Python and NumPy. Once the scenario, reviewed changes, dates and other inputs are fixed, the engines do not need the provider to recalculate them. Fresh extraction, exchange rates and public reference figures can change before inputs are frozen.
 
+## Why this architecture
+
+The modular monolith keeps deployment and local development straightforward. The HTTP server calls the calculation modules directly in one application process, while PostgreSQL supplies the shared reference data and event knowledge. This keeps the calculation code independent of HTTP and provider access, though the application components currently deploy together.
+
+The AI layer lets users describe financial situations and decisions in their own words. Structured proposals give users a chance to inspect and edit assumptions, while deterministic accounting makes the resulting cash movements auditable and lets saved inputs be replayed without another provider call. Monthly checkpoints match the frequency of the supplied cash balances. Branching at a decision date lets users hold the preceding path fixed and inspect that decision's effect.
+
+The two engines serve different workflows. `engine.py` retains balance-sheet snapshots so a user can branch from a selected checkpoint. `projection.py` resolves a structured profile and named events into timelines for baseline comparisons, using labelled defaults where inputs are missing. Maintaining both calculation paths requires their accounting behavior to be verified independently, with shared loan arithmetic in `debt.py`.
+
 ## System and data flow
 
 ```text
