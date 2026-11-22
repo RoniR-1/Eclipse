@@ -1763,7 +1763,7 @@ async function ensureRange() {
   const key = nodesKey();
   if ((state.range && state.rangeKey === key) || state.rangeLoading === key) return;
   state.rangeLoading = key;
-  byId('range-toggle')?.classList.add('is-loading');
+  document.querySelectorAll('.range-toggle').forEach(toggle => toggle.classList.add('is-loading'));
   try {
     const result = await request('/api/uncertainty', { nodes: [...state.nodes.values()] });
     if (state.rangeLoading !== key) return;
@@ -1775,14 +1775,13 @@ async function ensureRange() {
     setRangeVisible(false);
   } finally {
     if (state.rangeLoading === key) state.rangeLoading = '';
-    byId('range-toggle')?.classList.remove('is-loading');
+    document.querySelectorAll('.range-toggle').forEach(toggle => toggle.classList.remove('is-loading'));
   }
 }
 
 function setRangeVisible(on) {
   state.showRange = on;
-  const toggle = byId('range-toggle');
-  if (toggle) {
+  for (const toggle of document.querySelectorAll('.range-toggle')) {
     toggle.setAttribute('aria-pressed', String(on));
     toggle.textContent = on ? 'Hide range' : 'Show range';
   }
@@ -1792,15 +1791,16 @@ function setRangeVisible(on) {
 
 const rangeOf = (range, node) => range?.nodes?.[node.id] || null;
 
-// Compact ±label for an edge or card: % of the central value, or CHF when a % would mislead.
+// Compact ±label for edges and tree nodes, always in CHF: half the width of the range.
+// A percentage of the central value would shrink whenever net worth grows faster than the uncertainty
+// and explode near zero, so the graph uses one stable unit; percentages appear only where they are
+// labelled "vs. central" (timeline cards and the details table).
 function rangeBadge(range, node, field = 'net_worth') {
   const span = rangeOf(range, node)?.[field];
   if (!span) return null;
-  const centre = node.state[`${field}_chf`];
   const half = (span[1] - span[0]) / 2;
   if (half < 0.5) return null;
-  const share = half / Math.abs(centre || 1);
-  return Math.abs(centre) >= 5000 && share <= 1 ? `±${Math.round(share * 100)}%` : `±${compactChf(half)}`;
+  return `±${compactChf(half)}`;
 }
 
 function rangeDelta(value, centre) {
@@ -1849,7 +1849,7 @@ function fillRangeSection(section, node) {
   if (drivers.length) {
     const fold = el('details', { class: 'range-drivers-fold' }, el('summary', { text: 'What matters most' }),
       el('ul', { class: 'range-drivers' }, ...drivers.map(item => el('li', {}, el('span', { text: item.label }),
-        el('strong', { text: `${moneySigned(item.low)} / ${moneySigned(item.high)}` })))));
+        el('strong', { text: `${moneySigned(Math.min(item.low, item.high))} / ${moneySigned(Math.max(item.low, item.high))}` })))));
     rememberOpen(fold, 'range.drivers');
     section.append(fold);
   }
@@ -2016,8 +2016,9 @@ function renderVerticalTimeline(milestones, activeMeta, index, layout) {
     const span = rangeOf(range, node)?.net_worth;
     if (span && span[1] - span[0] >= 1) {
       const centre = node.state.net_worth_chf;
-      const pct = value => Math.abs(centre) >= 1000 ? ` (${value >= centre ? '+' : '−'}${Math.abs((value - centre) / centre * 100).toFixed(0)}%)` : '';
-      content.append(el('div', { class: 'vnode-range', text: `Range ${compactChf(span[0])} – ${compactChf(span[1])}${pct(span[0])}${pct(span[1])}` }));
+      const pct = value => `${value >= centre ? '+' : '−'}${Math.abs((value - centre) / centre * 100).toFixed(0)}%`;
+      const share = Math.abs(centre) >= 1000 ? ` (${pct(span[0])} / ${pct(span[1])})` : '';
+      content.append(el('div', { class: 'vnode-range', text: `Range ${compactChf(span[0])} – ${compactChf(span[1])}${share}` }));
     }
     content.append(prose, figures);
 
@@ -3088,7 +3089,7 @@ function renderTreeGraph({ fit = false, focusId = null } = {}) {
 
     return {
       id: node.id,
-      label: `${titleHtml}\n${escapeHtml(money(node.state.net_worth_chf))}`,
+      label: `${titleHtml}\n${escapeHtml(money(node.state.net_worth_chf))}${rangeBadge(treeRange, node) ? `\n<i>${rangeBadge(treeRange, node)} range</i>` : ''}`,
       x: dates.indexOf(node.date) * TREE_COL_STEP,
       y: (laneOffsets.get(node.branch_id) + rowOffset) * TREE_ROW_STEP,
       color: {
@@ -3111,6 +3112,7 @@ function renderTreeGraph({ fit = false, focusId = null } = {}) {
           face: 'DM Sans',
           mod: 'bold',
         },
+        ital: { color: light ? '#9a4a12' : '#ffb27a', size: 20, face: 'DM Sans', mod: '' },
       },
       borderWidth: isSelected ? (isEvent ? 3.5 : 3.0) : isEvent ? 2.6 : 1.8,
       shape: 'box',
@@ -3152,7 +3154,8 @@ function renderTreeGraph({ fit = false, focusId = null } = {}) {
     const [gr, gg, gb] = hexToRgb(baseColor);
     const glowColor = `rgba(${gr}, ${gg}, ${gb}, ${light ? 0.14 : 0.45})`;
     const isActiveEdge = activeSet.has(node.id) && activeSet.has(parentId);
-    const edgeRange = isActiveEdge ? rangeBadge(treeRange, state.nodes.get(node.id)) : null;
+    // Only long edges have room for a label; the node boxes always show the range.
+    const edgeRange = Math.abs(child.x - parent.x) > TREE_COL_STEP * 1.5 ? rangeBadge(treeRange, state.nodes.get(node.id)) : null;
 
     edges.push({
       id: `${parentId}>${node.id}`,
@@ -3163,7 +3166,7 @@ function renderTreeGraph({ fit = false, focusId = null } = {}) {
       glowColor,
       width: isActiveEdge ? (light ? 4.4 : 5.8) : (light ? 3.4 : 4.6),
       label: edgeRange || '',
-      font: { color: light ? '#141412' : '#f6e9dc', size: 11, strokeWidth: 3, strokeColor: light ? '#f8f8f6' : '#180d07', align: 'middle' },
+      font: { color: light ? '#141412' : '#ffc89a', size: 20, face: 'DM Sans', strokeWidth: 5, strokeColor: light ? '#f8f8f6' : '#180d07', align: 'middle' },
       color: { color: baseColor, highlight: baseColor, hover: baseColor },
       shadow: light ? false : { enabled: true, color: glowColor, size: isActiveEdge ? 14 : 10, x: 0, y: 0 },
       smooth: isSameLane
@@ -5017,7 +5020,143 @@ document.addEventListener('visibilitychange', () => {
   }
 });
 
-byId('range-toggle')?.addEventListener('click', () => setRangeVisible(!state.showRange));
+document.querySelectorAll('.range-toggle').forEach(toggle => toggle.addEventListener('click', () => setRangeVisible(!state.showRange)));
+
+// ── Goals scorecard: the user's goals, checked against every path (POST /api/goals/score) ──
+
+const GOAL_TYPES = { cash_by_date: 'Cash by a date', net_worth_by_date: 'Net worth by a date', never_short: 'Never run out of cash' };
+const GOAL_STATUS = {
+  robust: ['✓', 'Met, even if estimates are off'], fragile: ['✓', 'Met, but not if estimates are worse'],
+  within_reach: ['~', 'Only met if estimates turn out better'], missed: ['✗', 'Missed'],
+};
+const GOALS_STORAGE = 'eclipse_goals';
+state.goals = (() => { try { return JSON.parse(localStorage.getItem(GOALS_STORAGE)) || []; } catch { return []; } })();
+
+function saveGoals() {
+  try { localStorage.setItem(GOALS_STORAGE, JSON.stringify(state.goals)); } catch { /* storage unavailable */ }
+}
+
+function startMonth(offsetMonths = 0) {
+  const root = [...state.nodes.values()].find(node => !node.parent_id);
+  const base = new Date(`${(root?.date || new Date().toISOString()).slice(0, 7)}-01T00:00:00`);
+  base.setMonth(base.getMonth() + offsetMonths);
+  return `${base.getFullYear()}-${String(base.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function goalRow(goal, index) {
+  const update = () => { saveGoals(); };
+  const name = el('input', { type: 'text', maxlength: 60, placeholder: 'Name', 'aria-label': 'Goal name' });
+  name.value = goal.name || '';
+  name.addEventListener('input', () => { goal.name = name.value; update(); });
+  const type = el('select', { 'aria-label': 'Goal type' }, ...Object.entries(GOAL_TYPES).map(([value, text]) => el('option', { value, text })));
+  type.value = goal.type;
+  const amount = el('input', { type: 'number', min: 0, step: 100, 'aria-label': 'Target in CHF' });
+  amount.value = goal.target_chf ?? '';
+  amount.addEventListener('input', () => { goal.target_chf = amount.value === '' ? null : Number(amount.value); update(); });
+  const when = el('input', { type: 'month', 'aria-label': 'Target month' });
+  when.value = goal.date || '';
+  when.addEventListener('input', () => { goal.date = when.value; update(); });
+  const priority = el('select', { 'aria-label': 'Priority' }, ...['high', 'medium', 'low'].map(value => el('option', { value, text: `${value[0].toUpperCase()}${value.slice(1)} priority` })));
+  priority.value = goal.priority || 'medium';
+  priority.addEventListener('change', () => { goal.priority = priority.value; update(); });
+  const amountWrap = el('label', { class: 'goal-field' }, el('span', { text: 'Target (CHF)' }), amount);
+  const whenWrap = el('label', { class: 'goal-field' }, el('span', { text: 'By' }), when);
+  const showFields = () => { const hidden = goal.type === 'never_short'; amountWrap.hidden = hidden; whenWrap.hidden = hidden; };
+  type.addEventListener('change', () => { goal.type = type.value; showFields(); update(); });
+  showFields();
+  const remove = el('button', { type: 'button', class: 'block-remove', 'aria-label': 'Remove this goal', text: '×',
+    onclick: () => { state.goals.splice(index, 1); saveGoals(); renderGoalsList(); } });
+  return el('div', { class: 'goal-row' },
+    el('div', { class: 'goal-row-top' }, name, remove),
+    el('div', { class: 'goal-row-fields' },
+      el('label', { class: 'goal-field' }, el('span', { text: 'Type' }), type), amountWrap, whenWrap,
+      el('label', { class: 'goal-field' }, el('span', { text: 'Priority' }), priority)));
+}
+
+function renderGoalsList() {
+  const list = byId('goals-list');
+  list.replaceChildren(...state.goals.map((goal, index) => goalRow(goal, index)));
+  if (!state.goals.length) list.append(el('p', { class: 'goals-empty', text: 'No goals yet. Describe them above or add one.' }));
+}
+
+function goalCell(result) {
+  const [icon, title] = GOAL_STATUS[result.status] || ['?', result.status];
+  const gap = result.gap_chf === null || result.gap_chf === undefined ? '' : ` ${result.gap_chf >= 0 ? '+' : '−'}${compactChf(Math.abs(result.gap_chf))}`;
+  return el('td', { class: `goal-cell is-${result.status}`, title: [title, result.note].filter(Boolean).join(' · ') },
+    el('span', { class: 'goal-icon', text: icon }), el('span', { text: result.gap_chf ? gap : '' }));
+}
+
+function renderScorecard(card) {
+  const box = byId('goals-result');
+  const index = buildTreeIndex();
+  const table = el('table', { class: 'goals-table' },
+    el('thead', {}, el('tr', {}, el('th', { text: '#' }), el('th', { text: 'Path' }), el('th', { text: 'Closeness' }),
+      ...card.goals.map(goal => el('th', { text: goal.name, title: GOAL_TYPES[goal.type] })), el('th', { text: '' }))));
+  const body = el('tbody');
+  for (const row of card.paths) {
+    const label = index.branchMeta.get(row.branch_id)?.label || (row.branch_id === 'main' ? 'Original path' : 'Path');
+    const view = el('button', { type: 'button', class: 'text-button goals-view', text: 'View',
+      onclick: () => { byId('goals-dialog').close(); switchActivePath(row.branch_id, { focusNodeId: row.tip_id }); } });
+    body.append(el('tr', { class: row.rank === 1 ? 'is-best' : '' },
+      el('td', { text: String(row.rank) }), el('td', { class: 'goals-path', text: label }),
+      el('td', { text: `${Math.round(row.score * 100)}%`, title: `${row.goals_met} of ${card.goals.length} goals met, ${row.robust} robustly` }),
+      ...row.results.map(goalCell), el('td', {}, view)));
+  }
+  table.append(body);
+  const best = card.paths[0];
+  const bestLabel = index.branchMeta.get(best.branch_id)?.label || 'Original path';
+  box.replaceChildren(
+    el('h3', { text: `Closest to your goals: ${bestLabel}` }),
+    el('p', { class: 'goals-summary', text: `${best.goals_met} of ${card.goals.length} goals met (${best.robust} even if estimates are off).` }),
+    el('div', { class: 'goals-table-wrap' }, table),
+    el('p', { class: 'goals-legend', text: '✓ met · ~ only if estimates turn out better · ✗ missed · amounts show how far above or below the target the path is. Hover a cell for details.' }),
+    el('p', { class: 'range-note', text: card.method }));
+}
+
+async function readGoals() {
+  const text = byId('goals-text').value.trim();
+  const error = byId('goals-error');
+  error.textContent = '';
+  if (!text) { error.textContent = 'Describe your goals first.'; return; }
+  const button = byId('goals-read');
+  setButtonLoading(button, true, 'Reading…', 'Read my goals');
+  try {
+    const root = [...state.nodes.values()].find(node => !node.parent_id);
+    const result = await request('/api/goals/parse', { text, start_date: root?.date });
+    state.goals = result.goals.map(({ id, ...goal }) => goal);
+    saveGoals();
+    renderGoalsList();
+  } catch (problem) { error.textContent = problem.message; }
+  finally { setButtonLoading(button, false, 'Reading…', 'Read my goals'); }
+}
+
+async function scoreGoals() {
+  const error = byId('goals-error');
+  error.textContent = '';
+  if (!state.nodes.size) { error.textContent = 'Run a simulation first.'; return; }
+  if (!state.goals.length) { error.textContent = 'Add at least one goal.'; return; }
+  const button = byId('goals-score');
+  setButtonLoading(button, true, 'Checking every path…', 'Find the best path');
+  try {
+    const card = await request('/api/goals/score', { nodes: [...state.nodes.values()], goals: state.goals });
+    renderScorecard(card);
+    byId('goals-result').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  } catch (problem) { error.textContent = problem.message; }
+  finally { setButtonLoading(button, false, 'Checking every path…', 'Find the best path'); }
+}
+
+for (const button of document.querySelectorAll('.goals-open')) {
+  button.addEventListener('click', () => { renderGoalsList(); byId('goals-dialog').showModal(); });
+}
+byId('goals-close')?.addEventListener('click', () => byId('goals-dialog').close());
+byId('goals-read')?.addEventListener('click', readGoals);
+byId('goals-score')?.addEventListener('click', scoreGoals);
+byId('goals-add')?.addEventListener('click', () => {
+  state.goals.push({ name: '', type: 'cash_by_date', target_chf: 20000, date: startMonth(36), priority: 'medium' });
+  saveGoals();
+  renderGoalsList();
+});
+
 for (const btn of document.querySelectorAll('.recaps-toggle')) {
   btn.addEventListener('click', () => setHideRecaps(!state.hideRecaps));
 }

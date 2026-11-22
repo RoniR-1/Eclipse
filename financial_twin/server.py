@@ -613,6 +613,41 @@ def apply_branch(data):
     return result
 
 
+def parse_goals(data, api_key):
+    """Turn the user's own words into structured goals for review. The only AI step of the scorecard."""
+    from financial_twin.goals import GOALS_SCHEMA, normalize_goals, parse_prompt
+    text = data.get("text")
+    if not isinstance(text, str) or not text.strip() or len(text) > 2000:
+        raise ValueError("Describe your goals in up to 2,000 characters.")
+    start = data.get("start_date") or date.today().isoformat()
+    if not isinstance(start, str):
+        raise ValueError("start_date must be an ISO date.")
+    prompt = parse_prompt(text.strip(), start)
+    raw = cached_ai_answer("goals", prompt, GOALS_SCHEMA)
+    cached = raw is not None
+    if not cached:
+        raw = gemini_json(prompt, GOALS_SCHEMA, api_key)
+    items = raw.get("goals") if isinstance(raw, dict) else None
+    if not isinstance(items, list) or not items:
+        raise ValueError("No goals were recognised. Try naming an amount and a date, e.g. CHF 20,000 by 2028.")
+    try:
+        goals = normalize_goals(items[:8])
+    except ValueError as exc:
+        raise ValueError(f"The AI's reading needs a fix: {exc} You can also enter goals in the form.") from exc
+    if not cached:
+        store_ai_answer("goals", prompt, GOALS_SCHEMA, raw)
+    return {"goals": goals, "cached": cached}
+
+
+def score_goals(data):
+    """Rank every path on screen against the goals. Deterministic: no AI call."""
+    from financial_twin.goals import scorecard
+    from financial_twin.uncertainty import analyse
+    nodes = data.get("nodes")
+    ranges = analyse(nodes)["nodes"] if data.get("robust", True) else None
+    return scorecard(nodes, data.get("goals"), ranges)
+
+
 def run_branch(data, api_key):
     parent = data.get("parent")
     event = data.get("event")
@@ -1379,7 +1414,7 @@ class Handler(SimpleHTTPRequestHandler):
             if self.headers.get_content_type() != "application/json":
                 raise ValueError("Content-Type must be application/json.")
             length = int(self.headers.get("Content-Length", "0"))
-            limit = 67108864 if self.path in ("/api/edit-nodes", "/api/branch/append", "/api/path-report", "/api/uncertainty") else 10000000 if self.path == "/api/project" else 100000
+            limit = 67108864 if self.path in ("/api/edit-nodes", "/api/branch/append", "/api/path-report", "/api/uncertainty", "/api/goals/score") else 10000000 if self.path == "/api/project" else 100000
             if length <= 0 or length > limit:
                 raise ValueError("Invalid request size.")
             data = json.loads(self.rfile.read(length))
@@ -1406,6 +1441,13 @@ class Handler(SimpleHTTPRequestHandler):
                 response = append_event(data)
             elif self.path == "/api/branch/apply":
                 response = apply_branch(data)
+            elif self.path == "/api/goals/parse":
+                key = data.get("api_key") or ""
+                if not isinstance(key, str):
+                    raise ValueError("Invalid API key.")
+                response = parse_goals(data, key.strip())
+            elif self.path == "/api/goals/score":
+                response = score_goals(data)
             elif self.path == "/api/uncertainty":
                 from financial_twin.uncertainty import DEFAULT_UNCERTAINTY, analyse
                 response = analyse(data.get("nodes"), data.get("uncertainty", DEFAULT_UNCERTAINTY))

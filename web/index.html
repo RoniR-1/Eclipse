@@ -166,6 +166,7 @@
             <div class="results-actions">
               <button class="text-button" id="return-to-original" type="button" hidden><span aria-hidden="true">←</span> Original path</button>
               <button class="ghost-button recaps-toggle" id="toggle-recaps-timeline" type="button" aria-pressed="false" title="Hide periodic recap points, leaving only starting points, events and endpoints">Hide recaps</button>
+              <button class="ghost-button goals-open" type="button" title="Set your goals and find the path that comes closest">Goals <span aria-hidden="true">◎</span></button>
               <button class="ghost-button" id="switch-to-tree" type="button">Full tree <span aria-hidden="true">⑂</span></button>
               <label class="currency-pill" title="Currency for every amount shown. Calculations stay in CHF.">
                 <span class="visually-hidden">Currency</span>
@@ -264,7 +265,9 @@
           <div class="tree-top-bar">
             <div class="tree-top-left">
               <button class="ghost-button" id="back-to-timeline" type="button">← Back to timeline</button>
+              <button class="ghost-button goals-open" type="button" title="Set your goals and find the path that comes closest">Goals <span aria-hidden="true">◎</span></button>
               <button class="ghost-button recaps-toggle" id="toggle-recaps-tree" type="button" aria-pressed="false" title="Hide periodic recap points, leaving only starting points, events and endpoints">Hide recaps</button>
+              <button type="button" class="ghost-button range-toggle" id="range-toggle-tree" aria-pressed="false" title="Show how far each path could move if its estimates are off">Show range</button>
               <label class="currency-pill" title="Currency for every amount shown. Calculations stay in CHF.">
                 <span class="visually-hidden">Currency</span>
                 <select id="currency-tree" class="currency-select" aria-label="Currency">
@@ -328,6 +331,25 @@
   </div>
 
   <div id="toast-region" class="toast-region" aria-live="polite" aria-atomic="true"></div>
+
+  <dialog id="goals-dialog" class="goals-dialog" aria-labelledby="goals-title">
+    <div class="goals-head">
+      <span class="card-kicker">YOUR GOALS</span>
+      <button type="button" class="goals-close" id="goals-close" aria-label="Close goals">×</button>
+    </div>
+    <h2 id="goals-title">What are you aiming for?</h2>
+    <p class="goals-hint">Describe your goals in your own words or add them below, then find the path that comes closest. The ranking is calculated from your timelines, not guessed by the AI.</p>
+    <div class="goals-ai">
+      <label for="goals-text" class="visually-hidden">Your goals in your own words</label>
+      <textarea id="goals-text" maxlength="2000" placeholder="e.g. CHF 20,000 emergency savings by 2028, CHF 120,000 for a flat by 2031, and never run out of cash"></textarea>
+      <button type="button" class="ghost-button" id="goals-read"><span class="btn-label">Read my goals</span></button>
+    </div>
+    <p class="form-error" id="goals-error" role="alert"></p>
+    <div id="goals-list" class="goals-list"></div>
+    <button type="button" class="add-block" id="goals-add">+ Add a goal</button>
+    <button type="button" class="primary-button wide" id="goals-score"><span class="btn-label">Find the best path</span><span class="btn-icon" aria-hidden="true">✳</span></button>
+    <div id="goals-result" class="goals-result"></div>
+  </dialog>
 
   <dialog id="confirm-dialog" class="confirm-dialog" aria-labelledby="confirm-title" aria-describedby="confirm-message">
     <form method="dialog">

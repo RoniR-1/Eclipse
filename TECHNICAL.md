@@ -144,7 +144,7 @@ Each addition is recorded in the run file's `branches` list as `kind: "append"` 
 
 ## Uncertainty range
 
-**Show range** in the results view adds, for the selected path only, a band to the trajectory chart, a ±% badge on each timeline edge and tree edge, the range on each timeline card, and a table in the node details (pessimistic, central and optimistic net worth and cash, in CHF and as % of the central value). The badge falls back to ±CHF when the central value is below CHF 5,000 or the range exceeds 100%, because percentages near zero mislead. The range is off by default and is not a branch: it adds no nodes and cannot be branched from.
+**Show range** in the results view adds, for the selected path only, a band to the trajectory chart, a ±CHF badge (half the width of the range) on each timeline edge and on every tree node and edge, the range on each timeline card, and a table in the node details (pessimistic, central and optimistic net worth and cash, in CHF and as % of the central value). Badges use CHF rather than %: a percentage of the central value shrinks whenever net worth grows faster than the uncertainty and explodes near zero, while the CHF range never shrinks along a path. The range is off by default and is not a branch: it adds no nodes and cannot be branched from.
 
 `POST /api/uncertainty` takes the nodes on screen and re-simulates the whole tree month by month, the way `/api/edit-nodes` does, with adjusted inputs (`financial_twin/uncertainty.py`). Every monthly amount is split into today's situation (the first phase of the starting point) and the change since (later phases and events):
 
@@ -158,6 +158,20 @@ Each addition is recorded in the run file's `branches` list as `kind: "append"` 
 | Inflation | ±1 percentage point; the side that lowers final net worth counts as pessimistic |
 
 The pessimistic run moves every input to its unfavourable side at once and the optimistic run to its favourable side, to construct two stress scenarios. Neither line estimates a probability or bounds every possible outcome. Ranges are centred on the values shown: low = shown + (pessimistic − unadjusted re-simulation), so the band never drifts from the timeline. The response also lists, per branch, the first month cash turns negative in the pessimistic case and the inputs ranked by their effect on the branch's final net worth (each moved on its own). The starting-cost stress applies even when someone has entered that value. `tests/test_uncertainty.py` checks that the unadjusted re-simulation reproduces every node exactly, hand-calculated driver effects, widening over time and input validation.
+
+## Goals scorecard
+
+**Goals** (in the results header and the tree's top bar) opens a panel where users describe their goals in their own words or add them in a form, then rank every path on screen with **Find the best path**. Goals are kept in the browser (`localStorage`).
+
+The AI does one thing: `POST /api/goals/parse` turns the user's sentence into structured goals (`financial_twin/goals.py`, `GOALS_SCHEMA`), through the AI cache, for the user to review and edit. Nothing is trained, and the AI never ranks. `POST /api/goals/score` is deterministic: it takes the nodes on screen and the goals, computes the uncertainty range (`financial_twin/uncertainty.py`) and checks every path:
+
+| Goal type | Met when |
+| --- | --- |
+| `cash_by_date` | cash at the goal month ≥ target (e.g. a down payment) |
+| `net_worth_by_date` | net worth at the goal month ≥ target |
+| `never_short` | cash never negative over the path |
+
+Per goal and path the response gives the gap (value − target), the closeness (value ÷ target capped at 100%, or the share of months with cash ≥ 0) and a status: *robust* (met even in the pessimistic range), *fragile* (met, but not pessimistically), *within reach* (met only in the optimistic range) or *missed*. A path's score is the priority-weighted mean closeness (high 3, medium 2, low 1); ties go to more robust goals, then higher final net worth. Goals are judged independently, so two cash goals do not share one pot of money, and a goal dated after a path ends is judged at its last month. `tests/test_goals.py` checks hand-calculated statuses and gaps, the weighting, ranking, validation and the parsing step.
 
 ## Check the implementation
 
