@@ -5230,7 +5230,7 @@ async function showPathExplanation(box, branchId) {
     why = { explanation: [`The comparison is unavailable: ${problem.message}`] };
   }
   const parts = [el('h3', { text: pathLabel(branchId) }),
-    el('h4', { class: 'explain-part', text: 'Why this path differs' }),
+    el('h4', { class: 'explain-part', text: why?.is_original ? 'How the original path goes (the one others are compared with)' : 'Why it differs from the original path' }),
     el('ul', { class: 'compare-sentences' }, ...(why?.explanation || []).map(text => el('li', { text })))];
   const scored = scoredGoalRow(branchId);
   if (scored) {
