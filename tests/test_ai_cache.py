@@ -253,13 +253,16 @@ class RequestSettingsTests(unittest.TestCase):
             def serve_forever(self):
                 pass
 
-        with patch.object(server, "AI_CACHE_DIR", None), patch.object(server, "load_env"), \
+        with patch.object(server, "AI_CACHE_DIR", None), patch.object(server.currency, "RATES_FILE", None), \
+                patch.object(server, "load_env"), \
                 patch("financial_twin.database.initialize_from_environment"), \
                 patch.object(server, "ThreadingHTTPServer", FakeServer), patch("builtins.print"), \
                 patch.dict(os.environ, {}, clear=True):
             server.main()
             self.assertEqual(server.AI_CACHE_DIR, server.ROOT / ".local" / "ai-cache")
-        with patch.object(server, "AI_CACHE_DIR", None), patch.object(server, "load_env"), \
+            self.assertEqual(server.currency.RATES_FILE, server.ROOT / ".local" / "exchange-rates.json")
+        with patch.object(server, "AI_CACHE_DIR", None), patch.object(server.currency, "RATES_FILE", None), \
+                patch.object(server, "load_env"), \
                 patch("financial_twin.database.initialize_from_environment"), \
                 patch.object(server, "ThreadingHTTPServer", FakeServer), patch("builtins.print"), \
                 patch.dict(os.environ, {"AI_CACHE_DIR": "/tmp/somewhere"}, clear=True):

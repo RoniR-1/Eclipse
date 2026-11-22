@@ -3,8 +3,17 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#180d07">
-  <title>Financial Twin — make room for your future</title>
+  <meta name="theme-color" content="#261710">
+  <title>Eclipse — see your financial future</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23261710'/%3E%3Cdefs%3E%3Cmask id='m'%3E%3Crect width='32' height='32' fill='%23fff'/%3E%3Ccircle cx='13.1' cy='17.3' r='9.3' fill='%23000'/%3E%3C/mask%3E%3C/defs%3E%3Ccircle cx='16' cy='16' r='10.4' fill='none' stroke='%23ffa45e' stroke-opacity='.35' stroke-width='1.2'/%3E%3Ccircle cx='16' cy='16' r='10.4' fill='%23ff9447' mask='url(%23m)'/%3E%3Cpath d='M23.6 5.6L24.25 7.75 26.4 8.4 24.25 9.05 23.6 11.2 22.95 9.05 20.8 8.4 22.95 7.75Z' fill='%23fff6ec'/%3E%3C/svg%3E">
+  <script>
+    try {
+      if (localStorage.getItem('financial_twin_theme') === 'light') {
+        document.documentElement.dataset.theme = 'light';
+        document.querySelector('meta[name="theme-color"]')?.setAttribute('content', '#f8f8f6');
+      }
+    } catch {}
+  </script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&display=swap" rel="stylesheet">
@@ -16,13 +25,30 @@
 
   <div class="page-shell">
     <header class="topbar">
-      <a class="brand" href="/" aria-label="Financial Twin home">
-        <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
-        <span>financial<span class="brand-light">twin</span></span>
+      <a class="brand" href="/" aria-label="Eclipse home">
+        <svg class="brand-mark" viewBox="0 0 32 32" width="28" height="28" fill="none" aria-hidden="true">
+          <defs>
+            <linearGradient id="eclipse-grad" x1="25" y1="6" x2="7" y2="26" gradientUnits="userSpaceOnUse">
+              <stop offset="0%" class="eclipse-stop-start" />
+              <stop offset="100%" class="eclipse-stop-end" />
+            </linearGradient>
+            <mask id="eclipse-cut">
+              <rect width="32" height="32" fill="#fff" />
+              <circle cx="13.1" cy="17.3" r="9.3" fill="#000" />
+            </mask>
+          </defs>
+          <circle class="eclipse-ring" cx="16" cy="16" r="10.4" stroke-width="1.15" />
+          <circle cx="16" cy="16" r="10.4" fill="url(#eclipse-grad)" mask="url(#eclipse-cut)" />
+          <path class="eclipse-flash" d="M23.6 5.6 L24.25 7.75 L26.4 8.4 L24.25 9.05 L23.6 11.2 L22.95 9.05 L20.8 8.4 L22.95 7.75 Z" />
+        </svg>
+        <span class="brand-wordmark">Eclipse</span>
       </a>
 
       <div class="topbar-actions">
-        <a class="settings-button" href="/compare.html">Compare decisions</a>
+        <button class="theme-toggle" id="theme-toggle" type="button" aria-pressed="false" title="Switch to light mode">
+          <span class="theme-toggle-icon" aria-hidden="true">☀</span>
+          <span class="settings-label" id="theme-toggle-label">Light</span>
+        </button>
         <button class="settings-button" id="test-data" type="button" title="Generate a sample multi-branch timeline without using AI">
           <span aria-hidden="true">⚄</span>
           <span class="settings-label">Test</span>
@@ -32,50 +58,56 @@
 
     <main>
       <!-- STAGE 1: INTAKE -->
-      <section id="intake" class="hero">
-        <div class="hero-copy">
-          <div class="eyebrow"><span></span> A little clarity for what's next</div>
-          <h1>Meet your<br><em>financial future.</em></h1>
-          <p class="hero-description">
-            Big decisions deserve a clearer picture. Tell your AI Financial Twin where you are and where you want to go, then explore how your finances could evolve over time.
-          </p>
-          <a class="comparison-link" href="/compare.html">Build a comparison without AI</a>
-        </div>
+      <section id="intake" class="intake-stage">
+        <div class="hero">
+          <div class="hero-copy">
+            <div class="eyebrow"><span></span> A little clarity for what's next</div>
+            <h1>Meet your<br><em>financial future.</em></h1>
+            <p class="hero-description">
+              Big decisions deserve a clearer picture. Tell Eclipse where you are and where you want to go, then explore how your finances could evolve over time.
+            </p>
+          </div>
 
-        <div class="intake-card">
-          <div class="card-top"><span class="card-kicker">YOUR STARTING POINT</span></div>
-          <h2>What’s on your mind?</h2>
-          <p>Share your situation, your goals, and the decision you’d like to explore.</p>
+          <div class="intake-card">
+            <div class="card-top"><span class="card-kicker">YOUR STARTING POINT</span></div>
+            <h2>What’s on your mind?</h2>
 
-          <form id="intake-form">
-            <label for="statement">Your financial story</label>
-            <textarea id="statement" name="statement" required minlength="10" placeholder="I have CHF 15,000 saved and earn CHF 5,000 a month. I’m thinking about going back to school in two years and want to understand what that could mean for my savings..."></textarea>
+            <form id="intake-form">
+              <label for="statement">Your financial story <span class="label-hint">(use a fictional household)</span></label>
+              <textarea id="statement" name="statement" required minlength="10" placeholder="I have CHF 15,000 saved and earn CHF 5,000 a month. I’m thinking about going back to school in two years and want to understand what that could mean for my savings..."></textarea>
 
-            <div class="preset-chips">
-              <button type="button" class="preset-chip" data-years="5" data-story="I'm Alexia, a student in Lausanne with CHF 8,000 in cash. I'm deciding whether to start working right away earning CHF 4,800 net per month with CHF 2,400 in monthly expenses, or spend two years on a Master's degree costing CHF 8,000 per year while working part-time for CHF 1,500 a month before earning CHF 6,500 net afterwards.">Alexia · Master's vs. Work</button>
-              <button type="button" class="preset-chip" data-years="5" data-story="I live in Zurich with CHF 85,000 saved in cash and CHF 40,000 in ETFs. I earn CHF 7,600 net per month and spend CHF 4,300. I want to see how my finances evolve over 5 years and explore buying an apartment in 2 years.">Buying a flat</button>
-              <button type="button" class="preset-chip" data-years="5" data-story="I have CHF 32,000 in savings, CHF 12,000 left on a student loan at 3% paying CHF 350/month, earn CHF 6,200 net and spend CHF 3,900 monthly. I'm thinking about taking a 1-year sabbatical or going part-time.">Sabbatical</button>
-            </div>
-
-            <div class="form-bottom">
-              <div class="time-field">
-                <label for="years">Look ahead</label>
-                <div class="select-wrap">
-                  <select id="years" name="years">
-                    <option value="5" selected>5 years</option>
-                  </select>
-                </div>
+              <div class="preset-chips">
+                <button type="button" class="preset-chip" data-years="5" data-story="I'm Alexia, a student in Lausanne with CHF 8,000 in cash. I'm deciding whether to start working right away earning CHF 4,800 net per month with CHF 2,400 in monthly expenses, or spend two years on a Master's degree costing CHF 8,000 per year while working part-time for CHF 1,500 a month before earning CHF 6,500 net afterwards.">Alexia · Master's vs. Work</button>
+                <button type="button" class="preset-chip" data-years="5" data-story="I live in Zurich with CHF 85,000 saved in cash and CHF 40,000 in ETFs. I earn CHF 7,600 net per month and spend CHF 4,300. I want to see how my finances evolve over 5 years and explore buying an apartment in 2 years.">Buying a flat</button>
+                <button type="button" class="preset-chip" data-years="5" data-story="I have CHF 32,000 in savings, CHF 12,000 left on a student loan at 3% paying CHF 350/month, earn CHF 6,200 net and spend CHF 3,900 monthly. I'm thinking about taking a 1-year sabbatical or going part-time.">Sabbatical</button>
               </div>
-              <button class="primary-button" id="extract-button" type="submit">
-                <span class="btn-label">Explore my scenario</span>
-                <span class="btn-icon" aria-hidden="true">✳</span>
-              </button>
-            </div>
-            <p class="form-error" id="intake-error" role="alert"></p>
-          </form>
 
-          <div class="card-foot">Your story is sent to AI to extract transparent starting assumptions.</div>
+              <div class="form-bottom">
+                <div class="time-field">
+                  <label for="years">Look ahead</label>
+                  <div class="select-wrap">
+                    <select id="years" name="years">
+                      <option value="5" selected>5 years</option>
+                      <option value="10">10 years</option>
+                      <option value="20">20 years</option>
+                    </select>
+                  </div>
+                </div>
+                <button class="primary-button" id="extract-button" type="submit">
+                  <span class="btn-label">Explore my scenario</span>
+                  <span class="btn-icon" aria-hidden="true">✳</span>
+                </button>
+              </div>
+              <p class="form-error" id="intake-error" role="alert"></p>
+            </form>
+            <details class="data-use">
+              <summary>How your data is used</summary>
+              <p>Your story is sent to the AI provider to read your numbers. A new event sends its description and the figures it needs, and a named public place or programme, such as a university, may be looked up on the web. How long the provider keeps requests depends on its terms.</p>
+              <p>Checked AI answers are saved on this server, so the same story gives the same numbers. Figures and sources for public milestones are kept in its database and reused for 180 days. Both stay until the operator deletes them. Run files you download stay on your device until you delete them.</p>
+            </details>
+          </div>
         </div>
+
       </section>
 
       <!-- STAGE 2: TUNING -->
@@ -84,7 +116,6 @@
           <div>
             <div class="eyebrow"><span></span> YOUR SCENARIO</div>
             <h1>Make it <em>yours.</em></h1>
-            <p>Fine-tune the assumptions that matter to your story.</p>
           </div>
           <button class="text-button" id="edit-story" type="button">Edit your story</button>
         </div>
@@ -92,17 +123,24 @@
         <div class="tuning-grid">
           <div class="summary-card">
             <div class="card-kicker">THE PICTURE SO FAR</div>
-            <h2>Your starting point</h2>
+            <h2 class="with-info">Your starting point <details class="info-tip"><summary aria-label="About these figures and their sources" title="About these figures and their sources">i</summary><div class="info-tip-body"><p id="currency-note" hidden></p><p class="caveat" data-caveat></p><h4>Sources of starting values</h4><div id="input-provenance"></div></div></details></h2>
             <p id="scenario-summary"></p>
             <div id="baseline" class="baseline"></div>
             <div id="assumptions" class="assumptions"></div>
-            <p class="summary-note">Review these inferred figures before exploring your future.</p>
+            <div id="goal-editor"></div>
           </div>
 
           <div class="sliders-card">
             <div class="card-top"><span class="card-kicker">FINE-TUNE YOUR FUTURE</span></div>
-            <h2>Adjust your assumptions</h2>
-            <p>Move the controls to reflect what feels right for you.</p>
+            <div class="card-heading-row">
+              <h2>Adjust your assumptions</h2>
+              <label class="currency-pill" title="Calculations are in Swiss francs.">
+                <span class="visually-hidden">Currency</span>
+                <select id="currency" class="currency-select" aria-label="Currency">
+                  <option value="CHF" selected>CHF</option>
+                </select>
+              </label>
+            </div>
             <form id="simulate-form">
               <div id="sliders"></div>
               <p class="form-error" id="simulate-error" role="alert"></p>
@@ -127,8 +165,14 @@
             </div>
             <div class="results-actions">
               <button class="text-button" id="return-to-original" type="button" hidden><span aria-hidden="true">←</span> Original path</button>
-              <button class="ghost-button" id="jump-to-summary" type="button">Summary <span aria-hidden="true">↓</span></button>
+              <button class="ghost-button recaps-toggle" id="toggle-recaps-timeline" type="button" aria-pressed="false" title="Hide periodic recap points, leaving only starting points, events and endpoints">Hide recaps</button>
               <button class="ghost-button" id="switch-to-tree" type="button">Full tree <span aria-hidden="true">⑂</span></button>
+              <label class="currency-pill" title="Currency for every amount shown. Calculations stay in CHF.">
+                <span class="visually-hidden">Currency</span>
+                <select id="currency-results" class="currency-select" aria-label="Currency">
+                  <option value="CHF" selected>CHF</option>
+                </select>
+              </label>
               <button class="text-button" id="adjust-scenario" type="button"><span aria-hidden="true">←</span> Adjust assumptions</button>
             </div>
           </div>
@@ -144,29 +188,65 @@
             <div class="summary-head">
               <div>
                 <div class="eyebrow"><span></span> HORIZON SUMMARY</div>
-                <h2>Where this path <em>leads.</em></h2>
-              </div>
-              <div class="summary-head-actions">
-                <button class="ghost-button" id="download-run" type="button" title="Save every input and result of this run so it can be replayed exactly with scripts/reproduce.py">Download run file <span aria-hidden="true">⤓</span></button>
-                <button class="text-button" id="back-to-top" type="button">↑ Back to top</button>
+                <h2 class="with-info">Where this path <em>leads.</em> <details class="info-tip"><summary aria-label="About these results" title="About these results">i</summary><div class="info-tip-body"><p class="caveat" data-caveat></p></div></details></h2>
               </div>
             </div>
 
             <div class="summary-layout">
               <div class="summary-numbers" id="path-kpis"></div>
+              <div class="trajectory-column">
+              <div class="chart-actions">
+                <button class="ghost-button" id="toggle-sensitivity-panel" type="button" aria-expanded="false">Sensitivity &amp; checks</button>
+                <button class="ghost-button" id="download-run" type="button" title="Save this run's inputs and results so it can be checked later">Download run file <span aria-hidden="true">⤓</span></button>
+              </div>
               <div class="trajectory-card">
                 <div class="trajectory-top">
                   <span class="card-kicker" id="trajectory-title">NET WORTH OVER TIME</span>
                   <div class="metric-toggle" role="group" aria-label="Chart metric">
-                    <button type="button" class="metric-btn is-active" data-metric="net_worth_chf">Net worth</button>
-                    <button type="button" class="metric-btn" data-metric="cash_chf">Cash</button>
+                    <button type="button" class="metric-btn is-active" data-metric="net_worth_chf" aria-pressed="true">Net worth</button>
+                    <button type="button" class="metric-btn" data-metric="cash_chf" aria-pressed="false">Cash</button>
                   </div>
                   <button type="button" class="range-toggle" id="range-toggle" aria-pressed="false" title="Show how far the selected path could move if its estimates are off">Show range</button>
                 </div>
                 <div class="trajectory-chart-wrap" id="trajectory-chart"></div>
                 <div class="trajectory-legend" id="trajectory-legend"></div>
               </div>
+              </div>
             </div>
+
+            <!-- Full-width Sensitivity & Model Checks Panel (opens on demand) -->
+            <div id="path-report-panel" class="path-report-panel" aria-live="polite" hidden></div>
+
+            <!-- Custom comparison graph: shown once there is a branch to compare, folded until opened -->
+            <details id="graph-studio" class="graph-studio" hidden>
+              <summary class="graph-studio-head">
+                <div>
+                  <span class="card-kicker">CUSTOM GRAPH</span>
+                  <h3>Compare branches over time</h3>
+                </div>
+                <span class="graph-studio-toggle" aria-hidden="true">▾</span>
+              </summary>
+
+              <div class="graph-controls">
+                <div class="graph-control">
+                  <label for="graph-y-metric">Y-axis</label>
+                  <div class="select-wrap">
+                    <select id="graph-y-metric"></select>
+                  </div>
+                </div>
+
+                <div class="graph-control">
+                  <label for="graph-branch-select">Add branch</label>
+                  <div class="select-wrap">
+                    <select id="graph-branch-select"></select>
+                  </div>
+                </div>
+                <button type="button" class="text-button graph-quick-btn" id="graph-clear-all" hidden>Clear graph</button>
+              </div>
+
+              <div class="graph-selected-chips" id="graph-selected-branches" aria-label="Branches on graph" hidden></div>
+              <div id="graph-preview-slot" class="graph-preview-slot"></div>
+            </details>
           </section>
 
           <!-- Floating Corner Tree Minimap (click block for full tree, click dot to jump) -->
@@ -184,9 +264,14 @@
           <div class="tree-top-bar">
             <div class="tree-top-left">
               <button class="ghost-button" id="back-to-timeline" type="button">← Back to timeline</button>
-              <button class="ghost-button" id="toggle-paths-panel" type="button" aria-expanded="false">Your paths</button>
-              <button class="ghost-button" id="fit-graph" type="button">Fit</button>
+              <button class="ghost-button recaps-toggle" id="toggle-recaps-tree" type="button" aria-pressed="false" title="Hide periodic recap points, leaving only starting points, events and endpoints">Hide recaps</button>
               <button type="button" class="ghost-button range-toggle" id="range-toggle-tree" aria-pressed="false" title="Show how far each path could move if its estimates are off">Show range</button>
+              <label class="currency-pill" title="Currency for every amount shown. Calculations stay in CHF.">
+                <span class="visually-hidden">Currency</span>
+                <select id="currency-tree" class="currency-select" aria-label="Currency">
+                  <option value="CHF" selected>CHF</option>
+                </select>
+              </label>
               <button class="text-button tree-adjust-link" id="tree-adjust-scenario" type="button">Adjust assumptions</button>
             </div>
             <div class="tree-top-meta">
@@ -195,13 +280,18 @@
             </div>
           </div>
 
+          <div class="tree-corner-controls">
+            <button class="ghost-button" id="toggle-paths-panel" type="button" aria-expanded="false">Your paths</button>
+            <button class="ghost-button" id="fit-graph" type="button" title="Show the whole tree">Fit</button>
+          </div>
+          <p class="tree-hint" id="tree-hint" role="status" hidden>Drag to pan · Scroll to zoom · Click a point for details</p>
+
           <div class="graph-card tree-left-sheet" id="tree-controls-panel" hidden>
             <div class="panel-bar">
               <span class="card-kicker">YOUR PATHS</span>
               <button class="drawer-close" id="close-paths-panel" type="button" aria-label="Close paths">×</button>
             </div>
             <div class="panel-body">
-              <p class="tree-controls-hint">Drag canvas to pan · Scroll to zoom · Click any node for details</p>
               <label class="milestone-label" for="milestone-select">Jump to point</label>
               <div class="select-wrap">
                 <select id="milestone-select"></select>
@@ -220,7 +310,7 @@
         <div id="drawer-backdrop" class="drawer-backdrop" hidden></div>
 
         <!-- SINGLE SHARED MOMENT DRAWER / TREE INSPECTOR -->
-        <aside id="inspector-panel" class="inspector" aria-label="Selected moment">
+        <aside id="inspector-panel" class="inspector" aria-label="Selected moment" aria-hidden="true" inert>
           <div class="panel-bar">
             <span class="card-kicker">THIS MOMENT</span>
             <button class="drawer-close" id="close-drawer" type="button" aria-label="Close panel">×</button>
@@ -235,7 +325,7 @@
       </section>
     </main>
 
-    <footer><span>financialtwin</span></footer>
+    <footer><span>Eclipse</span></footer>
   </div>
 
   <div id="toast-region" class="toast-region" aria-live="polite" aria-atomic="true"></div>

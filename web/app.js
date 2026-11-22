@@ -7,12 +7,14 @@ const state = {
   stage: 'intake',
   resultsView: 'timeline', // 'timeline' | 'tree'
   drawerOpen: false,
+  drawerReturnFocus: null,
   chartMetric: 'net_worth_chf',
   extraction: null,
   years: 5,
   nodes: new Map(),
   narratives: new Map(),
   pathReports: new Map(),
+  inspectorTab: 'overview', // details panel tab: 'overview' | 'details' | 'whatif'
   activeBranchId: 'main',
   selectedId: null,
   network: null,
@@ -36,34 +38,153 @@ const state = {
   astralRaf: null,
   treeHoverId: null,
   treeRenderData: null,
+  sensitivityOpen: false,
+  hideRecaps: false,
+  graphBuilder: { metricId: 'net_worth_chf', selectedBranchIds: [], zoom: null },
+  theme: 'dark',
   run: null, // inputs needed to replay this run exactly (see financial_twin/reproduce.py)
 };
 
 const BRANCH_PALETTE = [
-  '#ffa159', // Original path — warm amber
-  '#f0cb88', // Soft champagne gold
-  '#f08e6e', // Warm terracotta
-  '#dc8ba6', // Dusty rose-copper
-  '#9ec4a3', // Soft sage
-  '#c9a3dc', // Muted warm lavender
+  '#ffa45e', // P0 (Original path) — warm amber
+  '#6fd1a4', // P1 — emerald mint
+  '#73c8e6', // P2 — astral teal
+  '#f5c85b', // P3 — warm gold
+  '#d896ec', // P4 — soft plum
+  '#ff7a6b', // P5 — coral
+  '#f09a78', // P6 — terracotta
+  '#a6d48a', // P7 — sage
 ];
 
-const money = value =>
-  new Intl.NumberFormat('en-CH', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0 }).format(value);
+const BRANCH_PALETTE_LIGHT = [
+  '#141412', // P0 (Original path) — crisp ink black
+  '#0f766e', // P1 — architectural teal
+  '#2563eb', // P2 — Swiss cobalt
+  '#c2410c', // P3 — vermilion
+  '#7c3aed', // P4 — editorial violet
+  '#be123c', // P5 — crimson rose
+  '#047857', // P6 — emerald
+  '#b45309', // P7 — ochre
+];
+
+const isLightTheme = () => state.theme === 'light';
+const getBranchPalette = () => (isLightTheme() ? BRANCH_PALETTE_LIGHT : BRANCH_PALETTE);
+const THEME_STORAGE_KEY = 'financial_twin_theme';
+
+function syncThemeToggleUi() {
+  const btn = byId('theme-toggle');
+  if (!btn) return;
+  const light = isLightTheme();
+  btn.setAttribute('aria-pressed', String(light));
+  btn.title = light ? 'Switch to dark mode' : 'Switch to light mode';
+  const icon = btn.querySelector?.('.theme-toggle-icon');
+  if (icon) icon.textContent = light ? '☾' : '☀';
+  const label = byId('theme-toggle-label');
+  if (label) label.textContent = light ? 'Dark' : 'Light';
+}
+
+function setTheme(mode, { persist = true, redraw = true } = {}) {
+  const next = mode === 'light' ? 'light' : 'dark';
+  state.theme = next;
+  if (document.documentElement?.dataset) {
+    if (next === 'light') document.documentElement.dataset.theme = 'light';
+    else delete document.documentElement.dataset.theme;
+  }
+  const metaTheme = document.querySelector?.('meta[name="theme-color"]');
+  if (metaTheme?.setAttribute) metaTheme.setAttribute('content', next === 'light' ? '#f8f8f6' : '#261710');
+  if (persist) {
+    try { localStorage.setItem(THEME_STORAGE_KEY, next); } catch { /* storage unavailable */ }
+  }
+  syncThemeToggleUi();
+  if (!redraw) return;
+  startAstralBackdrop();
+  if (state.nodes.size && state.stage === 'results') {
+    if (state.resultsView === 'tree') renderTreeGraph();
+    else renderTimelineView();
+    const selected = state.nodes.get(state.selectedId);
+    if (selected && (state.drawerOpen || state.resultsView === 'tree')) renderInspector(selected);
+  }
+}
+
+function initTheme() {
+  let saved = document.documentElement?.dataset?.theme || 'dark';
+  try {
+    const stored = localStorage.getItem(THEME_STORAGE_KEY);
+    if (stored === 'light' || stored === 'dark') saved = stored;
+  } catch { /* storage unavailable */ }
+  setTheme(saved, { persist: false, redraw: false });
+}
+
+/* ==========================================================================
+   CURRENCY
+   The engine calculates in CHF. Other currencies are a view: amounts are converted for display, and typed
+   amounts are converted back to CHF before they are sent. Rates come from /api/currencies.
+   ========================================================================== */
+
+const CHF = { code: 'CHF', name: 'Swiss franc', symbol: 'CHF', per_chf: 1, date: null, source: null };
+state.currency = CHF;
+state.currencies = [CHF];
+
+// Prefix for amounts: "€2,000", "$2,000", but "SEK 2,000" and "CHF 2,000" (letters get a space).
+const currencyPrefix = () => {
+  const symbol = state.currency.symbol || state.currency.code;
+  return /[A-Za-z]$/.test(symbol) ? `${symbol} ` : symbol;
+};
+// The unit shown next to money inputs.
+const currencyUnit = () => state.currency.code === 'CHF' ? 'CHF' : (state.currency.symbol || state.currency.code);
+const chfToDisplay = chf => Number(chf) * state.currency.per_chf;
+const displayToChf = amount => Number(amount) / state.currency.per_chf;
+
+function setCurrency(code, list = state.currencies) {
+  const found = list.find(item => item.code === code);
+  state.currency = found ? { ...found } : CHF;
+  return state.currency;
+}
+
+// One line saying which rate is used, e.g. "1 EUR = 0.92 CHF · European Central Bank reference rate of 2026-11-20".
+// Small units are quoted per 100 (100 JPY = 0.53 CHF) so two decimals still say something.
+function currencyRateText(currency = state.currency) {
+  if (!currency || currency.code === 'CHF') return 'Calculations are in Swiss francs.';
+  const units = 1 / currency.per_chf < 0.1 ? 100 : 1;
+  return `${units} ${currency.code} = ${(units / currency.per_chf).toFixed(2)} CHF · ${currency.source || 'exchange rate'}${currency.date ? ` of ${currency.date}` : ''}. Calculations stay in CHF.`;
+}
+
+// Numbers shown to people have at most two decimals and comma thousands separators (5,000).
+const twoDecimals = value => new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(value);
+
+// The sign goes after the currency: "CHF -1,000", "€-1,000", "+€1,000".
+const money = value => {
+  const amount = chfToDisplay(value);
+  const digits = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(Math.abs(amount));
+  return `${currencyPrefix()}${Math.round(amount) < 0 ? '-' : ''}${digits}`;
+};
 
 const moneySigned = value => {
-  if (Math.abs(value) < 0.5) return 'CHF 0';
-  return `${value > 0 ? '+' : '−'}${money(Math.abs(value))}`;
+  const amount = chfToDisplay(value);
+  if (Math.abs(amount) < 0.5) return `${currencyPrefix()}0`;
+  const digits = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(Math.abs(amount));
+  return `${currencyPrefix()}${amount > 0 ? '+' : '-'}${digits}`;
 };
 
 const compactChf = value => {
-  const sign = value < 0 ? '−' : '';
-  const abs = Math.abs(value);
-  if (abs >= 1_000_000) return `${sign}CHF ${(abs / 1_000_000).toFixed(1)}M`;
-  if (abs >= 10_000) return `${sign}CHF ${Math.round(abs / 1000)}k`;
-  if (abs >= 1_000) return `${sign}CHF ${(abs / 1_000).toFixed(1)}k`;
-  return `${sign}CHF ${Math.round(abs)}`;
+  const amount = chfToDisplay(value);
+  const abs = Math.abs(amount);
+  const prefix = `${currencyPrefix()}${amount < 0 ? '-' : ''}`;
+  if (abs >= 1_000_000) return `${prefix}${(abs / 1_000_000).toFixed(1)}M`;
+  if (abs >= 10_000) return `${prefix}${Math.round(abs / 1000)}k`;
+  if (abs >= 1_000) return `${prefix}${(abs / 1_000).toFixed(1)}k`;
+  return `${prefix}${Math.round(abs)}`;
 };
+
+// Server and AI text quotes amounts as "CHF 1,234.50"; show those in the chosen currency too.
+// "(written as €2,000)" notes, added when a story's amounts were converted, are dropped once shown in that currency.
+function localizeAmounts(text) {
+  if (!text || state.currency.code === 'CHF') return text ?? '';
+  return String(text).replace(/CHF\s?(-?\d[\d,'’]*(?:\.\d+)?)(?:\s*\(written as [^)]*\))?/g, (match, number) => {
+    const value = Number(number.replace(/[,'’]/g, ''));
+    return Number.isFinite(value) ? money(value) : match;
+  });
+}
 
 function escapeHtml(str) {
   return String(str)
@@ -145,15 +266,38 @@ function drawAstralFrame(nowMs) {
   const t = reduced ? 2.5 : nowMs * 0.001;
   const scrollY = window.scrollY || 0;
 
+  const light = isLightTheme();
   for (const s of astralStars) {
     const wx = ((s.nx + t * s.driftX * 0.35 + organicWave(t * 0.22, s.seed) * 0.012) % 1 + 1) % 1;
     const wy = ((s.ny + t * s.driftY * 0.35 - (scrollY * s.parallax) / Math.max(h, 600)) % 1 + 1) % 1;
     const x = wx * w;
     const y = wy * h;
     const twinkle = 0.65 + 0.35 * organicWave(t * 0.65, s.seed + 3.1);
+
+    if (light) {
+      // Crisp blackish ink micro-squares & hollow rotated diamonds — zero fuzzy smudges
+      const alpha = Math.min(0.42, Math.max(0.08, s.baseAlpha * twinkle * 1.15));
+      const rgb = s.warm ? '28, 28, 26' : '14, 14, 12';
+      ctx.save();
+      ctx.translate(x, y);
+      if (s.r > 1.5) {
+        const size = s.r * 2.5;
+        ctx.rotate(t * 0.16 * (s.warm ? 1 : -1) + s.seed);
+        ctx.strokeStyle = `rgba(${rgb}, ${alpha * 0.95})`;
+        ctx.lineWidth = 1;
+        ctx.strokeRect(-size / 2, -size / 2, size, size);
+      } else {
+        const size = Math.max(1.6, s.r * 1.55);
+        ctx.rotate(Math.PI / 4);
+        ctx.fillStyle = `rgba(${rgb}, ${alpha})`;
+        ctx.fillRect(-size / 2, -size / 2, size, size);
+      }
+      ctx.restore();
+      continue;
+    }
+
     const alpha = Math.max(0.03, s.baseAlpha * twinkle);
     const rgb = s.warm ? '255, 214, 172' : '255, 244, 234';
-
     if (s.r > 1.55) {
       const g = ctx.createRadialGradient(x, y, 0, x, y, s.r * 4.5);
       g.addColorStop(0, `rgba(${rgb}, ${alpha * 0.85})`);
@@ -199,8 +343,66 @@ function mixRgb(a, b, ratio) {
   ];
 }
 
+function drawHollowSquare(ctx, x, y, size, angle, { stroke, fill = null, lineWidth = 1.6, radius = 1.5 } = {}) {
+  const half = size / 2;
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(angle);
+  ctx.beginPath();
+  if (radius > 0 && ctx.roundRect) ctx.roundRect(-half, -half, size, size, radius);
+  else ctx.rect(-half, -half, size, size);
+  if (fill) {
+    ctx.fillStyle = fill;
+    ctx.fill();
+  }
+  if (stroke) {
+    ctx.strokeStyle = stroke;
+    ctx.lineWidth = lineWidth;
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
 function drawOrganicOrb(ctx, x, y, t, seed, { selected, isFork, isShortfall, tintHex, maxHalo }) {
+  const light = isLightTheme();
   const pulse = organicWave(t * 0.65, seed);
+
+  if (light) {
+    // Light Mode: crisp kinetic hollow architectural squares (black ink on P0, branch ink on branches, crimson on shortfall)
+    const baseRgb = isShortfall ? [200, 50, 43] : hexToRgb(tintHex || '#141412');
+    const rgbStr = baseRgb.join(',');
+    const baseAngle = isFork ? Math.PI / 4 : 0;
+    const outerAngle = baseAngle + Math.sin(t * 0.55 + seed * 1.1) * 0.24 + (selected ? t * 0.22 : 0);
+    const mainAngle = baseAngle + Math.cos(t * 0.48 + seed * 1.7) * 0.11;
+
+    // 1. Subtle breathing outer hollow hairline frame
+    const outerSize = (selected ? 23 : isFork ? 20 : 16.5) * (1 + pulse * 0.08);
+    drawHollowSquare(ctx, x, y, outerSize, outerAngle, {
+      stroke: `rgba(${rgbStr}, ${selected ? 0.42 : isFork ? 0.30 : 0.20})`,
+      lineWidth: 1.1,
+      radius: 2,
+    });
+
+    // 2. Primary crisp hollow square (masks the line cleanly inside with #f8f8f6)
+    const mainSize = (selected ? 13.5 : isFork ? 12.5 : 11) * (1 + pulse * 0.05);
+    drawHollowSquare(ctx, x, y, mainSize, mainAngle, {
+      fill: '#f8f8f6',
+      stroke: `rgba(${rgbStr}, 0.96)`,
+      lineWidth: selected ? 2.1 : 1.75,
+      radius: 1.8,
+    });
+
+    // 3. Precision kinetic center pip for selected moments & branch forks (normal nodes stay cleanly hollow!)
+    if (selected || isFork) {
+      const innerSize = selected ? 4.4 : 3.6;
+      drawHollowSquare(ctx, x, y, innerSize, -mainAngle + Math.PI / 4, {
+        fill: `rgba(${rgbStr}, 0.95)`,
+        radius: 0.6,
+      });
+    }
+    return;
+  }
+
   const scale = (selected ? 1.24 : isFork ? 1.12 : 1.0) * (1 + pulse * 0.08);
   const baseR = 9.5 * scale;
 
@@ -367,6 +569,11 @@ function drawSpineFrame(nowMs) {
   const swapFromRgb = swap ? hexToRgb(swap.fromColor) : null;
   const swapToRgb = swap ? hexToRgb(swap.toColor) : null;
 
+  const light = isLightTheme();
+  const hiMixTarget = light ? [34, 20, 12] : [255, 244, 232];
+  const hiMixRatio = light ? 0.14 : 0.45;
+  const pearlCore = light ? '255, 251, 246' : '255, 246, 236';
+
   // 1. Undulating lava-lamp filament connecting consecutive orbs (with live color-wave transition during branch swap!)
   if (points.length > 1) {
     const topY = points[0].y;
@@ -378,13 +585,13 @@ function drawSpineFrame(nowMs) {
     for (let i = 0; i < points.length - 1; i++) {
       const a = points[i];
       const b = points[i + 1];
-      let segRgb = hexToRgb(b.meta.tintHex || '#ffa159');
+      let segRgb = hexToRgb(b.meta.tintHex || getBranchPalette()[0]);
       if (swap && swapForkIndex >= 0 && i >= swapForkIndex) {
         const segMidY = (a.y + b.y) * 0.5;
         const blend = Math.max(0, Math.min(1, (waveY - (segMidY - 90)) / 180));
         segRgb = mixRgb(swapFromRgb, swapToRgb, blend);
       }
-      const segMid = mixRgb(segRgb, [255, 244, 232], 0.45);
+      const segMid = mixRgb(segRgb, hiMixTarget, hiMixRatio);
       const span = Math.max(1, b.y - a.y);
       const steps = Math.max(10, Math.ceil(span / 10));
 
@@ -404,14 +611,18 @@ function drawSpineFrame(nowMs) {
 
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
-      traceSegment();
-      ctx.strokeStyle = `rgba(${segRgb.join(',')}, ${b.meta.isDiverged ? 0.24 : 0.17})`;
-      ctx.lineWidth = 10;
-      ctx.stroke();
+      if (!light) {
+        traceSegment();
+        ctx.strokeStyle = `rgba(${segRgb.join(',')}, ${b.meta.isDiverged ? 0.24 : 0.17})`;
+        ctx.lineWidth = 10;
+        ctx.stroke();
+      }
 
       traceSegment();
-      ctx.strokeStyle = `rgba(${segMid.join(',')}, ${b.meta.isDiverged ? 0.72 : 0.52})`;
-      ctx.lineWidth = b.meta.isDiverged ? 2.1 : 1.8;
+      ctx.strokeStyle = light
+        ? `rgba(${segRgb.join(',')}, ${b.meta.isDiverged ? 0.88 : 0.78})`
+        : `rgba(${segMid.join(',')}, ${b.meta.isDiverged ? 0.72 : 0.52})`;
+      ctx.lineWidth = light ? (b.meta.isDiverged ? 2.0 : 1.65) : (b.meta.isDiverged ? 2.2 : 1.9);
       ctx.stroke();
     }
 
@@ -429,17 +640,26 @@ function drawSpineFrame(nowMs) {
         }
       }
       const surgeFade = Math.sin(Math.PI * swapP);
-      const surgeGrad = ctx.createRadialGradient(wx, waveY, 0, wx, waveY, 32);
-      surgeGrad.addColorStop(0, `rgba(255, 252, 246, ${0.98 * surgeFade})`);
-      surgeGrad.addColorStop(0.35, `rgba(${swapToRgb.join(',')}, ${0.78 * surgeFade})`);
-      surgeGrad.addColorStop(1, `rgba(${swapToRgb.join(',')}, 0)`);
-      ctx.fillStyle = surgeGrad;
-      ctx.beginPath();
-      ctx.arc(wx, waveY, 32, 0, Math.PI * 2);
-      ctx.fill();
+      if (light) {
+        drawHollowSquare(ctx, wx, waveY, 14 + 8 * surgeFade, Math.PI / 4 + swapP * 1.4, {
+          fill: '#f8f8f6',
+          stroke: `rgba(${swapToRgb.join(',')}, ${0.9 * surgeFade})`,
+          lineWidth: 2,
+          radius: 1.5,
+        });
+      } else {
+        const surgeGrad = ctx.createRadialGradient(wx, waveY, 0, wx, waveY, 32);
+        surgeGrad.addColorStop(0, `rgba(255, 252, 246, ${0.95 * surgeFade})`);
+        surgeGrad.addColorStop(0.35, `rgba(${swapToRgb.join(',')}, ${0.78 * surgeFade})`);
+        surgeGrad.addColorStop(1, `rgba(${swapToRgb.join(',')}, 0)`);
+        ctx.fillStyle = surgeGrad;
+        ctx.beginPath();
+        ctx.arc(wx, waveY, 32, 0, Math.PI * 2);
+        ctx.fill();
+      }
     }
 
-    // Subtle slow lava-lamp warm light droplets drifting down the filament
+    // Subtle slow droplets / kinetic micro-squares drifting down the filament
     if (!reduced) {
       const totalSpan = Math.max(1, botY - topY);
       const dropletCount = Math.min(5, Math.max(2, Math.floor(points.length / 4)));
@@ -448,6 +668,7 @@ function drawSpineFrame(nowMs) {
         const rawPos = (t * speed + d * 0.37) % 1;
         const dy = topY + rawPos * totalSpan;
         let dx = baseCenterX;
+        let segRgb = hexToRgb(getBranchPalette()[0]);
         for (let i = 0; i < points.length - 1; i++) {
           const a = points[i];
           const b = points[i + 1];
@@ -455,18 +676,28 @@ function drawSpineFrame(nowMs) {
             const u = (dy - a.y) / Math.max(1, b.y - a.y);
             const env = Math.sin(Math.PI * u);
             dx = a.x + (b.x - a.x) * u + organicWave(t * 0.68 - dy * 0.0048, i * 2.93 + 0.6) * 11 * env;
+            segRgb = hexToRgb(b.meta.tintHex || getBranchPalette()[0]);
             break;
           }
         }
         const fade = Math.sin(Math.PI * rawPos);
-        const dropGrad = ctx.createRadialGradient(dx, dy, 0, dx, dy, 12);
-        dropGrad.addColorStop(0, `rgba(255, 238, 216, ${0.52 * fade})`);
-        dropGrad.addColorStop(0.5, `rgba(255, 152, 76, ${0.2 * fade})`);
-        dropGrad.addColorStop(1, 'rgba(255, 138, 61, 0)');
-        ctx.fillStyle = dropGrad;
-        ctx.beginPath();
-        ctx.arc(dx, dy, 12, 0, Math.PI * 2);
-        ctx.fill();
+        if (light) {
+          drawHollowSquare(ctx, dx, dy, 6.2, t * 0.9 + d * 1.4, {
+            fill: '#f8f8f6',
+            stroke: `rgba(${segRgb.join(',')}, ${0.78 * fade})`,
+            lineWidth: 1.4,
+            radius: 1,
+          });
+        } else {
+          const dropGrad = ctx.createRadialGradient(dx, dy, 0, dx, dy, 12);
+          dropGrad.addColorStop(0, `rgba(255, 238, 216, ${0.52 * fade})`);
+          dropGrad.addColorStop(0.5, `rgba(255, 152, 76, ${0.2 * fade})`);
+          dropGrad.addColorStop(1, 'rgba(255, 138, 61, 0)');
+          ctx.fillStyle = dropGrad;
+          ctx.beginPath();
+          ctx.arc(dx, dy, 12, 0, Math.PI * 2);
+          ctx.fill();
+        }
       }
     }
   }
@@ -479,7 +710,7 @@ function drawSpineFrame(nowMs) {
     const isSwappingHere = Boolean(swap && swap.forkNodeId === pt.meta.id);
     let anim = state.forkArcAnim.get(pt.meta.id);
     if (!anim) {
-      anim = { weights: new Map(), glideX: null, glideY: null, glideAlpha: 0, glideRgb: [255, 161, 89] };
+      anim = { weights: new Map(), glideX: null, glideY: null, glideAlpha: 0, glideRgb: hexToRgb(getBranchPalette()[0]) };
       state.forkArcAnim.set(pt.meta.id, anim);
     }
 
@@ -503,7 +734,7 @@ function drawSpineFrame(nowMs) {
       if (w < 0.015) continue;
 
       const rgb = hexToRgb(tgt.colorHex);
-      const hiRgb = mixRgb(rgb, [255, 244, 232], 0.45);
+      const hiRgb = mixRgb(rgb, hiMixTarget, hiMixRatio);
       const dy = tgt.endY - pt.y;
       const sway = organicWave(t * 0.55, pt.meta.seed + 9.2 + idx * 2.1) * 3.5;
 
@@ -514,52 +745,73 @@ function drawSpineFrame(nowMs) {
 
       const arcGrad = ctx.createLinearGradient(pt.x, pt.y, tgt.endX, tgt.endY);
       arcGrad.addColorStop(0, `rgba(${hiRgb.join(',')}, ${0.86 * w})`);
-      arcGrad.addColorStop(0.6, `rgba(${rgb.join(',')}, ${0.76 * w})`);
+      arcGrad.addColorStop(0.6, `rgba(${rgb.join(',')}, ${0.78 * w})`);
       arcGrad.addColorStop(1, `rgba(${hiRgb.join(',')}, ${0.88 * w})`);
 
-      // Wide soft branch aura
+      // Wide soft branch aura (dark mode only — light mode stays razor-crisp architectural ink)
+      if (!light) {
+        ctx.beginPath();
+        ctx.moveTo(pt.x, pt.y);
+        ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, tgt.endX, tgt.endY);
+        ctx.strokeStyle = `rgba(${rgb.join(',')}, ${0.22 * w})`;
+        ctx.lineWidth = 7 + 4.5 * w;
+        ctx.lineCap = 'round';
+        ctx.stroke();
+      }
+
+      // Crisp branch stream
       ctx.beginPath();
       ctx.moveTo(pt.x, pt.y);
       ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, tgt.endX, tgt.endY);
-      ctx.strokeStyle = `rgba(${rgb.join(',')}, ${0.22 * w})`;
-      ctx.lineWidth = 7 + 4.5 * w;
+      ctx.strokeStyle = light ? `rgba(${rgb.join(',')}, ${0.84 * w})` : arcGrad;
+      ctx.lineWidth = light ? (1.45 + 0.75 * w) : (1.6 + 0.85 * w);
       ctx.lineCap = 'round';
       ctx.stroke();
 
-      // Crisp glowing branch stream
-      ctx.beginPath();
-      ctx.moveTo(pt.x, pt.y);
-      ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, tgt.endX, tgt.endY);
-      ctx.strokeStyle = arcGrad;
-      ctx.lineWidth = 1.6 + 0.85 * w;
-      ctx.stroke();
+      // Docking marker where the branch kisses this exact option card
+      if (light) {
+        drawHollowSquare(ctx, tgt.endX - 1, tgt.endY, 6.8 * w, Math.PI / 4, {
+          fill: '#ffffff',
+          stroke: `rgba(${rgb.join(',')}, ${0.95 * w})`,
+          lineWidth: 1.6,
+          radius: 1,
+        });
+      } else {
+        const pearlGrad = ctx.createRadialGradient(tgt.endX, tgt.endY, 0, tgt.endX, tgt.endY, 10 * w);
+        pearlGrad.addColorStop(0, `rgba(${pearlCore}, ${0.95 * w})`);
+        pearlGrad.addColorStop(0.45, `rgba(${rgb.join(',')}, ${0.55 * w})`);
+        pearlGrad.addColorStop(1, `rgba(${rgb.join(',')}, 0)`);
+        ctx.fillStyle = pearlGrad;
+        ctx.beginPath();
+        ctx.arc(tgt.endX, tgt.endY, 10 * w, 0, Math.PI * 2);
+        ctx.fill();
+      }
 
-      // Luminous docking pearl where the branch kisses this exact option card
-      const pearlGrad = ctx.createRadialGradient(tgt.endX, tgt.endY, 0, tgt.endX, tgt.endY, 10 * w);
-      pearlGrad.addColorStop(0, `rgba(255, 246, 236, ${0.95 * w})`);
-      pearlGrad.addColorStop(0.45, `rgba(${rgb.join(',')}, ${0.55 * w})`);
-      pearlGrad.addColorStop(1, `rgba(${rgb.join(',')}, 0)`);
-      ctx.fillStyle = pearlGrad;
-      ctx.beginPath();
-      ctx.arc(tgt.endX, tgt.endY, 10 * w, 0, Math.PI * 2);
-      ctx.fill();
-
-      // Flowing star-droplet gliding from the fork orb straight along the curve into the option
+      // Flowing tracer gliding from the fork marker straight along the curve into the option
       if (!reduced && w > 0.35) {
         const flowSpeed = isHovered ? 0.62 : 0.28;
         const u = (t * flowSpeed + idx * 0.39) % 1;
         const dx = evalCubicBezier(pt.x, cp1x, cp2x, tgt.endX, u);
         const dyPos = evalCubicBezier(pt.y, cp1y, cp2y, tgt.endY, u);
         const fade = Math.sin(Math.PI * u) * w;
-        const radius = isHovered ? 11 : 8;
-        const cometGrad = ctx.createRadialGradient(dx, dyPos, 0, dx, dyPos, radius);
-        cometGrad.addColorStop(0, `rgba(255, 250, 242, ${0.92 * fade})`);
-        cometGrad.addColorStop(0.45, `rgba(${rgb.join(',')}, ${0.55 * fade})`);
-        cometGrad.addColorStop(1, `rgba(${rgb.join(',')}, 0)`);
-        ctx.fillStyle = cometGrad;
-        ctx.beginPath();
-        ctx.arc(dx, dyPos, radius, 0, Math.PI * 2);
-        ctx.fill();
+        if (light) {
+          drawHollowSquare(ctx, dx, dyPos, isHovered ? 6.5 : 5.2, Math.PI / 4 + t * 1.4, {
+            fill: '#f8f8f6',
+            stroke: `rgba(${rgb.join(',')}, ${0.9 * fade})`,
+            lineWidth: 1.5,
+            radius: 0.8,
+          });
+        } else {
+          const radius = isHovered ? 11 : 8;
+          const cometGrad = ctx.createRadialGradient(dx, dyPos, 0, dx, dyPos, radius);
+          cometGrad.addColorStop(0, `rgba(255, 250, 242, ${0.92 * fade})`);
+          cometGrad.addColorStop(0.45, `rgba(${rgb.join(',')}, ${0.55 * fade})`);
+          cometGrad.addColorStop(1, `rgba(${rgb.join(',')}, 0)`);
+          ctx.fillStyle = cometGrad;
+          ctx.beginPath();
+          ctx.arc(dx, dyPos, radius, 0, Math.PI * 2);
+          ctx.fill();
+        }
       }
     }
 
@@ -573,19 +825,32 @@ function drawSpineFrame(nowMs) {
       const fromTgt = pt.forkTargets.find(item => item.branchId === swap.fromBranchId);
       const toTgt = pt.forkTargets.find(item => item.branchId === swap.toBranchId);
 
-      // 1) Double expanding astral ripple ring at the fork orb
+      // 1) Double expanding ripple at the fork marker (concentric hollow squares in light mode, rings in dark mode)
       const rippleAlpha = (1 - swapP) * 0.85;
-      ctx.beginPath();
-      ctx.arc(pt.x, pt.y, 10 + swapP * 52, 0, Math.PI * 2);
-      ctx.strokeStyle = `rgba(${swapToRgb.join(',')}, ${rippleAlpha})`;
-      ctx.lineWidth = 2.8 * (1 - swapP * 0.45);
-      ctx.stroke();
+      if (light) {
+        drawHollowSquare(ctx, pt.x, pt.y, 16 + swapP * 56, Math.PI / 4 + swapP * 0.5, {
+          stroke: `rgba(${swapToRgb.join(',')}, ${rippleAlpha})`,
+          lineWidth: 2 * (1 - swapP * 0.45),
+          radius: 2,
+        });
+        drawHollowSquare(ctx, pt.x, pt.y, 10 + swapP * 32, Math.PI / 4 - swapP * 0.35, {
+          stroke: `rgba(${swapToRgb.join(',')}, ${rippleAlpha * 0.55})`,
+          lineWidth: 1.3 * (1 - swapP * 0.45),
+          radius: 1.5,
+        });
+      } else {
+        ctx.beginPath();
+        ctx.arc(pt.x, pt.y, 10 + swapP * 52, 0, Math.PI * 2);
+        ctx.strokeStyle = `rgba(${swapToRgb.join(',')}, ${rippleAlpha})`;
+        ctx.lineWidth = 2.8 * (1 - swapP * 0.45);
+        ctx.stroke();
 
-      ctx.beginPath();
-      ctx.arc(pt.x, pt.y, 6 + swapP * 30, 0, Math.PI * 2);
-      ctx.strokeStyle = `rgba(255, 248, 240, ${rippleAlpha * 0.72})`;
-      ctx.lineWidth = 1.8 * (1 - swapP * 0.45);
-      ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(pt.x, pt.y, 6 + swapP * 30, 0, Math.PI * 2);
+        ctx.strokeStyle = `rgba(255, 248, 240, ${rippleAlpha * 0.65})`;
+        ctx.lineWidth = 1.8 * (1 - swapP * 0.45);
+        ctx.stroke();
+      }
 
       // 2) Chosen branch sweeps boldly INWARD from its clicked spot into the vertical spine
       if (toTgt) {
@@ -595,32 +860,43 @@ function drawSpineFrame(nowMs) {
         const curEndX = startX + (pt.x - startX) * swapP;
         const curEndY = startY + Math.min(110, Math.max(36, (startY - pt.y) * 0.42)) * swapP;
         const dy = curEndY - pt.y;
-        const hiTo = mixRgb(swapToRgb, [255, 248, 240], 0.6);
+        const hiTo = mixRgb(swapToRgb, hiMixTarget, light ? 0.1 : 0.6);
+
+        if (!light) {
+          ctx.beginPath();
+          ctx.moveTo(pt.x, pt.y);
+          ctx.bezierCurveTo(pt.x + 2, pt.y + dy * 0.62, pt.x + (curEndX - pt.x) * 0.36, curEndY, curEndX, curEndY);
+          ctx.strokeStyle = `rgba(${swapToRgb.join(',')}, ${0.42 * pullAlpha})`;
+          ctx.lineWidth = 18 * pullAlpha;
+          ctx.lineCap = 'round';
+          ctx.stroke();
+        }
 
         ctx.beginPath();
         ctx.moveTo(pt.x, pt.y);
         ctx.bezierCurveTo(pt.x + 2, pt.y + dy * 0.62, pt.x + (curEndX - pt.x) * 0.36, curEndY, curEndX, curEndY);
-        ctx.strokeStyle = `rgba(${swapToRgb.join(',')}, ${0.42 * pullAlpha})`;
-        ctx.lineWidth = 18 * pullAlpha;
+        ctx.strokeStyle = `rgba(${hiTo.join(',')}, ${0.96 * pullAlpha})`;
+        ctx.lineWidth = light ? 2.4 : 3.5;
         ctx.lineCap = 'round';
         ctx.stroke();
 
-        ctx.beginPath();
-        ctx.moveTo(pt.x, pt.y);
-        ctx.bezierCurveTo(pt.x + 2, pt.y + dy * 0.62, pt.x + (curEndX - pt.x) * 0.36, curEndY, curEndX, curEndY);
-        ctx.strokeStyle = `rgba(${hiTo.join(',')}, ${0.98 * pullAlpha})`;
-        ctx.lineWidth = 3.5;
-        ctx.stroke();
-
-        // Blazing star-comet riding the inward-pulling tip straight into the spine
-        const tipGrad = ctx.createRadialGradient(curEndX, curEndY, 0, curEndX, curEndY, 18 * pullAlpha);
-        tipGrad.addColorStop(0, `rgba(255, 252, 246, ${0.98 * pullAlpha})`);
-        tipGrad.addColorStop(0.42, `rgba(${swapToRgb.join(',')}, ${0.72 * pullAlpha})`);
-        tipGrad.addColorStop(1, `rgba(${swapToRgb.join(',')}, 0)`);
-        ctx.fillStyle = tipGrad;
-        ctx.beginPath();
-        ctx.arc(curEndX, curEndY, 18 * pullAlpha, 0, Math.PI * 2);
-        ctx.fill();
+        if (light) {
+          drawHollowSquare(ctx, curEndX, curEndY, 9 * pullAlpha, Math.PI / 4 + swapP * 1.5, {
+            fill: '#f8f8f6',
+            stroke: `rgba(${swapToRgb.join(',')}, ${0.98 * pullAlpha})`,
+            lineWidth: 1.8,
+            radius: 1.2,
+          });
+        } else {
+          const tipGrad = ctx.createRadialGradient(curEndX, curEndY, 0, curEndX, curEndY, 18 * pullAlpha);
+          tipGrad.addColorStop(0, `rgba(255, 252, 246, ${0.98 * pullAlpha})`);
+          tipGrad.addColorStop(0.42, `rgba(${swapToRgb.join(',')}, ${0.72 * pullAlpha})`);
+          tipGrad.addColorStop(1, `rgba(${swapToRgb.join(',')}, 0)`);
+          ctx.fillStyle = tipGrad;
+          ctx.beginPath();
+          ctx.arc(curEndX, curEndY, 18 * pullAlpha, 0, Math.PI * 2);
+          ctx.fill();
+        }
       }
 
       // 3) Previous branch peels boldly OUTWARD from the spine and live-tracks its card sliding into place
@@ -629,38 +905,49 @@ function drawSpineFrame(nowMs) {
         const curEndX = pt.x + (fromTgt.endX - pt.x) * swapP;
         const curEndY = fromTgt.endY;
         const dy = curEndY - pt.y;
-        const hiFrom = mixRgb(swapFromRgb, [255, 244, 232], 0.5);
+        const hiFrom = mixRgb(swapFromRgb, hiMixTarget, hiMixRatio);
 
         const peelGrad = ctx.createLinearGradient(pt.x, pt.y, curEndX, curEndY);
         peelGrad.addColorStop(0, `rgba(${hiFrom.join(',')}, ${0.92 * peelW})`);
         peelGrad.addColorStop(0.6, `rgba(${swapFromRgb.join(',')}, ${0.84 * peelW})`);
         peelGrad.addColorStop(1, `rgba(${hiFrom.join(',')}, ${0.94 * peelW})`);
 
+        if (!light) {
+          ctx.beginPath();
+          ctx.moveTo(pt.x, pt.y);
+          ctx.bezierCurveTo(pt.x + 2, pt.y + dy * 0.62, pt.x + (curEndX - pt.x) * 0.36, curEndY, curEndX, curEndY);
+          ctx.strokeStyle = `rgba(${swapFromRgb.join(',')}, ${0.30 * peelW})`;
+          ctx.lineWidth = 9 + 6 * peelW;
+          ctx.lineCap = 'round';
+          ctx.stroke();
+        }
+
         ctx.beginPath();
         ctx.moveTo(pt.x, pt.y);
         ctx.bezierCurveTo(pt.x + 2, pt.y + dy * 0.62, pt.x + (curEndX - pt.x) * 0.36, curEndY, curEndX, curEndY);
-        ctx.strokeStyle = `rgba(${swapFromRgb.join(',')}, ${0.30 * peelW})`;
-        ctx.lineWidth = 9 + 6 * peelW;
+        ctx.strokeStyle = light ? `rgba(${swapFromRgb.join(',')}, ${0.88 * peelW})` : peelGrad;
+        ctx.lineWidth = light ? (1.7 + 0.7 * peelW) : (2.1 + 1.0 * peelW);
         ctx.lineCap = 'round';
         ctx.stroke();
 
-        ctx.beginPath();
-        ctx.moveTo(pt.x, pt.y);
-        ctx.bezierCurveTo(pt.x + 2, pt.y + dy * 0.62, pt.x + (curEndX - pt.x) * 0.36, curEndY, curEndX, curEndY);
-        ctx.strokeStyle = peelGrad;
-        ctx.lineWidth = 2.1 + 1.0 * peelW;
-        ctx.stroke();
-
-        // Bright unfolding comet head that settles smoothly into the docking pearl (radius 10 * 0.84)
-        const pearlR = (10 + 7 * Math.sin(Math.PI * swapP)) * peelW;
-        const pearlGrad = ctx.createRadialGradient(curEndX, curEndY, 0, curEndX, curEndY, pearlR);
-        pearlGrad.addColorStop(0, `rgba(255, 248, 240, ${0.98 * peelW})`);
-        pearlGrad.addColorStop(0.45, `rgba(${swapFromRgb.join(',')}, ${0.65 * peelW})`);
-        pearlGrad.addColorStop(1, `rgba(${swapFromRgb.join(',')}, 0)`);
-        ctx.fillStyle = pearlGrad;
-        ctx.beginPath();
-        ctx.arc(curEndX, curEndY, pearlR, 0, Math.PI * 2);
-        ctx.fill();
+        if (light) {
+          drawHollowSquare(ctx, curEndX - 1, curEndY, (7.2 + 3 * Math.sin(Math.PI * swapP)) * peelW, Math.PI / 4, {
+            fill: '#ffffff',
+            stroke: `rgba(${swapFromRgb.join(',')}, ${0.95 * peelW})`,
+            lineWidth: 1.7,
+            radius: 1,
+          });
+        } else {
+          const pearlR = (10 + 7 * Math.sin(Math.PI * swapP)) * peelW;
+          const pearlGrad = ctx.createRadialGradient(curEndX, curEndY, 0, curEndX, curEndY, pearlR);
+          pearlGrad.addColorStop(0, `rgba(255, 248, 240, ${0.98 * peelW})`);
+          pearlGrad.addColorStop(0.45, `rgba(${swapFromRgb.join(',')}, ${0.65 * peelW})`);
+          pearlGrad.addColorStop(1, `rgba(${swapFromRgb.join(',')}, 0)`);
+          ctx.fillStyle = pearlGrad;
+          ctx.beginPath();
+          ctx.arc(curEndX, curEndY, pearlR, 0, Math.PI * 2);
+          ctx.fill();
+        }
       }
     }
 
@@ -689,7 +976,7 @@ function drawSpineFrame(nowMs) {
 
     if (anim.glideY !== null && anim.glideAlpha > 0.03) {
       const gRgb = anim.glideRgb.map(Math.round);
-      const gHi = mixRgb(gRgb, [255, 248, 240], 0.55);
+      const gHi = mixRgb(gRgb, hiMixTarget, light ? 0.18 : 0.55);
       const dy = anim.glideY - pt.y;
       ctx.beginPath();
       ctx.moveTo(pt.x, pt.y);
@@ -701,7 +988,7 @@ function drawSpineFrame(nowMs) {
         anim.glideX,
         anim.glideY
       );
-      ctx.strokeStyle = `rgba(${gHi.join(',')}, ${0.52 * anim.glideAlpha})`;
+      ctx.strokeStyle = `rgba(${gHi.join(',')}, ${(light ? 0.65 : 0.52) * anim.glideAlpha})`;
       ctx.lineWidth = 2.6;
       ctx.lineCap = 'round';
       ctx.stroke();
@@ -753,12 +1040,23 @@ function setPathsPanelOpen(open) {
 }
 
 function setDrawerOpen(open) {
+  const wasOpen = state.drawerOpen;
+  if (open && !wasOpen) state.drawerReturnFocus = document.activeElement;
   state.drawerOpen = open;
   const inResults = state.stage === 'results';
   const active = open && inResults;
   document.body.classList.toggle('drawer-open', active);
+  const inspector = byId('inspector-panel');
+  inspector.inert = !active;
+  inspector.setAttribute('aria-hidden', String(!active));
   // Backdrop dims only in Timeline mode (in Full Tree mode, you can keep panning/clicking nodes directly!)
   byId('drawer-backdrop').hidden = !(active && state.resultsView === 'timeline');
+  if (active && !wasOpen) byId('close-drawer').focus();
+  if (!active && wasOpen) {
+    const target = state.drawerReturnFocus?.isConnected ? state.drawerReturnFocus : document.querySelector('.vnode.is-selected .vnode-dot-btn');
+    target?.focus();
+    state.drawerReturnFocus = null;
+  }
   if (active && state.resultsView === 'tree') {
     const panel = byId('tree-controls-panel');
     const btn = byId('toggle-paths-panel');
@@ -785,6 +1083,18 @@ function mountInspectorForView() {
   }
 }
 
+// "Drag to pan · Scroll to zoom · Click a point for details", once per browser, for a few seconds.
+function showTreeHintOnce() {
+  const hint = byId('tree-hint');
+  let seen = false;
+  try { seen = localStorage.getItem('financial_twin_tree_hint_seen') === '1'; localStorage.setItem('financial_twin_tree_hint_seen', '1'); } catch { /* storage unavailable */ }
+  if (!hint || seen) return;
+  hint.hidden = false;
+  hint.classList.remove('is-fading');
+  setTimeout(() => hint.classList.add('is-fading'), 4500);
+  setTimeout(() => { hint.hidden = true; }, 5200);
+}
+
 function setResultsView(mode, { focusNodeId = null } = {}) {
   state.resultsView = mode;
   const isTree = mode === 'tree';
@@ -802,6 +1112,7 @@ function setResultsView(mode, { focusNodeId = null } = {}) {
   }
 
   if (isTree) {
+    showTreeHintOnce();
     stopSpineAnimation();
     window.scrollTo({ top: 0, behavior: 'smooth' });
     requestAnimationFrame(() => {
@@ -832,6 +1143,8 @@ function showStage(id) {
     stopSpineAnimation();
   }
   window.scrollTo({ top: 0, behavior: 'smooth' });
+  const heading = byId(id).querySelector('h1');
+  if (heading) { heading.setAttribute('tabindex', '-1'); heading.focus({ preventScroll: true }); }
 }
 
 /* ==========================================================================
@@ -917,8 +1230,11 @@ function buildTreeIndex() {
     const byMonth = new Map();
     for (const item of chain) byMonth.set(item.month, item);
 
+    const palette = getBranchPalette();
     branchMeta.set(bid, {
       id: bid,
+      code: bid === 'main' || bid === 'root' ? 'P0' : '',
+      color: palette[0],
       label,
       firstNode: first,
       tipNode: tip,
@@ -938,6 +1254,42 @@ function buildTreeIndex() {
     if (resolvedParent && branchMeta.has(resolvedParent)) {
       meta.parentBranchId = resolvedParent;
     }
+  }
+
+  // Assign clean hierarchical path IDs (P0, P1, P2, P1.1...) & one unified color per branch across ALL views
+  const childMetaByParent = new Map();
+  const topLevelBranches = [];
+  for (const meta of branchMeta.values()) {
+    if (meta.id === 'main' || meta.id === 'root') continue;
+    if (meta.parentBranchId && branchMeta.has(meta.parentBranchId)) {
+      if (!childMetaByParent.has(meta.parentBranchId)) childMetaByParent.set(meta.parentBranchId, []);
+      childMetaByParent.get(meta.parentBranchId).push(meta);
+    } else {
+      topLevelBranches.push(meta);
+    }
+  }
+  const sortKids = list => list.sort((a, b) => (a.forkMonth - b.forkMonth) || a.id.localeCompare(b.id));
+  sortKids(topLevelBranches);
+  for (const kids of childMetaByParent.values()) sortKids(kids);
+
+  const activePalette = getBranchPalette();
+  let nextColorIdx = 1;
+  const assignCodes = (list, prefix) => {
+    list.forEach((meta, idx) => {
+      meta.code = prefix ? `${prefix}.${idx + 1}` : `P${idx + 1}`;
+      meta.color = activePalette[nextColorIdx % activePalette.length];
+      nextColorIdx += 1;
+      const kids = childMetaByParent.get(meta.id);
+      if (kids?.length) assignCodes(kids, meta.code);
+    });
+  };
+  const rootMeta = branchMeta.get('main') || branchMeta.get('root');
+  if (rootMeta) {
+    rootMeta.code = 'P0';
+    rootMeta.color = activePalette[0];
+    assignCodes([...(childMetaByParent.get(rootMeta.id) || []), ...topLevelBranches], '');
+  } else {
+    assignCodes(topLevelBranches, '');
   }
 
   const forkNodeIds = new Set();
@@ -1029,26 +1381,27 @@ function buildMilestoneProse(node, prevNode) {
   return parts.join(' ');
 }
 
-function getPathMilestones(chain, index) {
+function getPathMilestones(chain, index, { includeRecaps = !state.hideRecaps } = {}) {
   if (!chain.length) return [];
   const tip = chain[chain.length - 1];
 
   return chain.filter(node => {
     if (node.month === 0 || node.id === tip.id) return true;
-    if (node.month % 6 === 0) return true;
-    if (index.forkNodeIds.has(node.id)) return true;
     if (node.event_summary && node.event_summary !== 'Monthly update') return true;
     const parent = node.parent_id ? state.nodes.get(node.parent_id) : null;
     if (parent && parent.branch_id !== node.branch_id) return true;
+    if (!includeRecaps) return false;
+    if (node.month % 6 === 0) return true;
+    if (index.forkNodeIds.has(node.id)) return true;
     return false;
   });
 }
 
-function getAllGraphMilestones(index) {
+function getAllGraphMilestones(index, options) {
   const result = [];
   const seen = new Set();
   for (const bid of index.branchIds) {
-    for (const node of getPathMilestones(index.branchMeta.get(bid).chain, index)) {
+    for (const node of getPathMilestones(index.branchMeta.get(bid).chain, index, options)) {
       if (!seen.has(node.id)) {
         seen.add(node.id);
         result.push(node);
@@ -1058,23 +1411,75 @@ function getAllGraphMilestones(index) {
   return result;
 }
 
+function setHideRecaps(hide) {
+  state.hideRecaps = Boolean(hide);
+  for (const btn of document.querySelectorAll('.recaps-toggle')) {
+    btn.setAttribute('aria-pressed', String(state.hideRecaps));
+    btn.textContent = state.hideRecaps ? 'Show recaps' : 'Hide recaps';
+    btn.title = state.hideRecaps
+      ? 'Show periodic recap points again'
+      : 'Hide periodic recap points, leaving only starting points, events and endpoints';
+  }
+  if (!state.nodes.size || state.stage !== 'results') return;
+  if (state.resultsView === 'tree') {
+    renderTreeGraph({ fit: true });
+    if (state.selectedId && state.drawerOpen) {
+      const selected = state.nodes.get(state.selectedId);
+      if (selected) renderInspector(selected);
+    }
+  } else {
+    const index = buildTreeIndex();
+    const activeMeta = index.branchMeta.get(state.activeBranchId) || index.branchMeta.get(index.branchIds[0]);
+    if (activeMeta) {
+      const milestones = getPathMilestones(activeMeta.chain, index);
+      if (state.selectedId && !milestones.some(n => n.id === state.selectedId)) {
+        const curMonth = state.nodes.get(state.selectedId)?.month ?? 0;
+        const fallback = [...milestones].reverse().find(n => n.month <= curMonth) || milestones[0];
+        if (fallback) state.selectedId = fallback.id;
+      }
+    }
+    renderTimelineView();
+    if (state.drawerOpen && state.selectedId) {
+      const selected = state.nodes.get(state.selectedId);
+      if (selected) renderInspector(selected);
+    }
+  }
+}
+
 /* ==========================================================================
    STAGE 2: TUNING RENDERER
    ========================================================================== */
 
-// Assumption values are typed in display units: percentages as percent (42 = 42%), money in CHF, months as months.
+// Assumption values are typed in display units: percentages as percent (42 = 42%), money in the chosen currency
+// (converted to and from CHF, which the engine uses), months as months.
 const isFractionPercent = variable => (variable.unit === '%' || variable.unit === 'percent') && Number(variable.max) <= 1;
 
 function variableToDisplay(variable, value) {
-  const number = Number(value) * (isFractionPercent(variable) ? 100 : 1);
+  const number = variable.unit === 'CHF' ? chfToDisplay(value) : Number(value) * (isFractionPercent(variable) ? 100 : 1);
   return String(Number(number.toFixed(2)));
 }
 
-// Reads a typed value ("5'000", "CHF 5,000", "42%", "3 months") into the variable's own units; null if not a number.
+// Reads a typed value ("5'000", "CHF 5,000", "€5,000", "42%", "3 months") into the variable's own units
+// (money in CHF); null if not a number.
 function parseVariableInput(variable, text) {
-  const cleaned = String(text).replace(/chf|%|months?|[\s'’_]/gi, '').replace(/,(?=\d{3}(\D|$))/g, '').replace(',', '.');
+  const cleaned = String(text)
+    .replace(/chf|eur|usd|gbp|jpy|cny|cad|aud|sek|nok|dkk|pln|inr|zł|[a-z]{0,2}[€$£¥₹]|%|months?|[\s'’_]/gi, '')
+    .replace(/,(?=\d{3}(\D|$))/g, '').replace(',', '.');
   if (!/^-?(\d+\.?\d*|\.\d+)$/.test(cleaned)) return null;
+  if (variable.unit === 'CHF') return displayToChf(Number(cleaned));
   return Number(cleaned) / (isFractionPercent(variable) ? 100 : 1);
+}
+
+// Lists amounts in the story that were written in another currency and converted to CHF exactly.
+function conversionText(data) {
+  const items = data?.conversions || [];
+  const readAs = data?.currency?.code && data.currency.code !== 'CHF'
+    ? `Amounts in your story without a currency were read as ${data.currency.code}.` : '';
+  if (!items.length) return readAs;
+  const rate = data.currency?.date ? ` (${data.currency.source} of ${data.currency.date})` : '';
+  const shown = items.slice(0, 4).map(item => `${item.written} = CHF ${item.chf.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
+  return [`Converted from your story${rate}: ${shown.join(', ')}${items.length > 4 ? `, and ${items.length - 4} more` : ''}.`, readAs]
+    .filter(Boolean).join(' ');
 }
 
 function formatVariable(variable, value) {
@@ -1086,27 +1491,114 @@ function formatVariable(variable, value) {
   return `${Number(number.toFixed(2))}${variable.unit ? ` ${variable.unit}` : ''}`;
 }
 
-function addBaseline(label, text) {
+function inputSource(record) {
+  if (record?.source === 'assumption' && record.transformation === 'model interpretation of story') return 'ai_estimate';
+  return record?.source || 'assumption';
+}
+
+function addBaseline(label, text, source = 'assumption') {
   const row = document.createElement('div');
   row.className = 'baseline-row';
   const name = document.createElement('span');
   name.textContent = label;
   const amount = document.createElement('strong');
   amount.textContent = text;
-  row.append(name, amount);
+  row.append(name, amount, setBadge(document.createElement('span'), source));
   byId('baseline').append(row);
+  return { amount, badge: row.lastElementChild };
 }
 
 function renderTuning(data) {
-  byId('scenario-summary').textContent = data.summary;
-  byId('assumptions').textContent = data.assumptions ? `Assumptions: ${data.assumptions}` : '';
+  byId('scenario-summary').textContent = localizeAmounts(data.summary);
+  const currencyNote = byId('currency-note');
+  currencyNote.textContent = conversionText(data);
+  currencyNote.hidden = !currencyNote.textContent;
+  byId('assumptions').textContent = data.assumptions ? `Assumptions: ${localizeAmounts(data.assumptions)}` : '';
   byId('baseline').replaceChildren();
 
   const scenario = data.scenario;
-  addBaseline('Starting cash', money(scenario.opening_cash_chf));
+  const sources = byId('input-provenance');
+  sources.replaceChildren();
+  const provenanceRows = new Map();
+  for (const [path, record] of Object.entries(scenario.provenance || {})) {
+    const row = document.createElement('div');
+    row.className = 'provenance-row';
+    const name = document.createElement('span');
+    name.textContent = path.replaceAll('_', ' ');
+    const value = document.createElement('span');
+    value.textContent = `${record.value ?? '—'} ${record.unit || ''}`.trim();
+    const badge = document.createElement('span');
+    setBadge(badge, inputSource(record));
+    row.append(name, value, badge);
+    sources.append(row);
+    provenanceRows.set(path, { value, badge });
+  }
+  const goals = byId('goal-editor');
+  goals.replaceChildren();
+  if (scenario.goals?.length) {
+    goals.append(el('h3', { text: 'Goals' }));
+    const preview = el('div', { class: 'summary-note', 'aria-live': 'polite' });
+    let goalRevision = 0;
+    const updatePreview = async () => {
+      const revision = ++goalRevision;
+      const variables = Object.fromEntries(data.variables.map(variable => {
+        const input = byId(`slider-${variable.id}`);
+        return [variable.id, Number(input.value)];
+      }));
+      preview.textContent = 'Recalculating goal outcomes…';
+      try {
+        const result = await request('/api/simulate', { scenario, years: state.years, variables });
+        if (revision !== goalRevision) return;
+        preview.replaceChildren(...(result.goals || []).map(goal => el('p', {
+          text: `${goal.name}: ${goal.met === null ? 'deadline beyond the horizon' : goal.met ? 'met at deadline' : 'not met at deadline'}${goal.deadline_gap_chf == null ? '' : `, gap ${money(goal.deadline_gap_chf)}`}.`,
+        })));
+      } catch (error) {
+        if (revision === goalRevision) preview.textContent = `Could not recalculate goals: ${error.message}`;
+      }
+    };
+    scenario.goals.forEach((goal, index) => {
+      const target = el('input', { type: 'number', min: 0, step: 'any', value: chfToDisplay(goal.target_chf) });
+      const deadline = el('input', { type: 'number', min: 0, step: 1, value: goal.target_month ?? goal.in_months ?? 0 });
+      const priority = el('select', {}, ...['high', 'medium', 'low'].map(value => el('option', { value, text: value })));
+      priority.value = goal.priority || 'medium';
+      const update = (key, value) => {
+        if ((key === 'target_chf' || key === 'target_month') && (!Number.isFinite(value) || value < 0 || (key === 'target_month' && !Number.isInteger(value)))) {
+          preview.textContent = 'Enter a nonnegative target and a whole-number deadline.';
+          goalRevision += 1;
+          return;
+        }
+        goal[key] = value;
+        if (key === 'target_month') {
+          delete goal.target_date;
+          delete goal.date;
+          delete goal.in_months;
+          for (const obsolete of ['target_date', 'date', 'in_months']) {
+            const path = `goals[${index}].${obsolete}`;
+            delete scenario.provenance?.[path];
+            provenanceRows.get(path)?.value.parentElement?.remove();
+          }
+        }
+        const record = scenario.provenance?.[`goals[${index}].${key}`];
+        if (record) { record.value = value; record.source = 'user'; }
+        const source = provenanceRows.get(`goals[${index}].${key}`);
+        if (source) { source.value.textContent = String(value); setBadge(source.badge, 'user'); }
+        updatePreview();
+      };
+      target.addEventListener('change', () => update('target_chf', target.value === '' ? NaN : displayToChf(target.value)));
+      deadline.addEventListener('change', () => update('target_month', deadline.value === '' ? NaN : Number(deadline.value)));
+      priority.addEventListener('change', () => update('priority', priority.value));
+      goals.append(el('fieldset', { class: 'goal-edit' }, el('legend', { text: goal.name }),
+        el('label', {}, el('span', { text: `Target (${state.currency.code})` }), target),
+        el('label', {}, el('span', { text: 'Deadline (months from start)' }), deadline),
+        el('label', {}, el('span', { text: 'Priority' }), priority)));
+    });
+    goals.append(preview);
+  }
+  const baselineFields = {};
+  baselineFields.opening_cash_chf = addBaseline('Starting cash', money(scenario.opening_cash_chf), inputSource(scenario.provenance?.opening_cash_chf));
   if (scenario.phases?.length) {
-    addBaseline('Monthly income', money(scenario.phases[0].monthly_income_chf));
-    addBaseline('Monthly expenses', money(scenario.phases[0].monthly_expenses_chf));
+    baselineFields.monthly_income_chf = addBaseline('Monthly income', money(scenario.phases[0].monthly_income_chf), inputSource(scenario.provenance?.['phases[0].monthly_income_chf']));
+    baselineFields.monthly_expenses_chf = addBaseline('Monthly expenses', money(scenario.phases[0].monthly_expenses_chf), inputSource(scenario.provenance?.['phases[0].monthly_expenses_chf']));
   }
   const totalAssets = (scenario.assets || []).reduce((sum, a) => sum + Number(a.value_chf || 0), 0);
   if (totalAssets > 0) addBaseline('Existing assets', money(totalAssets));
@@ -1140,11 +1632,23 @@ function renderTuning(data) {
     if (unitText) {
       const unit = document.createElement('span');
       unit.className = 'slider-unit';
-      unit.textContent = unitText;
+      unit.textContent = unitText === 'CHF' ? currencyUnit() : unitText;
       if (unitText === 'CHF') valueBox.prepend(unit);
       else valueBox.append(unit);
     }
     heading.append(label, valueBox);
+    const sourcePath = ['monthly_income_chf', 'monthly_expenses_chf'].includes(variable.id) ? `phases[0].${variable.id}` : variable.id === 'opening_cash_chf' || variable.id === 'annual_inflation' ? variable.id : `preferences.${variable.id}`;
+    const sourceBadge = setBadge(document.createElement('span'), inputSource(scenario.provenance?.[sourcePath]));
+    heading.append(sourceBadge);
+    const markEdited = value => {
+      setBadge(sourceBadge, 'user');
+      const record = scenario.provenance?.[sourcePath];
+      if (record) { record.value = Number(value); record.source = 'user'; }
+      const source = provenanceRows.get(sourcePath);
+      if (source) { source.value.textContent = String(Number(value)); setBadge(source.badge, 'user'); }
+      const baseline = baselineFields[variable.id];
+      if (baseline) { baseline.amount.textContent = money(Number(value)); if (baseline.badge) setBadge(baseline.badge, 'user'); }
+    };
 
     const description = document.createElement('p');
     description.className = 'slider-description';
@@ -1178,6 +1682,7 @@ function renderTuning(data) {
     hint.setAttribute('role', 'alert');
 
     input.addEventListener('input', () => {
+      markEdited(input.value);
       field.value = variableToDisplay(variable, input.value);
       field.classList.remove('is-invalid');
       field.removeAttribute('aria-invalid');
@@ -1211,6 +1716,7 @@ function renderTuning(data) {
       const offStep = Math.abs((applied - Number(input.min)) / Number(variable.step) % 1) > 1e-8;
       if (offStep) input.step = 'any';
       input.value = applied;
+      markEdited(applied);
       if (final) field.value = variableToDisplay(variable, applied);
     };
     field.addEventListener('input', () => applyTyped({ final: false }));
@@ -1303,6 +1809,8 @@ function rangeDelta(value, centre) {
   return `${moneySigned(delta)}${percent}`;
 }
 
+// "How far this could move", in the Overview tab: a bar per figure from the pessimistic to the optimistic
+// case with the projection marked, one warning at most, and the drivers and method folded away.
 function fillRangeSection(section, node) {
   section.replaceChildren();
   const range = currentRange();
@@ -1314,29 +1822,37 @@ function fillRangeSection(section, node) {
   if (!range) { section.append(el('p', { class: 'range-pending', text: 'Calculating the range…' })); return; }
   const span = rangeOf(range, node);
   if (!span) return;
-  const table = el('table', { class: 'range-table' },
-    el('thead', {}, el('tr', {}, el('th', { text: '' }), el('th', { text: 'Value' }), el('th', { text: 'vs. central' }))));
-  const body = el('tbody');
+  const info = el('details', { class: 'info-tip' },
+    el('summary', { 'aria-label': 'About this range', title: 'About this range', text: 'i' }),
+    el('div', { class: 'info-tip-body' },
+      el('p', { text: 'Each bar runs from the pessimistic to the optimistic case; the dot is the projection.' }),
+      range.note ? el('p', { text: range.note }) : null));
+  section.append(el('h4', { class: 'range-heading with-info' }, 'How far this could move ', info));
   for (const [field, title] of [['net_worth', 'Net worth'], ['cash', 'Cash']]) {
     const centre = node.state[`${field}_chf`];
     const [low, high] = span[field];
-    body.append(el('tr', { class: 'range-group' }, el('th', { colspan: 3, text: title })));
-    body.append(el('tr', {}, el('td', { text: 'Pessimistic' }), el('td', { class: low < 0 ? 'is-neg' : '', text: money(low) }), el('td', { text: rangeDelta(low, centre) })));
-    body.append(el('tr', { class: 'is-central' }, el('td', { text: 'Central' }), el('td', { text: money(centre) }), el('td', { text: '—' })));
-    body.append(el('tr', {}, el('td', { text: 'Optimistic' }), el('td', { text: money(high) }), el('td', { text: rangeDelta(high, centre) })));
+    const position = high > low ? Math.min(100, Math.max(0, (centre - low) / (high - low) * 100)) : 50;
+    section.append(el('div', {
+      class: 'range-row',
+      title: `Pessimistic ${money(low)} ${rangeDelta(low, centre)} · projected ${money(centre)} · optimistic ${money(high)} ${rangeDelta(high, centre)}`,
+    },
+    el('span', { class: 'range-label', text: title }),
+    el('span', { class: `range-end${low < 0 ? ' is-neg' : ''}`, text: compactChf(low) }),
+    el('span', { class: 'range-bar' }, el('span', { class: 'range-dot', style: `left: ${position.toFixed(1)}%` })),
+    el('span', { class: 'range-end', text: compactChf(high) })));
   }
-  table.append(body);
-  section.append(el('h3', { text: 'How far this could move' }), table);
-  if (span.cash[0] < 0 && node.state.cash_chf >= 0) section.append(el('p', { class: 'range-warning', text: '⚠ Cash would be negative here in the pessimistic case.' }));
   const shortfall = range.first_shortfall?.[node.branch_id];
-  if (shortfall) section.append(el('p', { class: 'range-warning', text: `In the pessimistic case this path first runs out of cash in ${shortfall.date}.` }));
-  const drivers = (range.drivers?.[node.branch_id] || []).filter(item => Math.abs(item.high - item.low) >= 1).slice(0, 4);
+  const warning = shortfall ? `Pessimistic case: this path runs out of cash in ${shortfall.date}.`
+    : span.cash[0] < 0 && node.state.cash_chf >= 0 ? 'Pessimistic case: cash would be negative here.' : '';
+  if (warning) section.append(el('p', { class: 'range-warning', text: `⚠ ${warning}` }));
+  const drivers = (range.drivers?.[node.branch_id] || []).filter(item => Math.abs(item.high - item.low) >= 1).slice(0, 3);
   if (drivers.length) {
-    section.append(el('h4', { text: 'What matters most (end of this path)' }),
+    const fold = el('details', { class: 'range-drivers-fold' }, el('summary', { text: 'What matters most' }),
       el('ul', { class: 'range-drivers' }, ...drivers.map(item => el('li', {}, el('span', { text: item.label }),
         el('strong', { text: `${moneySigned(Math.min(item.low, item.high))} / ${moneySigned(Math.max(item.low, item.high))}` })))));
+    rememberOpen(fold, 'range.drivers');
+    section.append(fold);
   }
-  section.append(el('p', { class: 'range-note', text: range.note }));
 }
 
 function renderTimelineView() {
@@ -1355,16 +1871,26 @@ function renderTimelineView() {
 
   const layout = buildPlanarTreeLayout(getAllGraphMilestones(index), index);
   const isAlternate = activeMeta.id !== 'main' && activeMeta.id !== 'root';
-  const activeColor = layout.branchColors.get(activeMeta.id) || BRANCH_PALETTE[0];
+  const activeColor = layout.branchColors.get(activeMeta.id) || getBranchPalette()[0];
   const parentBid = layout.parentBranchOf.get(activeMeta.id);
   const parentLabel = parentBid ? index.branchMeta.get(parentBid === 'root' ? 'main' : parentBid)?.label : 'Original path';
 
   const horizonYears = (activeMeta.tipNode.month / 12).toFixed(activeMeta.tipNode.month % 12 ? 1 : 0);
-  byId('active-path-kicker').textContent = isAlternate ? activeMeta.label.toUpperCase() : 'ORIGINAL PATH';
+  const activeCode = activeMeta.code || 'P0';
+  byId('active-path-kicker').textContent = isAlternate
+    ? `${activeCode} · ${activeMeta.label.toUpperCase()}`
+    : `${activeCode} · ${state.run?.demo === 'alexia' ? 'START WORKING' : 'ORIGINAL PATH'}`;
   const dotEl = byId('active-path-dot');
   if (dotEl) {
-    dotEl.style.background = activeColor;
-    dotEl.style.boxShadow = `0 0 10px ${activeColor}`;
+    if (isLightTheme()) {
+      dotEl.style.background = 'transparent';
+      dotEl.style.borderColor = activeColor;
+      dotEl.style.boxShadow = 'none';
+    } else {
+      dotEl.style.background = activeColor;
+      dotEl.style.borderColor = '';
+      dotEl.style.boxShadow = `0 0 10px ${activeColor}`;
+    }
   }
   byId('active-path-subtitle').textContent = isAlternate
     ? `Branched from ${parentLabel} · ${horizonYears}-year projection.`
@@ -1377,6 +1903,7 @@ function renderTimelineView() {
   renderTreeMinimap(index);
   renderEndSummary(activeMeta, index);
   renderTrajectoryChart(activeMeta, index);
+  renderGraphStudio(index);
   startSpineAnimation();
   ensureRange();
 }
@@ -1386,17 +1913,36 @@ function renderVerticalTimeline(milestones, activeMeta, index, layout) {
   list.replaceChildren();
 
   const isBranch = activeMeta.id !== 'main' && activeMeta.id !== 'root';
+  const activeChainSet = new Set(activeMeta.chain.map(n => n.id));
+  const chainPos = new Map(activeMeta.chain.map((n, i) => [n.id, i]));
   state.spineNodesMeta = [];
 
   milestones.forEach((node, idx) => {
     const prevMilestone = idx > 0 ? milestones[idx - 1] : null;
-    const directChildren = index.childrenByParent.get(node.id) || [];
+    const nextMilestone = idx + 1 < milestones.length ? milestones[idx + 1] : null;
+    // Collect branches diverging at this milestone OR along hidden recap months before the next visible milestone
+    const startPos = chainPos.get(node.id);
+    const endPos = nextMilestone ? chainPos.get(nextMilestone.id) : activeMeta.chain.length;
+    const seenForkBranches = new Set();
+    const directChildren = [];
+    if (startPos !== undefined) {
+      for (let pos = startPos; pos < endPos; pos++) {
+        const step = activeMeta.chain[pos];
+        const stepKids = index.childrenByParent.get(step.id) || [];
+        if (stepKids.length <= 1) continue;
+        for (const child of stepKids) {
+          if (seenForkBranches.has(child.branch_id)) continue;
+          seenForkBranches.add(child.branch_id);
+          directChildren.push(child);
+        }
+      }
+    }
     const isFork = directChildren.length > 1;
     const isShortfall = node.state.cash_chf < 0;
     const isSelected = node.id === state.selectedId;
     const isDiverged = node.branch_id !== 'root' && node.branch_id !== 'main';
     const isBranchEntry = isDiverged && prevMilestone && prevMilestone.branch_id !== node.branch_id;
-    const nodeBranchColor = layout.branchColors.get(node.branch_id) || BRANCH_PALETTE[0];
+    const nodeBranchColor = layout.branchColors.get(node.branch_id) || getBranchPalette()[0];
 
     const seed = ((idx + 1) * 2.317) + (node.month * 0.41);
     state.spineNodesMeta.push({ id: node.id, isFork, isShortfall, isDiverged, tintHex: nodeBranchColor, seed });
@@ -1482,7 +2028,7 @@ function renderVerticalTimeline(milestones, activeMeta, index, layout) {
     const inspectLink = document.createElement('button');
     inspectLink.type = 'button';
     inspectLink.className = 'vnode-link';
-    inspectLink.textContent = 'Explore this moment';
+    inspectLink.textContent = 'Details';
     inspectLink.addEventListener('click', event => {
       event.stopPropagation();
       selectNode(node.id, { openDrawer: true });
@@ -1525,12 +2071,12 @@ function renderVerticalTimeline(milestones, activeMeta, index, layout) {
       const destList = document.createElement('div');
       destList.className = 'fork-destinations';
 
-      const currentForkChild = directChildren.find(c => activeMeta.chain.some(n => n.id === c.id));
+      const currentForkChild = directChildren.find(c => activeChainSet.has(c.id));
       const activeSwapHere = state.branchSwap?.forkNodeId === node.id ? state.branchSwap : null;
       // Place Current path on top so switching visibly FLIP-swaps the chosen branch up into the lead slot!
       const orderedChildren = [...directChildren].sort((a, b) => {
-        const aCur = activeMeta.chain.some(n => n.id === a.id);
-        const bCur = activeMeta.chain.some(n => n.id === b.id);
+        const aCur = activeChainSet.has(a.id);
+        const bCur = activeChainSet.has(b.id);
         if (aCur !== bCur) return aCur ? -1 : 1;
         return 0;
       });
@@ -1538,13 +2084,15 @@ function renderVerticalTimeline(milestones, activeMeta, index, layout) {
       for (const child of orderedChildren) {
         const bMeta = index.branchMeta.get(child.branch_id);
         if (!bMeta) continue;
-        const isCurrent = activeMeta.chain.some(n => n.id === child.id);
-        const destColor = layout.branchColors.get(child.branch_id) || BRANCH_PALETTE[0];
+        const isCurrent = activeChainSet.has(child.id);
+        const destColor = layout.branchColors.get(child.branch_id) || getBranchPalette()[0];
         const tipWorth = bMeta.tipNode.state.net_worth_chf;
         const isContinuingHere = child.branch_id === node.branch_id || (node.branch_id === 'root' && child.branch_id === 'main');
         const { parentMeta, parentNode } = isContinuingHere
           ? { parentMeta: null, parentNode: null }
           : getParentComparison(bMeta.id, bMeta.tipNode.month, index);
+        const splitOrigin = child.parent_id && child.parent_id !== node.id ? state.nodes.get(child.parent_id) : null;
+        const splitNote = splitOrigin && !isCurrent ? `Splits ${formatNiceDate(splitOrigin.date)} · ` : '';
         const diffNote = parentMeta && parentNode
           ? ` · ${moneySigned(tipWorth - parentNode.state.net_worth_chf)} vs. ${shortBranchLabel(parentMeta.label)}`
           : '';
@@ -1560,8 +2108,8 @@ function renderVerticalTimeline(milestones, activeMeta, index, layout) {
           <span class="fork-dest-left">
             <span class="fork-dest-orb" aria-hidden="true"></span>
             <span>
-              <span class="fork-dest-name">${escapeHtml(bMeta.label)}</span>
-              <span class="fork-dest-sub">Ends at ${escapeHtml(money(tipWorth))}${escapeHtml(diffNote)}</span>
+              <span class="fork-dest-name"><span class="branch-code-pill" style="--pill-color:${destColor}">${escapeHtml(bMeta.code || 'P0')}</span>${escapeHtml(bMeta.label)}</span>
+              <span class="fork-dest-sub">${escapeHtml(splitNote)}Ends at ${escapeHtml(money(tipWorth))}${escapeHtml(diffNote)}</span>
             </span>
           </span>
           <span class="fork-dest-action">${isCurrent ? 'Current path' : 'Follow →'}</span>
@@ -1597,7 +2145,7 @@ function renderVerticalTimeline(milestones, activeMeta, index, layout) {
             forkMonth: node.month,
             fromBranchId: fromBid,
             toBranchId: child.branch_id,
-            fromColor: layout.branchColors.get(fromBid) || BRANCH_PALETTE[0],
+            fromColor: layout.branchColors.get(fromBid) || getBranchPalette()[0],
             toColor: destColor,
             toStartX: shellRect ? Math.min(148, btnRect.left - shellRect.left + 1) : 138,
             toStartY: shellRect ? (btnRect.top - shellRect.top + btnRect.height / 2) : null,
@@ -1683,17 +2231,16 @@ function buildPlanarTreeLayout(milestones, index) {
   const branchColors = new Map();
   let nextLane = 0;
 
-  // Put 'root' and 'main' on the same lane 0 if both appear
-  let colorIndex = 0;
+  // Put 'root' and 'main' on the same lane 0 if both appear, using each branch's canonical unified color
   for (const bid of orderedBranches) {
+    const metaColor = index.branchMeta.get(bid === 'root' ? 'main' : bid)?.color || getBranchPalette()[0];
     if (bid === 'main' && laneOffsets.has('root')) {
       laneOffsets.set('main', laneOffsets.get('root'));
-      branchColors.set('main', BRANCH_PALETTE[0]);
+      branchColors.set('main', metaColor);
       continue;
     }
     laneOffsets.set(bid, nextLane);
-    branchColors.set(bid, bid === 'root' || bid === 'main' ? BRANCH_PALETTE[0] : BRANCH_PALETTE[Math.max(1, colorIndex) % BRANCH_PALETTE.length]);
-    colorIndex += 1;
+    branchColors.set(bid, metaColor);
     const counts = new Map();
     for (const node of milestones.filter(item => item.branch_id === bid)) {
       counts.set(node.date, (counts.get(node.date) || 0) + 1);
@@ -1782,7 +2329,7 @@ function renderTreeMinimap(index) {
       from: parentId,
       to: node.id,
       branchId: node.branch_id,
-      color: branchColors.get(node.branch_id) || BRANCH_PALETTE[0],
+      color: branchColors.get(node.branch_id) || getBranchPalette()[0],
       isActiveEdge,
     });
   }
@@ -1839,13 +2386,14 @@ function renderTreeMinimap(index) {
     }
   };
 
+  const light = isLightTheme();
   const activeSelectedTreeId = resolveTreeFocusId(state.selectedId, visible, index);
   for (const node of milestones) {
     const p = pos.get(node.id);
     const isSelected = node.id === activeSelectedTreeId;
     const isActive = activeSet.has(node.id);
     const status = nodeHealth(node);
-    const bColor = branchColors.get(node.branch_id) || BRANCH_PALETTE[0];
+    const bColor = branchColors.get(node.branch_id) || getBranchPalette()[0];
 
     const g = document.createElementNS(svgNs, 'g');
     g.setAttribute('class', 'minimap-node-hit');
@@ -1857,25 +2405,41 @@ function renderTreeMinimap(index) {
     hit.setAttribute('fill', 'transparent');
     g.append(hit);
 
-    const dot = document.createElementNS(svgNs, 'circle');
-    dot.setAttribute('cx', p.x.toFixed(1));
-    dot.setAttribute('cy', p.y.toFixed(1));
-    dot.setAttribute('r', isSelected ? '4.2' : isActive ? '3.1' : '2.6');
-    dot.setAttribute(
-      'fill',
-      isSelected ? '#fff6ec' : status.level === 'danger' ? '#ff6b5b' : status.level === 'warn' ? '#f2c14e' : bColor
-    );
-    dot.setAttribute('opacity', isSelected || isActive ? '1' : '0.72');
-    g.append(dot);
-    nodeEls.set(node.id, { dot, isActive, isSelected });
+    if (light) {
+      const sqSize = isSelected ? 7.2 : isActive ? 5.6 : 4.8;
+      const strokeColor = status.level === 'danger' ? '#c8322b' : status.level === 'warn' ? '#b45309' : bColor;
+      const rect = document.createElementNS(svgNs, 'rect');
+      rect.setAttribute('x', (p.x - sqSize / 2).toFixed(1));
+      rect.setAttribute('y', (p.y - sqSize / 2).toFixed(1));
+      rect.setAttribute('width', sqSize.toFixed(1));
+      rect.setAttribute('height', sqSize.toFixed(1));
+      rect.setAttribute('rx', '1');
+      rect.setAttribute('fill', isSelected ? strokeColor : '#ffffff');
+      rect.setAttribute('stroke', strokeColor);
+      rect.setAttribute('stroke-width', isSelected ? '1.8' : '1.5');
+      rect.setAttribute('opacity', isSelected || isActive ? '1' : '0.78');
+      g.append(rect);
+      nodeEls.set(node.id, { dot: rect, isActive, isSelected });
+    } else {
+      const dot = document.createElementNS(svgNs, 'circle');
+      dot.setAttribute('cx', p.x.toFixed(1));
+      dot.setAttribute('cy', p.y.toFixed(1));
+      dot.setAttribute('r', isSelected ? '4.2' : isActive ? '3.1' : '2.6');
+      dot.setAttribute(
+        'fill',
+        isSelected ? '#fff6ec' : status.level === 'danger' ? '#ff6b5b' : status.level === 'warn' ? '#f2c14e' : bColor
+      );
+      dot.setAttribute('opacity', isSelected || isActive ? '1' : '0.72');
+      g.append(dot);
+      nodeEls.set(node.id, { dot, isActive, isSelected });
+    }
 
     const showTip = () => {
       applyMinimapHighlight(node.id);
-      const bLabel = index.branchMeta.get(node.branch_id === 'root' ? 'main' : node.branch_id)?.label || 'Original path';
-      const pBid = parentBranchOf.get(node.branch_id);
-      const pLabel = pBid ? index.branchMeta.get(pBid === 'root' ? 'main' : pBid)?.label : null;
-      const origin = pLabel ? `From ${pLabel} · ` : '';
-      tooltip.innerHTML = `<strong>${escapeHtml(milestoneTitle(node))}</strong><span>${escapeHtml(origin)}${escapeHtml(bLabel)} · ${escapeHtml(node.date)} · ${escapeHtml(money(node.state.net_worth_chf))}</span>`;
+      const bMeta = index.branchMeta.get(node.branch_id === 'root' ? 'main' : node.branch_id);
+      const bCode = bMeta?.code || 'P0';
+      const bLabel = bMeta?.label || 'Original path';
+      tooltip.innerHTML = `<strong><span class="minimap-code" style="color:${bColor}">${escapeHtml(bCode)}</span> ${escapeHtml(milestoneTitle(node))}</strong><span>${escapeHtml(bLabel)} · ${escapeHtml(formatNiceDate(node.date, { includeDay: true }))} · ${escapeHtml(money(node.state.net_worth_chf))}</span>`;
       const leftPct = Math.max(15, Math.min(85, (p.x / W) * 100));
       const topPct = (p.y / H) * 100;
       tooltip.style.left = `${leftPct}%`;
@@ -1940,7 +2504,7 @@ function renderEndSummary(activeMeta, index) {
       value: money(tip.state.cash_chf),
       danger: minCashNode.state.cash_chf < 0,
       sub: minCashNode.state.cash_chf < 0
-        ? `Lowest point: ${money(minCashNode.state.cash_chf)} (${shortfallMonths} mo below CHF 0)`
+        ? `Lowest point: ${money(minCashNode.state.cash_chf)} (${shortfallMonths} mo below ${currencyPrefix()}0)`
         : cashDelta !== null
           ? `${moneySigned(cashDelta)} vs. ${parentName} · lowest ${money(minCashNode.state.cash_chf)}`
           : `Lowest point: ${money(minCashNode.state.cash_chf)} (${minCashNode.date})`,
@@ -1986,49 +2550,143 @@ function renderEndSummary(activeMeta, index) {
     `;
     container.append(el);
   }
-  const comparison = document.createElement('div');
-  comparison.className = 'summary-comparison-link';
-  const reportButton = document.createElement('button');
-  reportButton.type = 'button';
-  reportButton.className = 'ghost-button';
-  reportButton.textContent = 'Inspect sensitivity and checks';
-  const reportContent = document.createElement('div');
-  reportContent.className = 'path-report';
-  reportContent.setAttribute('aria-live', 'polite');
-  reportButton.addEventListener('click', async () => {
-    reportButton.disabled = true;
-    reportContent.textContent = 'Calculating this path…';
-    const revision = state.revision;
+  if (state.sensitivityOpen) {
+    loadAndRenderSensitivityReport(activeMeta);
+  }
+}
+
+function formatSensitivityValue(value, unit) {
+  if (value === null || value === undefined) return 'Unavailable';
+  const num = Number(value);
+  if (!Number.isFinite(num)) return String(value);
+  if (unit === 'CHF') return money(num);
+  if (unit === 'CHF/mo') return `${money(num)}/mo`;
+  if (unit === 'share' || unit === '%') {
+    const pct = unit === 'share' && Math.abs(num) <= 2 ? num * 100 : num;
+    return `${Number(pct.toFixed(2))}%`;
+  }
+  return `${Number(num.toFixed(2))}${unit ? ` ${unit}` : ''}`;
+}
+
+function setSensitivityPanelOpen(open) {
+  state.sensitivityOpen = open;
+  const panel = byId('path-report-panel');
+  const toggle = byId('toggle-sensitivity-panel');
+  if (panel) panel.hidden = !open;
+  if (toggle) toggle.setAttribute('aria-expanded', String(open));
+  if (open && state.nodes.size) {
+    const index = buildTreeIndex();
+    const activeMeta = index.branchMeta.get(state.activeBranchId) || index.branchMeta.get(index.branchIds[0]);
+    if (activeMeta) loadAndRenderSensitivityReport(activeMeta);
+  }
+}
+
+async function loadAndRenderSensitivityReport(activeMeta) {
+  const panel = byId('path-report-panel');
+  if (!panel || !activeMeta) return;
+  const chain = activeMeta.chain;
+  const tip = activeMeta.tipNode;
+  const renderShell = bodyHtml => {
+    panel.innerHTML = `
+      <div class="path-report-head">
+        <div>
+          <span class="card-kicker">SENSITIVITY & MODEL CHECKS</span>
+          <h3>${escapeHtml(activeMeta.label)}</h3>
+        </div>
+        <button type="button" class="drawer-close" id="close-sensitivity-panel" aria-label="Close sensitivity report">×</button>
+      </div>
+      ${bodyHtml}
+    `;
+    panel.querySelector('#close-sensitivity-panel')?.addEventListener('click', () => setSensitivityPanelOpen(false));
+  };
+
+  const revision = state.revision;
+  let bundle = state.pathReports.get(tip.id);
+  if (!bundle) {
+    renderShell('<p class="path-report-loading">Calculating one-at-a-time sensitivity and model checks…</p>');
     try {
-      let bundle = state.pathReports.get(tip.id);
-      if (!bundle) {
-        const result = await request('/api/path-report', { nodes: chain });
-        bundle = result.comparison_bundle;
-        state.pathReports.set(tip.id, bundle);
-      }
-      if (revision !== state.revision || !reportContent.isConnected) return;
-      const report = bundle.paths[bundle.baseline_path];
-      const formatValue = value => value === null || value === undefined ? 'Unavailable' : String(value);
-      const exactMoney = value => value == null ? 'Unavailable' : `CHF ${new Intl.NumberFormat('en-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value)}`;
-      const drivers = report.sensitivity_summary.drivers;
-      const rows = drivers.map(driver => {
-        const goals = (driver.goal_impacts || []).map(goal => `${goal.name}: deadline gap change ${goal.deadline_gap_delta_chf == null ? 'unavailable' : exactMoney(goal.deadline_gap_delta_chf)}`).join(', ');
-        return `<tr><td>${escapeHtml(driver.label || driver.field)}<br><small>${escapeHtml(driver.source || 'unknown')}</small></td><td>${escapeHtml(formatValue(driver.base_value))} → ${escapeHtml(formatValue(driver.perturbed_value))} ${escapeHtml(driver.unit || '')}</td><td>${escapeHtml(exactMoney(driver.terminal_cash_delta_chf))}</td><td>${escapeHtml(exactMoney(driver.minimum_liquidity_delta_chf))}</td><td>${escapeHtml(goals || 'No goal')}</td></tr>`;
-      }).join('');
-      const checks = report.sanity_checks.map(check => `<li>${escapeHtml(check.name.replaceAll('_', ' '))}: ${check.passed === null ? 'unavailable' : check.passed ? 'passed' : 'needs review'}</li>`).join('');
-      const limitations = bundle.limitations.map(item => `<li>${escapeHtml(item)}</li>`).join('');
-      reportContent.innerHTML = `<h3>One-at-a-time sensitivity</h3><div class="path-report-table"><table><thead><tr><th>Input</th><th>Change</th><th>Terminal cash</th><th>Minimum liquidity</th><th>Goal effect</th></tr></thead><tbody>${rows || '<tr><td colspan="5">No sensitivity drivers available.</td></tr>'}</tbody></table></div><h3>Model checks</h3><ul>${checks}</ul><h3>Model context</h3><ul>${limitations}</ul>`;
+      const result = await request('/api/path-report', { nodes: chain });
+      bundle = result.comparison_bundle;
+      state.pathReports.set(tip.id, bundle);
     } catch (error) {
-      if (reportContent.isConnected) reportContent.textContent = error.message;
-    } finally {
-      if (reportButton.isConnected) reportButton.disabled = false;
+      if (revision === state.revision && state.sensitivityOpen) {
+        renderShell(`<p class="form-error">${escapeHtml(error.message)}</p>`);
+      }
+      return;
     }
-  });
-  const link = document.createElement('a');
-  link.href = '/compare.html';
-  link.textContent = 'Open comparison workspace';
-  comparison.append(reportButton, reportContent, link);
-  container.append(comparison);
+  }
+  if (revision !== state.revision || !state.sensitivityOpen) return;
+
+  const report = bundle.paths[bundle.baseline_path];
+  const drivers = report.sensitivity_summary?.drivers || [];
+  const deltaCell = value => {
+    if (value == null) return '<td class="is-num">—</td>';
+    const cls = value > 0.5 ? ' is-pos' : value < -0.5 ? ' is-neg' : '';
+    return `<td class="is-num${cls}">${escapeHtml(moneySigned(value))}</td>`;
+  };
+  const rows = drivers.map(driver => {
+    const source = driver.source || 'assumption';
+    const sourceLabel = SOURCE_LABELS[source] || source;
+    const baseText = formatSensitivityValue(driver.base_value, driver.unit);
+    const pertText = formatSensitivityValue(driver.perturbed_value, driver.unit);
+    const goals = (driver.goal_impacts || [])
+      .map(goal => `${goal.name}: ${goal.deadline_gap_delta_chf == null ? 'unavailable' : moneySigned(goal.deadline_gap_delta_chf)}`)
+      .join(' · ');
+    return `
+      <tr>
+        <td>
+          <div class="path-report-driver">
+            <strong>${escapeHtml(localizeAmounts(driver.label || driver.field))}</strong>
+            <span class="source-badge source-${escapeHtml(source)}">${escapeHtml(sourceLabel)}</span>
+          </div>
+        </td>
+        <td style="white-space:nowrap;">${escapeHtml(baseText)} → ${escapeHtml(pertText)}</td>
+        ${deltaCell(driver.terminal_cash_delta_chf)}
+        ${deltaCell(driver.minimum_liquidity_delta_chf)}
+        <td>${escapeHtml(goals || 'No goal')}</td>
+      </tr>
+    `;
+  }).join('');
+
+  const checksHtml = (report.sanity_checks || []).map(check => {
+    const rawName = String(check.name || '').replaceAll('_', ' ');
+    const prettyName = rawName ? rawName[0].toUpperCase() + rawName.slice(1) : 'Check';
+    const pillCls = check.passed === null ? 'is-muted' : check.passed ? 'is-pass' : 'is-warn';
+    const pillText = check.passed === null ? '— Unavailable' : check.passed ? '✓ Passed' : '! Needs review';
+    return `<li><span>${escapeHtml(prettyName)}</span><span class="check-pill ${pillCls}">${pillText}</span></li>`;
+  }).join('');
+
+  const limitationsHtml = (bundle.limitations || []).map(item => `<li>${escapeHtml(localizeAmounts(item))}</li>`).join('');
+
+  renderShell(`
+    <div class="path-report-section-title">One-at-a-time sensitivity</div>
+    <div class="path-report-table">
+      <table>
+        <thead>
+          <tr>
+            <th>Input</th>
+            <th>Change tested</th>
+            <th style="text-align:right;">Terminal cash</th>
+            <th style="text-align:right;">Minimum liquidity</th>
+            <th>Goal effect</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows || '<tr><td colspan="5">No sensitivity drivers available for this path.</td></tr>'}
+        </tbody>
+      </table>
+    </div>
+    <div class="path-report-footer">
+      <div>
+        <div class="path-report-section-title">Model checks</div>
+        <ul class="path-checks-list">${checksHtml}</ul>
+      </div>
+      <div>
+        <div class="path-report-section-title">Model context</div>
+        <ul class="path-context-list">${limitationsHtml}</ul>
+      </div>
+    </div>
+  `);
 }
 
 function renderTrajectoryChart(activeMeta, index) {
@@ -2086,44 +2744,52 @@ function renderTrajectoryChart(activeMeta, index) {
   const svg = document.createElementNS(svgNs, 'svg');
   svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
   svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+  svg.setAttribute('role', 'img');
+  svg.setAttribute('aria-label', `${metric === 'cash_chf' ? 'Cash' : 'Net worth'} for ${activeMeta.label} from ${activeChain[0].date} to ${activeChain.at(-1).date}, starting at ${money(activeChain[0].state[metric])} and ending at ${money(activeChain.at(-1).state[metric])}${isBranch ? `, compared with ${parentMeta.label}` : ''}.`);
 
+  const light = isLightTheme();
+  const gridStroke = light ? 'rgba(20, 20, 18, 0.09)' : '#3c2417';
+  const axisFill = light ? '#6e6e68' : '#967c6b';
   const gridLines = [maxVal, (maxVal + minVal) / 2, minVal].map(v => {
     const y = yOf(v).toFixed(1);
-    return `<line x1="${padL}" y1="${y}" x2="${W - padR}" y2="${y}" stroke="#3c2417" stroke-width="1" />
-            <text x="${padL - 8}" y="${Number(y) + 4}" text-anchor="end" fill="#967c6b" font-size="10.5">${compactChf(v)}</text>`;
+    return `<line x1="${padL}" y1="${y}" x2="${W - padR}" y2="${y}" stroke="${gridStroke}" stroke-width="1" />
+            <text x="${padL - 8}" y="${Number(y) + 4}" text-anchor="end" fill="${axisFill}" font-size="10.5">${compactChf(v)}</text>`;
   }).join('');
 
   const zeroLine = minVal < 0 && maxVal > 0
-    ? `<line x1="${padL}" y1="${zeroY.toFixed(1)}" x2="${W - padR}" y2="${zeroY.toFixed(1)}" stroke="rgba(255,123,107,0.5)" stroke-dasharray="4 4" stroke-width="1.2" />`
+    ? `<line x1="${padL}" y1="${zeroY.toFixed(1)}" x2="${W - padR}" y2="${zeroY.toFixed(1)}" stroke="${light ? 'rgba(200,50,43,0.5)' : 'rgba(255,123,107,0.5)'}" stroke-dasharray="4 4" stroke-width="1.2" />`
     : '';
 
   const yearTicks = [0, Math.round(maxMonth / 2), maxMonth].map(m => {
     const x = xOf(m).toFixed(1);
-    return `<text x="${x}" y="${H - 5}" text-anchor="${m === 0 ? 'start' : m === maxMonth ? 'end' : 'middle'}" fill="#967c6b" font-size="10.5">${formatMonthTime(m)}</text>`;
+    return `<text x="${x}" y="${H - 5}" text-anchor="${m === 0 ? 'start' : m === maxMonth ? 'end' : 'middle'}" fill="${axisFill}" font-size="10.5">${formatMonthTime(m)}</text>`;
   }).join('');
 
+  const activeColor = activeMeta.color || getBranchPalette()[0];
+  const parentColor = parentMeta?.color || (light ? '#8f8f88' : '#a88770');
+  const [ar, ag, ab] = hexToRgb(activeColor);
   svg.innerHTML = `
     <defs>
       <linearGradient id="trajGrad" x1="0" y1="0" x2="0" y2="1">
-        <stop offset="0%" stop-color="#ff8a3d" stop-opacity="0.30" />
-        <stop offset="100%" stop-color="#ff8a3d" stop-opacity="0.01" />
+        <stop offset="0%" stop-color="${activeColor}" stop-opacity="${light ? '0.12' : '0.28'}" />
+        <stop offset="100%" stop-color="${activeColor}" stop-opacity="0.0" />
       </linearGradient>
     </defs>
     ${gridLines}
     ${zeroLine}
     <path d="${areaD}" fill="url(#trajGrad)" />
-    ${bandD ? `<path d="${bandD}" fill="rgba(255,161,89,0.18)" stroke="rgba(255,161,89,0.45)" stroke-width="0.8" />` : ''}
-    ${isBranch ? `<path d="${basePathD}" fill="none" stroke="#a88770" stroke-width="1.8" stroke-dasharray="5 5" opacity="0.85" />` : ''}
-    <path d="${activePathD}" fill="none" stroke="#ffa159" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
+    ${bandD ? `<path d="${bandD}" fill="rgba(${ar},${ag},${ab},${light ? 0.11 : 0.18})" stroke="rgba(${ar},${ag},${ab},${light ? 0.42 : 0.48})" stroke-width="0.9" />` : ''}
+    ${isBranch ? `<path d="${basePathD}" fill="none" stroke="${parentColor}" stroke-width="1.8" stroke-dasharray="5 5" opacity="${light ? '0.78' : '0.72'}" />` : ''}
+    <path d="${activePathD}" fill="none" stroke="${activeColor}" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" />
     ${yearTicks}
   `;
 
   wrap.replaceChildren(svg);
   legend.innerHTML = `
     <div class="legend-items">
-      <span class="legend-item"><i class="legend-swatch is-active"></i> ${escapeHtml(activeMeta.label)}</span>
-      ${isBranch ? `<span class="legend-item"><i class="legend-swatch is-baseline"></i> ${escapeHtml(parentMeta.label)}</span>` : ''}
-      ${bandD ? '<span class="legend-item"><i class="legend-swatch is-range"></i> Range if estimates are off</span>' : ''}
+      <span class="legend-item"><i class="legend-swatch is-active" style="background:${activeColor}"></i> <strong>${escapeHtml(activeMeta.code || 'P0')}</strong> · ${escapeHtml(activeMeta.label)}</span>
+      ${isBranch ? `<span class="legend-item"><i class="legend-swatch is-baseline" style="border-top-color:${parentColor}"></i> <strong>${escapeHtml(parentMeta.code || 'P0')}</strong> · ${escapeHtml(parentMeta.label)}</span>` : ''}
+      ${bandD ? `<span class="legend-item"><i class="legend-swatch is-range" style="background:rgba(${ar},${ag},${ab},0.3);border-color:rgba(${ar},${ag},${ab},0.65)"></i> Range if estimates are off</span>` : ''}
     </div>
     <span>${activeChain[0].date} → ${activeChain[activeChain.length - 1].date}</span>
   `;
@@ -2256,31 +2922,33 @@ function applyTreeEdgeHighlight(hoverNodeId) {
   if (!state.graphEdges || !state.treeRenderData) return;
   const { edges, activeSet } = state.treeRenderData;
   const lineage = hoverNodeId ? getLineageIds(hoverNodeId, edges) : null;
+  const light = isLightTheme();
   const updates = edges.map(edge => {
     const isActiveEdge = activeSet.has(edge.from) && activeSet.has(edge.to);
     if (!lineage) {
-      // Resting state: every branch path stays crisp, luminous, and unmistakably connected as a tree
+      // Resting state: every branch path stays crisp and unmistakably connected as a tree
       return {
         id: edge.id,
-        width: isActiveEdge ? 5.8 : 4.6,
+        width: isActiveEdge ? (light ? 4.4 : 5.8) : (light ? 3.4 : 4.6),
         color: {
           color: edge.baseColor,
           highlight: edge.baseColor,
           hover: edge.baseColor,
         },
-        shadow: { enabled: true, color: edge.glowColor, size: isActiveEdge ? 14 : 10, x: 0, y: 0 },
+        shadow: light ? false : { enabled: true, color: edge.glowColor, size: isActiveEdge ? 14 : 10, x: 0, y: 0 },
       };
     }
     const isLit = lineage.edgeIds.has(edge.id);
+    const mutedEdge = light ? 'rgba(20, 20, 18, 0.16)' : 'rgba(186, 130, 92, 0.34)';
     return {
       id: edge.id,
-      width: isLit ? 6.8 : 2.6,
+      width: isLit ? (light ? 5.4 : 6.8) : (light ? 2.2 : 2.6),
       color: {
-        color: isLit ? edge.baseColor : 'rgba(186, 130, 92, 0.34)',
+        color: isLit ? edge.baseColor : mutedEdge,
         highlight: edge.baseColor,
         hover: edge.baseColor,
       },
-      shadow: isLit
+      shadow: !light && isLit
         ? { enabled: true, color: edge.glowColor, size: 18, x: 0, y: 0 }
         : false,
     };
@@ -2318,16 +2986,17 @@ function fitTreeView({ animate = false } = {}) {
   }
 
   const axisOffset = 58;
-  const padX = 40;
+  const padX = 44;
   const padTop = 76;
   const padBottom = 68;
-  const contentW = Math.max(240, maxRight - minLeft);
+  // Leave room on the right for the colored branch ID badges (P0, P1, P1.1…) next to leaf nodes
+  const contentW = Math.max(240, (maxRight + 100) - minLeft);
   const contentH = Math.max(180, (maxBottom + axisOffset) - minTop);
   const scale = Math.min(
     1.15,
     Math.max(0.18, Math.min((vpW - padX * 2) / contentW, (vpH - padTop - padBottom) / contentH))
   );
-  const centerX = (minLeft + maxRight) / 2;
+  const centerX = (minLeft + maxRight + 100) / 2;
   const centerY = (minTop + maxBottom + axisOffset) / 2;
   const offsetY = (padTop - padBottom) / 2;
 
@@ -2348,14 +3017,24 @@ const EVENT_STYLES = {
   amber: { border: '#ff9a4d', borderSelected: '#ffc794', bg: '#3f2212', bgSelected: '#5a3018', glow: 'rgba(255, 154, 77, 0.40)', glowSelected: 'rgba(255, 154, 77, 0.72)' },
 };
 
+const EVENT_STYLES_LIGHT = {
+  positive: { border: '#0f766e', borderSelected: '#0a524c', bg: '#f2fbf9', bgSelected: '#e2f5f1', glow: 'rgba(15, 118, 110, 0.14)', glowSelected: 'rgba(15, 118, 110, 0.28)' },
+  property: { border: '#b45309', borderSelected: '#853d06', bg: '#fefaf2', bgSelected: '#fbf0dc', glow: 'rgba(180, 83, 9, 0.14)', glowSelected: 'rgba(180, 83, 9, 0.28)' },
+  education: { border: '#7c3aed', borderSelected: '#5b21b6', bg: '#f8f5ff', bgSelected: '#eee6ff', glow: 'rgba(124, 58, 237, 0.14)', glowSelected: 'rgba(124, 58, 237, 0.28)' },
+  shock: { border: '#c8322b', borderSelected: '#991b1b', bg: '#fef4f4', bgSelected: '#fde5e5', glow: 'rgba(200, 50, 43, 0.16)', glowSelected: 'rgba(200, 50, 43, 0.30)' },
+  life: { border: '#2563eb', borderSelected: '#1d4ed8', bg: '#f3f7ff', bgSelected: '#e3ecff', glow: 'rgba(37, 99, 235, 0.14)', glowSelected: 'rgba(37, 99, 235, 0.28)' },
+  amber: { border: '#141412', borderSelected: '#000000', bg: '#ffffff', bgSelected: '#f2f1ed', glow: 'rgba(20, 20, 18, 0.12)', glowSelected: 'rgba(20, 20, 18, 0.24)' },
+};
+
 function eventStyleFor(node) {
+  const styles = isLightTheme() ? EVENT_STYLES_LIGHT : EVENT_STYLES;
   const text = `${node.event_summary || ''} ${node.event_narrative || ''}`.toLowerCase();
-  if (/crash|loss|layoff|drop|debt|emergency|crisis|cut/.test(text)) return EVENT_STYLES.shock;
-  if (/promot|raise|bonus|salary|job|career|income/.test(text)) return EVENT_STYLES.positive;
-  if (/flat|house|home|mortgage|apartment|property|car|loan|buy/.test(text)) return EVENT_STYLES.property;
-  if (/master|study|degree|school|uni|sabbatical|part-time|part time|break/.test(text)) return EVENT_STYLES.education;
-  if (/move|zurich|lausanne|child|baby|family|holiday|travel|wedding|relocat/.test(text)) return EVENT_STYLES.life;
-  return EVENT_STYLES.amber;
+  if (/crash|loss|layoff|drop|debt|emergency|crisis|cut/.test(text)) return styles.shock;
+  if (/promot|raise|bonus|salary|job|career|income/.test(text)) return styles.positive;
+  if (/flat|house|home|mortgage|apartment|property|car|loan|buy/.test(text)) return styles.property;
+  if (/master|study|degree|school|uni|sabbatical|part-time|part time|break/.test(text)) return styles.education;
+  if (/move|zurich|lausanne|child|baby|family|holiday|travel|wedding|relocat/.test(text)) return styles.life;
+  return styles.amber;
 }
 
 function isTreeEventNode(node) {
@@ -2379,6 +3058,7 @@ function renderTreeGraph({ fit = false, focusId = null } = {}) {
   const layout = buildPlanarTreeLayout(milestones, index);
   const { dates, laneOffsets, branchColors } = layout;
 
+  const light = isLightTheme();
   const rows = new Map();
   const graphNodes = milestones.map(node => {
     const isSelected = node.id === state.selectedId;
@@ -2395,13 +3075,17 @@ function renderTreeGraph({ fit = false, focusId = null } = {}) {
       : `<b>${escapeHtml(displayTitle)}</b>`;
     const bg = isEvent
       ? (isSelected ? style.bgSelected : style.bg)
-      : (isSelected ? '#482d1e' : isActive ? '#362217' : '#2d1c13');
-    const selectedBorder = isEvent ? style.borderSelected : '#f2be85';
+      : light
+        ? (isSelected ? '#f1f0ec' : isActive ? '#ffffff' : '#fafaf8')
+        : (isSelected ? '#482d1e' : isActive ? '#362217' : '#2d1c13');
+    const selectedBorder = isEvent ? style.borderSelected : (light ? '#141412' : '#f2be85');
     const border = isSelected
       ? selectedBorder
       : isEvent
         ? style.border
-        : (isActive ? 'rgba(214, 156, 110, 0.84)' : 'rgba(156, 108, 76, 0.74)');
+        : light
+          ? (isActive ? '#3d3d38' : '#c8c7c0')
+          : (isActive ? 'rgba(214, 156, 110, 0.84)' : 'rgba(156, 108, 76, 0.74)');
 
     return {
       id: node.id,
@@ -2411,24 +3095,28 @@ function renderTreeGraph({ fit = false, focusId = null } = {}) {
       color: {
         background: bg,
         border,
-        highlight: { background: isEvent ? style.bgSelected : '#482d1e', border: selectedBorder },
+        highlight: { background: isEvent ? style.bgSelected : (light ? '#f1f0ec' : '#482d1e'), border: selectedBorder },
       },
       font: {
-        color: isEvent || isSelected ? '#faece0' : '#dec7b3',
+        color: light
+          ? (isEvent || isSelected ? '#10100e' : '#2b2b28')
+          : (isEvent || isSelected ? '#faece0' : '#dec7b3'),
         size: 23,
         face: 'DM Sans',
         multi: 'html',
         bold: {
-          color: isEvent ? '#ffffff' : (isSelected ? '#fcead8' : '#f7e5d4'),
+          color: light
+            ? '#10100e'
+            : (isEvent ? '#ffffff' : (isSelected ? '#fcead8' : '#f7e5d4')),
           size: isEvent ? 25 : 25,
           face: 'DM Sans',
           mod: 'bold',
         },
-        ital: { color: '#ffb27a', size: 20, face: 'DM Sans', mod: '' },
+        ital: { color: light ? '#9a4a12' : '#ffb27a', size: 20, face: 'DM Sans', mod: '' },
       },
-      borderWidth: isSelected ? (isEvent ? 4 : 3.4) : isEvent ? 3.5 : 2.2,
+      borderWidth: isSelected ? (isEvent ? 3.5 : 3.0) : isEvent ? 2.6 : 1.8,
       shape: 'box',
-      shapeProperties: { borderRadius: isEvent ? 15 : 12 },
+      shapeProperties: { borderRadius: isEvent ? 12 : 10 },
       margin: isEvent
         ? { top: 22, right: 24, bottom: 22, left: 24 }
         : { top: 18, right: 18, bottom: 18, left: 18 },
@@ -2438,14 +3126,16 @@ function renderTreeGraph({ fit = false, focusId = null } = {}) {
       shadow: isSelected
         ? {
             enabled: true,
-            color: isEvent ? style.glowSelected : 'rgba(255, 174, 102, 0.56)',
-            size: isEvent ? 38 : 34,
+            color: isEvent ? style.glowSelected : (light ? 'rgba(20, 20, 18, 0.16)' : 'rgba(255, 174, 102, 0.56)'),
+            size: isEvent ? 26 : 22,
             x: 0,
-            y: 0,
+            y: light ? 4 : 0,
           }
         : isEvent
-          ? { enabled: true, color: style.glow, size: 24, x: 0, y: 0 }
-          : false,
+          ? { enabled: true, color: style.glow, size: light ? 14 : 24, x: 0, y: light ? 3 : 0 }
+          : light
+            ? { enabled: true, color: 'rgba(16, 16, 14, 0.07)', size: 10, x: 0, y: 2 }
+            : false,
     };
   });
 
@@ -2460,9 +3150,9 @@ function renderTreeGraph({ fit = false, focusId = null } = {}) {
     const parent = positions.get(parentId);
     const child = positions.get(node.id);
     const isSameLane = Math.abs(parent.y - child.y) < 1;
-    const baseColor = branchColors.get(node.branch_id) || BRANCH_PALETTE[0];
+    const baseColor = branchColors.get(node.branch_id) || getBranchPalette()[0];
     const [gr, gg, gb] = hexToRgb(baseColor);
-    const glowColor = `rgba(${gr}, ${gg}, ${gb}, 0.45)`;
+    const glowColor = `rgba(${gr}, ${gg}, ${gb}, ${light ? 0.14 : 0.45})`;
     const isActiveEdge = activeSet.has(node.id) && activeSet.has(parentId);
     // Only long edges have room for a label; the node boxes always show the range.
     const edgeRange = Math.abs(child.x - parent.x) > TREE_COL_STEP * 1.5 ? rangeBadge(treeRange, state.nodes.get(node.id)) : null;
@@ -2474,11 +3164,11 @@ function renderTreeGraph({ fit = false, focusId = null } = {}) {
       arrows: { to: { enabled: true, scaleFactor: 1.1 } },
       baseColor,
       glowColor,
-      width: isActiveEdge ? 5.8 : 4.6,
+      width: isActiveEdge ? (light ? 4.4 : 5.8) : (light ? 3.4 : 4.6),
       label: edgeRange || '',
-      font: { color: '#ffc89a', size: 20, face: 'DM Sans', strokeWidth: 5, strokeColor: '#180d07', align: 'middle' },
+      font: { color: light ? '#141412' : '#ffc89a', size: 20, face: 'DM Sans', strokeWidth: 5, strokeColor: light ? '#f8f8f6' : '#180d07', align: 'middle' },
       color: { color: baseColor, highlight: baseColor, hover: baseColor },
-      shadow: { enabled: true, color: glowColor, size: isActiveEdge ? 14 : 10, x: 0, y: 0 },
+      shadow: light ? false : { enabled: true, color: glowColor, size: isActiveEdge ? 14 : 10, x: 0, y: 0 },
       smooth: isSameLane
         ? false
         : { type: 'cubicBezier', forceDirection: 'horizontal', roundness: 0.48 },
@@ -2537,10 +3227,11 @@ function renderTreeGraph({ fit = false, focusId = null } = {}) {
       const startX = -155;
       const endX = (columns.length - 1) * TREE_COL_STEP + 155;
 
+      const drawLight = isLightTheme();
       ctx.save();
 
       // Subtle vertical hairlines anchoring each date column up to its lowest card
-      ctx.strokeStyle = 'rgba(255, 174, 108, 0.14)';
+      ctx.strokeStyle = drawLight ? 'rgba(20, 20, 18, 0.14)' : 'rgba(255, 174, 108, 0.14)';
       ctx.lineWidth = 1.2 / scale;
       ctx.setLineDash([4 / scale, 5 / scale]);
       ctx.beginPath();
@@ -2554,34 +3245,36 @@ function renderTreeGraph({ fit = false, focusId = null } = {}) {
       ctx.stroke();
       ctx.setLineDash([]);
 
-      // Soft ambient amber glow rail
-      const glowGrad = ctx.createLinearGradient(startX, axisY, endX, axisY);
-      glowGrad.addColorStop(0, 'rgba(255, 138, 61, 0)');
-      glowGrad.addColorStop(0.08, 'rgba(255, 148, 70, 0.30)');
-      glowGrad.addColorStop(0.92, 'rgba(255, 148, 70, 0.30)');
-      glowGrad.addColorStop(1, 'rgba(255, 138, 61, 0)');
-      ctx.strokeStyle = glowGrad;
-      ctx.lineWidth = 10 / scale;
-      ctx.lineCap = 'round';
-      ctx.beginPath();
-      ctx.moveTo(startX, axisY);
-      ctx.lineTo(endX, axisY);
-      ctx.stroke();
+      // Soft ambient glow rail (dark mode only)
+      if (!drawLight) {
+        const glowGrad = ctx.createLinearGradient(startX, axisY, endX, axisY);
+        glowGrad.addColorStop(0, 'rgba(255, 138, 61, 0)');
+        glowGrad.addColorStop(0.08, 'rgba(255, 148, 70, 0.30)');
+        glowGrad.addColorStop(0.92, 'rgba(255, 148, 70, 0.30)');
+        glowGrad.addColorStop(1, 'rgba(255, 138, 61, 0)');
+        ctx.strokeStyle = glowGrad;
+        ctx.lineWidth = 10 / scale;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(startX, axisY);
+        ctx.lineTo(endX, axisY);
+        ctx.stroke();
+      }
 
-      // Luminous warm ivory-amber core filament
+      // Crisp core time rail
       const railGrad = ctx.createLinearGradient(startX, axisY, endX, axisY);
-      railGrad.addColorStop(0, 'rgba(255, 161, 89, 0.12)');
-      railGrad.addColorStop(0.08, 'rgba(255, 224, 192, 0.78)');
-      railGrad.addColorStop(0.92, 'rgba(255, 224, 192, 0.78)');
-      railGrad.addColorStop(1, 'rgba(255, 161, 89, 0.12)');
+      railGrad.addColorStop(0, drawLight ? 'rgba(20, 20, 18, 0.06)' : 'rgba(255, 161, 89, 0.12)');
+      railGrad.addColorStop(0.08, drawLight ? 'rgba(20, 20, 18, 0.42)' : 'rgba(255, 224, 192, 0.78)');
+      railGrad.addColorStop(0.92, drawLight ? 'rgba(20, 20, 18, 0.42)' : 'rgba(255, 224, 192, 0.78)');
+      railGrad.addColorStop(1, drawLight ? 'rgba(20, 20, 18, 0.06)' : 'rgba(255, 161, 89, 0.12)');
       ctx.strokeStyle = railGrad;
-      ctx.lineWidth = 2.4 / scale;
+      ctx.lineWidth = (drawLight ? 1.8 : 2.4) / scale;
       ctx.beginPath();
       ctx.moveTo(startX, axisY);
       ctx.lineTo(endX, axisY);
       ctx.stroke();
 
-      // Glowing astral orb marker + crisp date label per column (stays ~15px on screen in Fit view)
+      // Column marker (crisp hollow square in light mode, glowing orb in dark mode) + date label
       const fontSize = Math.min(38, Math.max(20, 15 / scale));
       ctx.textAlign = 'center';
       ctx.textBaseline = 'top';
@@ -2589,24 +3282,64 @@ function renderTreeGraph({ fit = false, focusId = null } = {}) {
 
       for (const [colIdx, date] of columns.entries()) {
         const cx = colIdx * TREE_COL_STEP;
-        const haloR = 14 / scale;
-        const orbGrad = ctx.createRadialGradient(cx, axisY, 0, cx, axisY, haloR);
-        orbGrad.addColorStop(0, 'rgba(255, 240, 222, 0.92)');
-        orbGrad.addColorStop(0.42, 'rgba(255, 154, 77, 0.45)');
-        orbGrad.addColorStop(1, 'rgba(255, 138, 61, 0)');
-        ctx.fillStyle = orbGrad;
-        ctx.beginPath();
-        ctx.arc(cx, axisY, haloR, 0, Math.PI * 2);
-        ctx.fill();
+        if (drawLight) {
+          drawHollowSquare(ctx, cx, axisY, 10 / scale, Math.PI / 4, {
+            fill: '#f8f8f6',
+            stroke: '#141412',
+            lineWidth: 2 / scale,
+            radius: 1.5 / scale,
+          });
+        } else {
+          const haloR = 14 / scale;
+          const orbGrad = ctx.createRadialGradient(cx, axisY, 0, cx, axisY, haloR);
+          orbGrad.addColorStop(0, 'rgba(255, 240, 222, 0.92)');
+          orbGrad.addColorStop(0.42, 'rgba(255, 154, 77, 0.45)');
+          orbGrad.addColorStop(1, 'rgba(255, 138, 61, 0)');
+          ctx.fillStyle = orbGrad;
+          ctx.beginPath();
+          ctx.arc(cx, axisY, haloR, 0, Math.PI * 2);
+          ctx.fill();
 
-        ctx.fillStyle = '#fff3e4';
-        ctx.beginPath();
-        ctx.arc(cx, axisY, 4.4 / scale, 0, Math.PI * 2);
-        ctx.fill();
+          ctx.fillStyle = '#fff3e4';
+          ctx.beginPath();
+          ctx.arc(cx, axisY, 4.4 / scale, 0, Math.PI * 2);
+          ctx.fill();
+        }
 
         const includeDay = (monthCounts.get(date.slice(0, 7)) || 0) > 1;
-        ctx.fillStyle = '#f8e7d6';
+        ctx.fillStyle = drawLight ? '#141412' : '#f8e7d6';
         ctx.fillText(formatNiceDate(date, { includeDay }), cx, axisY + 18 / scale);
+      }
+
+      // Draw crisp color-coded branch ID badges (P0, P1, P1.1…) right beside each leaf node so IDs are effortless to spot
+      const liveIndex = buildTreeIndex();
+      const badgeFontSize = Math.min(36, Math.max(20, 14 / scale));
+      ctx.font = `700 ${badgeFontSize}px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      for (const leaf of getLeafPaths(liveIndex)) {
+        const box = boxes.get(leaf.leafNodeId);
+        if (!box) continue;
+        const text = leaf.code;
+        const textW = ctx.measureText(text).width;
+        const padH = 12 / scale;
+        const badgeW = textW + padH * 2;
+        const badgeH = badgeFontSize * 1.55;
+        const bx = box.right + 16 / scale;
+        const by = (box.top + box.bottom) / 2 - badgeH / 2;
+        const rad = drawLight ? 6 / scale : badgeH / 2;
+        const [r, g, b] = hexToRgb(leaf.color);
+
+        ctx.beginPath();
+        ctx.roundRect(bx, by, badgeW, badgeH, rad);
+        ctx.fillStyle = drawLight ? '#ffffff' : `rgba(${r}, ${g}, ${b}, 0.18)`;
+        ctx.fill();
+        ctx.strokeStyle = leaf.color;
+        ctx.lineWidth = 1.8 / scale;
+        ctx.stroke();
+
+        ctx.fillStyle = drawLight ? leaf.color : '#fff6ee';
+        ctx.fillText(text, bx + badgeW / 2, (box.top + box.bottom) / 2 + 1 / scale);
       }
 
       ctx.restore();
@@ -2633,8 +3366,9 @@ function renderTreeGraph({ fit = false, focusId = null } = {}) {
   for (const node of milestones) {
     const option = document.createElement('option');
     option.value = node.id;
-    const bLabel = index.branchMeta.get(node.branch_id === 'root' ? 'main' : node.branch_id)?.label || 'Original path';
-    option.textContent = `${bLabel} · ${formatNiceDate(node.date, { includeDay: true })}`;
+    const bMeta = index.branchMeta.get(node.branch_id === 'root' ? 'main' : node.branch_id);
+    const bCode = bMeta?.code || 'P0';
+    option.textContent = `${bCode} · ${formatNiceDate(node.date, { includeDay: true })}`;
     select.append(option);
   }
 
@@ -2665,12 +3399,12 @@ function renderTreeGraph({ fit = false, focusId = null } = {}) {
 
 function detailLabel(key) {
   if (key === '__contributions__') return 'Investment contributions';
-  return key.replace(/_chf$/, ' (CHF)').replace(/_/g, ' ').replace(/^./, letter => letter.toUpperCase());
+  return key.replace(/_chf$/, ` (${state.currency.code})`).replace(/_/g, ' ').replace(/^./, letter => letter.toUpperCase());
 }
 
 function detailValue(key, value) {
   if (typeof value === 'number') {
-    return key.endsWith('_chf') ? money(value) : new Intl.NumberFormat('en-CH', { maximumFractionDigits: 4 }).format(value);
+    return key.endsWith('_chf') ? money(value) : twoDecimals(value);
   }
   if (value === null) return '—';
   return String(value);
@@ -2684,8 +3418,116 @@ function rememberOpen(group, path) {
   });
 }
 
+// A readable name for an asset or loan: its own name, else its ID in words ("student-loan" → "Student loan").
+function holdingName(item) {
+  if (item.id === '__contributions__') return 'Invested savings';
+  if (item.name) return item.name;
+  const words = String(item.id ?? '').replace(/^event-(asset|debt)-[^-]+-\d+$/, 'Purchase').replace(/[-_]+/g, ' ').trim();
+  if (!words) return 'Unnamed';
+  return words.length <= 4 ? words.toUpperCase() : words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+const percentText = value => `${twoDecimals(value * 100)}%`;
+
+// The Breakdown: what moved cash this month, what is owned and owed, and values in today's prices.
+// Every engine field is still available under "Show all fields".
+function renderBreakdown(node) {
+  const s = node.state;
+  const f = s.cash_flow || {};
+  const root = el('div', { class: 'breakdown-body' });
+  const row = (label, value, { sub, cls = '' } = {}) => el('div', { class: `detail-row ${cls}`.trim() },
+    el('span', {}, label, sub ? el('small', { class: 'detail-sub', text: sub }) : null), el('strong', { text: value }));
+  const group = (title, ...rows) => {
+    const items = rows.filter(Boolean);
+    if (items.length) root.append(el('section', { class: 'breakdown-group' }, el('h4', { text: title }), ...items));
+  };
+  const flow = (label, value, options) => (Math.abs(value || 0) >= 0.005 ? row(label, moneySigned(value), options) : null);
+
+  if (node.month > 0) {
+    const change = f.cash_change_after_transfers_chf ?? f.net_cash_flow_chf;
+    group('This month',
+      flow('Income', f.income_chf),
+      flow('Living costs', -(f.expenses_chf || 0)),
+      flow('One-off costs', -(f.one_off_costs_chf || 0)),
+      flow('Loan payments', -(f.debt_payments_chf || 0), f.debt_interest_chf ? { sub: `of which interest ${money(f.debt_interest_chf)}` } : undefined),
+      flow('Moved into investments', -(f.investment_contribution_chf || 0)),
+      flow('Borrowed', f.borrowing_proceeds_chf),
+      row('Change in cash', moneySigned(change), { cls: `is-total${change < 0 ? ' is-neg' : ''}` }),
+      flow('Investment growth', f.investment_return_chf, { sub: 'added to investments, not cash' }));
+  }
+
+  const assets = (s.assets || []).filter(asset => Math.abs(asset.value_chf) >= 0.005);
+  group('What you own',
+    row('Cash', money(s.cash_chf), { cls: s.cash_chf < 0 ? 'is-neg' : '' }),
+    ...assets.map(asset => row(holdingName(asset), money(asset.value_chf), {
+      sub: [asset.type, asset.annual_return ? `${percentText(asset.annual_return)} a year` : null].filter(Boolean).join(' · ') })),
+    row('Total', money(s.total_assets_chf), { cls: 'is-total' }));
+
+  const debts = (s.debts || []).filter(debt => debt.principal_chf >= 0.005);
+  if (debts.length) {
+    group('What you owe',
+      ...debts.map(debt => row(holdingName(debt), money(debt.principal_chf), {
+        sub: [debt.annual_interest_rate ? `${percentText(debt.annual_interest_rate)} a year` : 'no interest',
+          debt.monthly_payment_chf ? `${money(debt.monthly_payment_chf)} a month` : null].filter(Boolean).join(' · ') })),
+      row('Total', money(s.total_debt_chf), { cls: 'is-total' }));
+  }
+
+  if (s.price_factor && Math.abs(s.price_factor - 1) >= 0.0005 && s.real_net_worth_chf != null) {
+    group('In today’s prices',
+      row('Net worth', money(s.real_net_worth_chf), { sub: `prices are ${percentText(s.price_factor - 1)} ${s.price_factor > 1 ? 'higher' : 'lower'} than at the start` }),
+      s.real_cash_chf != null ? row('Cash', money(s.real_cash_chf)) : null);
+  }
+
+  const all = el('details', { class: 'breakdown-all' }, el('summary', { text: 'Show all fields' }));
+  rememberOpen(all, 'breakdown.all');
+  appendDetails(all, s);
+  root.append(all);
+  return root;
+}
+
+const PREFERENCE_LABELS = {
+  savings_rate: 'Savings rate', risk_tolerance: 'Risk tolerance', safety_priority: 'Safety priority',
+  emergency_months: 'Emergency fund', investment_annual_return: 'Investment return', investment_annual_volatility: 'Investment volatility',
+};
+const preferenceText = (key, value) => key === 'emergency_months' ? `${twoDecimals(value)} months` : percentText(value);
+
+// On a branch's first point: what the path it split off from had planned that this branch no longer follows.
+// From the fork commitments the server records; the rest of that record (what is inherited or new) is already
+// shown by Breakdown and "What … assumes". Returns null when nothing was replaced.
+function renderReplacedPlans(node) {
+  const commitments = node.branch_commitments;
+  if (!commitments?.replaced) return null;
+  const { replaced, fork_month: forkMonth } = commitments;
+  const items = [];
+  // Only phases scheduled after the split: the one running at the split continues, with the event on top.
+  for (const phase of replaced.phases || []) {
+    if (phase.start_month <= forkMonth) continue;
+    items.push(`${phase.name || 'Planned change'} from ${phase.effective_date}: income ${money(phase.monthly_income_chf)}, `
+      + `costs ${money(phase.monthly_expenses_chf)} a month`);
+  }
+  for (const cost of replaced.one_off_costs || []) {
+    items.push(`${cost.description || 'One-off cost'} on ${cost.date}: ${money(cost.amount_chf)}`);
+  }
+  const newPreferences = commitments.new?.preferences || {};
+  for (const [key, value] of Object.entries(replaced.preferences || {})) {
+    const label = PREFERENCE_LABELS[key] || detailLabel(key);
+    items.push(`${label}: ${preferenceText(key, value)}${key in newPreferences ? ` → ${preferenceText(key, newPreferences[key])}` : ''}`);
+  }
+  if (replaced.annual_inflation != null) {
+    const now = commitments.new?.annual_inflation;
+    items.push(`Inflation: ${percentText(replaced.annual_inflation)}${now != null ? ` → ${percentText(now)}` : ''}`);
+  }
+  if (!items.length) return null;
+  return el('section', { class: 'inspector-section replaced-plans' },
+    el('h3', { text: 'Replaced plans' }),
+    el('p', { class: 'inspector-note', text: `From ${commitments.fork_date}, this branch no longer follows these plans of the path it split off from:` }),
+    el('ul', {}, ...items.map(text => el('li', { text }))));
+}
+
+// Every field of an engine object, as nested groups. Empty values (null) are left out.
 function appendDetails(container, value, path = 'breakdown') {
   for (const [key, item] of Object.entries(value)) {
+    if (item === null || item === undefined) continue;
     if (item && typeof item === 'object') {
       const group = document.createElement('details');
       const groupPath = `${path}.${key}`;
@@ -2741,10 +3583,24 @@ function renderInspector(node, { focusBranchInput = false } = {}) {
 
   const kicker = document.createElement('span');
   kicker.className = 'card-kicker';
-  kicker.textContent = formatNiceDate(node.date, { includeDay: true }).toUpperCase();
+  const nodeBranchMeta = index.branchMeta.get(node.branch_id === 'root' ? 'main' : node.branch_id);
+  const nodeBranchCode = nodeBranchMeta?.code || 'P0';
+  kicker.textContent = `${nodeBranchCode} · ${formatNiceDate(node.date, { includeDay: true }).toUpperCase()}`;
 
   const title = document.createElement('h2');
   title.textContent = milestoneTitle(node);
+  // Trash button next to the point's name. On a branch's first point it removes the whole branch; further
+  // along, it cuts the path from here (both ask for confirmation first). It shakes briefly when the selection
+  // moves to another path, so it is clear which path it deletes.
+  const removeLabel = isBranchStart(node) ? 'Delete this path' : 'Delete this path from here';
+  const removePath = node.branch_id === 'root' ? 'main' : node.branch_id;
+  const removeButton = el('button', { type: 'button', class: 'delete-path-button', title: removeLabel, 'aria-label': removeLabel });
+  removeButton.innerHTML = '<svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true" fill="none" stroke="currentColor" '
+    + 'stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V4.5h6V7M6.5 7l1 13h9l1-13M10 11v6M14 11v6"/></svg>';
+  removeButton.addEventListener('click', () => deleteFromNode(node.id));
+  if (state.deleteButtonPath && state.deleteButtonPath !== removePath) removeButton.classList.add('is-shaking');
+  state.deleteButtonPath = removePath;
+  const titleRow = el('div', { class: 'inspector-title-row' }, title, removeButton);
 
   const worth = document.createElement('div');
   worth.className = 'inspector-worth';
@@ -2753,7 +3609,7 @@ function renderInspector(node, { focusBranchInput = false } = {}) {
   const worthLabel = document.createElement('p');
   worthLabel.textContent = 'Projected net worth';
 
-  header.append(kicker, title, worth, worthLabel);
+  header.append(kicker, titleRow, worth, worthLabel);
 
   const status = nodeHealth(node);
   if (status.issues) {
@@ -2776,17 +3632,8 @@ function renderInspector(node, { focusBranchInput = false } = {}) {
     header.append(compare);
   }
   const rangeSection = el('div', { id: 'inspector-range', class: 'inspector-range' });
-  header.append(rangeSection);
   fillRangeSection(rangeSection, node);
 
-  {
-    const remove = document.createElement('button');
-    remove.type = 'button';
-    remove.className = 'delete-branch';
-    remove.textContent = 'Delete this path';
-    remove.addEventListener('click', () => deleteBranch(node.branch_id));
-    header.append(remove);
-  }
 
   const narrativeSec = document.createElement('div');
   narrativeSec.className = 'inspector-section';
@@ -2795,12 +3642,12 @@ function renderInspector(node, { focusBranchInput = false } = {}) {
   const narrativeText = document.createElement('p');
   narrativeText.id = 'node-narrative';
   narrativeText.className = 'inspector-narrative';
-  narrativeText.textContent = state.narratives.get(node.id) || node.narrative || buildMilestoneProse(node, null);
+  narrativeText.textContent = localizeAmounts(state.narratives.get(node.id) || node.narrative || buildMilestoneProse(node, null));
   narrativeSec.append(narrativeTitle, narrativeText);
   if (node.event_narrative) {
     const eventText = document.createElement('p');
     eventText.className = 'event-narrative';
-    eventText.textContent = node.event_narrative;
+    eventText.textContent = localizeAmounts(node.event_narrative);
     narrativeSec.append(eventText);
   }
 
@@ -2818,9 +3665,9 @@ function renderInspector(node, { focusBranchInput = false } = {}) {
   breakdown.style.marginTop = '12px';
   rememberOpen(breakdown, 'breakdown');
   const breakdownTitle = document.createElement('summary');
-  breakdownTitle.textContent = 'Full breakdown & parameters';
+  breakdownTitle.textContent = 'Breakdown';
   breakdown.append(breakdownTitle);
-  appendDetails(breakdown, node.state);
+  breakdown.append(renderBreakdown(node));
   acctSec.append(breakdown);
 
   const feasibility = document.createElement('section');
@@ -2847,14 +3694,7 @@ function renderInspector(node, { focusBranchInput = false } = {}) {
     feasibility.append(warning);
   }
 
-  const commitmentSec = document.createElement('details');
-  commitmentSec.className = 'inspector-section';
-  if (node.branch_commitments) {
-    const heading = document.createElement('summary');
-    heading.textContent = 'Fork commitments';
-    commitmentSec.append(heading);
-    appendDetails(commitmentSec, node.branch_commitments);
-  }
+  const commitmentSec = renderReplacedPlans(node);
 
   const goalSec = document.createElement('section');
   goalSec.className = 'inspector-section';
@@ -2877,7 +3717,7 @@ function renderInspector(node, { focusBranchInput = false } = {}) {
   const provenance = document.createElement('details');
   provenance.className = 'inspector-section provenance-details';
   const provenanceTitle = document.createElement('summary');
-  provenanceTitle.textContent = 'Inputs and assumption sources';
+  provenanceTitle.textContent = 'Sources';
   provenance.append(provenanceTitle);
   const records = Object.entries(node.scenario.provenance || {});
   if (!records.length) {
@@ -2895,11 +3735,6 @@ function renderInspector(node, { focusBranchInput = false } = {}) {
       <span>${escapeHtml(value)}${detail ? ` · ${escapeHtml(detail)}` : ''}</span>`;
     provenance.append(row);
   }
-  const comparisonLink = document.createElement('p');
-  comparisonLink.className = 'inspector-note comparison-link';
-  comparisonLink.innerHTML = '<a href="/compare.html">Open separate comparison workspace →</a>';
-  provenance.append(comparisonLink);
-
   let editDetails = null;
 
   const editMonth = Math.max(0, node.month - 1);
@@ -2918,15 +3753,15 @@ function renderInspector(node, { focusBranchInput = false } = {}) {
     const terms = s.active_variables?.expense_terms || {};
     const startingExpense = terms.monthly_expenses_chf ?? editPhase.monthly_expenses_chf;
     const fields = [
-      ...(node.month === 0 ? [{ name: 'cash_chf', label: 'Starting cash (CHF)', value: s.cash_chf }] : []),
-      { name: 'monthly_income_chf', label: 'Monthly income (CHF)', value: editPhase.monthly_income_chf },
-      { name: 'monthly_expenses_chf', label: 'Monthly expenses at start of year (CHF)', value: startingExpense },
-      { name: 'yearly_expenses_chf', label: 'Annual expenses at start of year (CHF)', value: startingExpense * 12 },
+      ...(node.month === 0 ? [{ name: 'cash_chf', label: `Starting cash (${state.currency.code})`, value: s.cash_chf, money: true }] : []),
+      { name: 'monthly_income_chf', label: `Monthly income (${state.currency.code})`, value: editPhase.monthly_income_chf, money: true },
+      { name: 'monthly_expenses_chf', label: `Monthly expenses at start of year (${state.currency.code})`, value: startingExpense, money: true },
+      { name: 'yearly_expenses_chf', label: `Annual expenses at start of year (${state.currency.code})`, value: startingExpense * 12, money: true },
       ...(node.month === 0 ? [{ name: 'annual_inflation', label: 'Default annual inflation (%)', value: node.scenario.annual_inflation, percent: true }] : []),
       { name: 'year_inflation', label: `Inflation for ${terms.year ?? node.date.slice(0, 4)} (%)`, value: terms.year_inflation ?? null, percent: true, optional: true, placeholder: 'Use default annual inflation' },
       { name: 'inflation_exempt', label: 'Fixed by contract, unaffected by inflation', value: terms.inflation_exempt ?? false, type: 'checkbox' },
       { name: 'duration_months', label: 'Expense duration (months)', value: terms.duration_months ?? null, optional: true, placeholder: 'Ongoing' },
-      { name: 'one_off_cost_chf', label: 'One-time cost (CHF)', value: editCost },
+      { name: 'one_off_cost_chf', label: `One-time cost (${state.currency.code})`, value: editCost, money: true },
       { name: 'date', label: 'Date', value: node.date, type: 'date' },
     ];
     for (const field of fields) {
@@ -2943,7 +3778,9 @@ function renderInspector(node, { focusBranchInput = false } = {}) {
 
       }
       label.textContent = field.label;
-      input.value = field.value === null ? '' : field.percent ? Number((field.value * 100).toFixed(8)) : field.value;
+      input.value = field.value === null ? ''
+        : field.percent ? Number((field.value * 100).toFixed(2))
+          : field.money ? Number(chfToDisplay(field.value).toFixed(2)) : field.value;
       input.required = !field.optional;
       if (field.placeholder) input.placeholder = field.placeholder;
       if (input.type === 'number') {
@@ -2957,8 +3794,8 @@ function renderInspector(node, { focusBranchInput = false } = {}) {
     }
     const monthlyExpenses = editForm.elements.monthly_expenses_chf;
     const yearlyExpenses = editForm.elements.yearly_expenses_chf;
-    monthlyExpenses.addEventListener('input', () => { yearlyExpenses.value = Number(monthlyExpenses.value) * 12; });
-    yearlyExpenses.addEventListener('input', () => { monthlyExpenses.value = Number(yearlyExpenses.value) / 12; });
+    monthlyExpenses.addEventListener('input', () => { yearlyExpenses.value = Number((Number(monthlyExpenses.value) * 12).toFixed(2)); });
+    yearlyExpenses.addEventListener('input', () => { monthlyExpenses.value = Number((Number(yearlyExpenses.value) / 12).toFixed(2)); });
     const editError = document.createElement('p');
     editError.className = 'form-error';
     editError.setAttribute('role', 'alert');
@@ -2975,9 +3812,13 @@ function renderInspector(node, { focusBranchInput = false } = {}) {
         const input = editForm.elements[field.name];
         let value;
         if (input.type === 'checkbox') value = input.checked;
-        else if (input.type === 'number') value = input.value === '' ? null : Number(input.value) / (field.percent ? 100 : 1);
-        else value = input.value;
-        if (value !== field.value && !(field.percent && value !== null && field.value !== null && Math.abs(value - field.value) < 1e-10)) edits[field.name] = value;
+        else if (input.type === 'number') {
+          value = input.value === '' ? null : field.money ? displayToChf(input.value) : Number(input.value) / (field.percent ? 100 : 1);
+        } else value = input.value;
+        // Shown values are rounded (and converted for other currencies), so an untouched field is not an edit.
+        const tolerance = field.money ? 0.006 / state.currency.per_chf : field.percent ? 0.000051 : 1e-10;
+        const unchanged = value !== null && field.value !== null && typeof value === 'number' && Math.abs(value - field.value) < tolerance;
+        if (value !== field.value && !((field.percent || field.money) && unchanged)) edits[field.name] = value;
       }
       if (!Object.keys(edits).length) return;
       editError.textContent = '';
@@ -2986,6 +3827,7 @@ function renderInspector(node, { focusBranchInput = false } = {}) {
       try {
         const result = await request('/api/edit-nodes', { nodes: [...state.nodes.values()], node_id: node.id, edits });
         if (revision !== state.revision) return;
+        if (state.run) (state.run.operations ||= []).push({ type: 'edit', node_id: node.id, edits: structuredClone(edits) });
         state.revision += 1;
         state.narratives.clear();
         state.pathReports.clear();
@@ -3003,13 +3845,18 @@ function renderInspector(node, { focusBranchInput = false } = {}) {
     editDetails.append(editForm);
   }
 
-  panel.append(header, narrativeSec);
-  const info = renderBranchInfo(node);
-  if (info) panel.append(info);
-  panel.append(acctSec, feasibility, commitmentSec, goalSec, provenance);
-  if (editDetails) panel.append(editDetails);
+  // Three tabs under the header: the story of this point, its numbers, and what you can change from here.
+  if (focusBranchInput) state.inspectorTab = 'whatif';
+  const overview = [rangeSection, narrativeSec, renderBranchInfo(node), renderAppendedEvents(node)];
+  // Fork and goal commitments only exist on some points; an empty fold would show as a blank "Details".
+  const numbers = [acctSec, feasibility, commitmentSec, s.goals?.length ? goalSec : null, provenance];
   const composer = el('div', { class: 'branch-form' });
-  panel.append(composer);
+  const whatIf = [composer, editDetails];
+  panel.append(header, inspectorTabs([
+    { id: 'overview', label: 'Overview', content: overview },
+    { id: 'details', label: 'Details', content: numbers },
+    { id: 'whatif', label: 'What if', content: whatIf },
+  ]));
   showComposer(composer, node);
 
   if (focusBranchInput) {
@@ -3021,9 +3868,61 @@ function renderInspector(node, { focusBranchInput = false } = {}) {
   }
 }
 
+// A small drop-down menu, such as "+ Add…". Closes after a choice, on a click elsewhere or with Escape.
+function dropdownMenu(label, text, items, { className = '' } = {}) {
+  const list = el('div', { class: 'more-menu-list' });
+  const menu = el('details', { class: `more-menu ${className}`.trim() },
+    el('summary', { 'aria-label': label, title: label, text }), list);
+  const fill = entries => list.replaceChildren(...entries.map(item => el('button', {
+    type: 'button', class: item.danger ? 'is-danger' : null, text: item.label,
+    onclick: () => { menu.open = false; item.onSelect(); },
+  })));
+  fill(items);
+  menu.setItems = fill;
+  return menu;
+}
+
+// Tabs for the details panel. The chosen tab is kept when another point is selected.
+function inspectorTabs(tabs) {
+  if (!tabs.some(tab => tab.id === state.inspectorTab)) state.inspectorTab = tabs[0].id;
+  const list = el('div', { class: 'inspector-tabs', role: 'tablist', 'aria-label': 'Point details' });
+  const wrapper = el('div', { class: 'inspector-tabbed' }, list);
+  const buttons = [];
+  const panels = [];
+  const select = (id, { focus = false } = {}) => {
+    state.inspectorTab = id;
+    tabs.forEach((tab, index) => {
+      const active = tab.id === id;
+      buttons[index].setAttribute('aria-selected', String(active));
+      buttons[index].tabIndex = active ? 0 : -1;
+      buttons[index].classList.toggle('is-active', active);
+      panels[index].hidden = !active;
+      if (active && focus) buttons[index].focus();
+    });
+  };
+  tabs.forEach((tab, index) => {
+    const button = el('button', { type: 'button', role: 'tab', id: `inspector-tab-${tab.id}`, 'aria-controls': `inspector-panel-${tab.id}`, class: 'inspector-tab', text: tab.label });
+    button.addEventListener('click', () => select(tab.id));
+    button.addEventListener('keydown', event => {
+      const step = { ArrowRight: 1, ArrowLeft: -1 }[event.key];
+      if (!step) return;
+      event.preventDefault();
+      select(tabs[(index + step + tabs.length) % tabs.length].id, { focus: true });
+    });
+    const panel = el('div', { role: 'tabpanel', id: `inspector-panel-${tab.id}`, 'aria-labelledby': `inspector-tab-${tab.id}`, class: 'inspector-tabpanel' },
+      ...tab.content.filter(Boolean));
+    buttons.push(button);
+    panels.push(panel);
+    list.append(button);
+    wrapper.append(panel);
+  });
+  select(state.inspectorTab);
+  return wrapper;
+}
+
 // ── Branching: preset or free text → editable building blocks → simulated branch ──
 
-const SOURCE_LABELS = { user: 'You', dataset: 'Dataset', assumption: 'Assumption', ai_estimate: 'AI estimate' };
+const SOURCE_LABELS = { user: 'User confirmed', dataset: 'Dataset default', assumption: 'Assumption', ai_estimate: 'Model estimate' };
 const BLOCK_FIELDS = {
   changes: [['label', 'text', 'Name'], ['kind', 'select', 'Type', [['income', 'Income'], ['expenses', 'Expenses']]],
     ['amount_chf', 'number', 'Change per month (CHF, − to reduce)'], ['start_offset_months', 'int', 'Starts after (months)'],
@@ -3066,11 +3965,18 @@ function setBadge(badge, source) {
 
 const timing = (offset, duration) => `${offset ? `after ${offset} months` : 'from now'}${duration ? `, for ${duration} months` : ', permanently'}`;
 
+// One sentence per building block, e.g. "Course fee: pay CHF 4,500 now".
+const BLOCK_SENTENCES = {
+  changes: c => `${c.label}: ${c.kind} ${moneySigned(c.amount_chf)}/month ${timing(c.start_offset_months, c.duration_months)}`,
+  one_offs: o => `${o.label}: ${o.amount_chf < 0 ? `receive ${money(-o.amount_chf)}` : `pay ${money(o.amount_chf)}`} ${o.offset_months ? `after ${o.offset_months} months` : 'now'}`,
+  assets: a => `${a.label}: ${money(a.price_chf)} = ${money(a.loan_chf)} loan + ${money(a.down_payment_chf)} down${a.transaction_costs_chf ? `, ${money(a.transaction_costs_chf)} costs` : ''}`,
+};
+const investmentSentence = multiplier => `Investments ${multiplier >= 1 ? '+' : '−'}${Math.abs(Math.round((multiplier - 1) * 100))}%`;
+
 function describeBlocks(plan) {
-  const items = plan.changes.map(c => [`${c.label}: ${c.kind} ${moneySigned(c.amount_chf)}/month ${timing(c.start_offset_months, c.duration_months)}`, c.source]);
-  for (const o of plan.one_offs) items.push([`${o.label}: ${o.amount_chf < 0 ? `receive ${money(-o.amount_chf)}` : `pay ${money(o.amount_chf)}`} ${o.offset_months ? `after ${o.offset_months} months` : 'now'}`, o.source]);
-  for (const a of plan.assets) items.push([`${a.label}: ${money(a.price_chf)} = ${money(a.loan_chf)} loan + ${money(a.down_payment_chf)} down${a.transaction_costs_chf ? `, ${money(a.transaction_costs_chf)} costs` : ''}`, a.source]);
-  if (plan.investment_multiplier !== 1) items.push([`Investments ${plan.investment_multiplier > 1 ? '+' : '−'}${Math.abs(Math.round((plan.investment_multiplier - 1) * 100))}%`, 'assumption']);
+  const items = [];
+  for (const key of ['changes', 'one_offs', 'assets']) for (const item of plan[key]) items.push([BLOCK_SENTENCES[key](item), item.source]);
+  if (plan.investment_multiplier !== 1) items.push([investmentSentence(plan.investment_multiplier), 'assumption']);
   return items;
 }
 
@@ -3094,8 +4000,8 @@ function renderBranchInfo(node) {
   const list = el('ul');
   for (const [text, source] of describeBlocks(plan)) list.append(el('li', {}, el('span', { text }), setBadge(el('span'), source)));
   box.append(list);
-  if (plan.assumptions) box.append(el('p', { class: 'proposal-assumptions', text: plan.assumptions }));
-  if (plan.warnings?.length) box.append(el('ul', { class: 'proposal-warnings' }, ...plan.warnings.map(text => el('li', { text }))));
+  if (plan.assumptions) box.append(el('p', { class: 'proposal-assumptions', text: localizeAmounts(plan.assumptions) }));
+  if (plan.warnings?.length) box.append(el('ul', { class: 'proposal-warnings' }, ...plan.warnings.map(text => el('li', { text: localizeAmounts(text) }))));
   const sources = sourceLinks(plan.source_urls);
   if (sources) box.append(sources);
   return box;
@@ -3108,9 +4014,10 @@ function showComposer(section, node, text = '', presetId = null) {
   const chips = el('div', { class: 'preset-chips', role: 'group', 'aria-label': 'Event type' });
   const defaultHint = 'For example: I take a six-month sabbatical, or my parents give me CHF 20,000';
   const textarea = el('textarea', { id: 'branch-event', maxlength: 2000 });
-  textarea.value = text;
+  textarea.value = text || state.branchDraft || '';
   const label = el('label', { for: 'branch-event' });
   const submit = actionButton('Get the numbers', 'submit');
+  const offline = el('button', { type: 'button', class: 'text-button', text: 'Explore the fictional demo without AI', hidden: true, onclick: () => { state.branchDraft = textarea.value; loadAlexiaDemo(); } });
   const refresh = () => {
     const kind = state.presets.find(preset => preset.id === selected);
     for (const chip of chips.children) chip.setAttribute('aria-pressed', String(chip.dataset.id === selected));
@@ -3134,18 +4041,19 @@ function showComposer(section, node, text = '', presetId = null) {
     setButtonLoading(submit, true, 'Researching the numbers…', 'Get the numbers');
     const revision = state.revision;
     try {
-      const result = await request('/api/branch/propose', { parent: node, preset: selected || undefined, event: details || undefined });
+      const result = await request('/api/branch/propose', { parent: node, preset: selected || undefined, event: details || undefined, currency: state.currency.code });
       if (revision === state.revision && state.selectedId === node.id) renderReview(section, node, result.proposal, details, selected);
     } catch (problem) {
       error.textContent = problem.message;
+      offline.hidden = false;
     } finally {
       buttons.forEach(button => { button.disabled = false; });
       setButtonLoading(submit, false, 'Researching the numbers…', 'Get the numbers');
     }
   });
   section.append(el('h3', { text: 'What if something changed?' }),
-    el('p', { class: 'composer-hint', text: 'Pick an event type, describe your own, or both. The AI sets the numbers; you review every one before the branch is created.' }),
-    state.presets.length ? chips : null, form);
+    el('p', { class: 'composer-hint', text: 'Pick a type or describe the event.' }),
+    state.presets.length ? chips : null, form, offline);
 }
 
 function sourceLinks(urls) {
@@ -3158,14 +4066,17 @@ function sourceLinks(urls) {
     })));
 }
 
-function blockEditor(key, item, onRemove) {
+function blockEditor(key, item, onRemove, { head = true } = {}) {
   const badge = setBadge(el('span'), item.source);
-  const box = el('div', { class: 'block' }, el('div', { class: 'block-head' }, badge,
-    el('button', { type: 'button', class: 'block-remove', 'aria-label': 'Remove this item', text: '×', onclick: onRemove })));
+  const box = el('div', { class: 'block' }, head ? el('div', { class: 'block-head' }, badge,
+    el('button', { type: 'button', class: 'block-remove', 'aria-label': 'Remove this item', text: '×', onclick: onRemove })) : null);
   const grid = el('div', { class: 'block-grid' });
   let down = null;
   const refreshDown = () => { if (down) { item.down_payment_chf = item.price_chf - item.loan_chf; down.textContent = money(item.down_payment_chf); } };
-  for (const [field, type, label, options] of BLOCK_FIELDS[key]) {
+  for (const [field, type, fieldLabel, options] of BLOCK_FIELDS[key]) {
+    // Amounts are stored in CHF and shown in the chosen currency.
+    const isMoney = type === 'number' && field.endsWith('_chf');
+    const label = fieldLabel.replace('CHF', state.currency.code);
     let input;
     if (type === 'select') {
       input = el('select', {}, ...options.map(([value, optionText]) => el('option', { value, text: optionText })));
@@ -3174,11 +4085,13 @@ function blockEditor(key, item, onRemove) {
       input = down = el('output', { class: 'readonly-value' });
     } else {
       input = el('input', { type: type === 'text' ? 'text' : 'number', step: type === 'int' ? 1 : 'any', min: type === 'int' ? 0 : null });
-      input.value = type === 'percent' ? Number((item[field] * 100).toFixed(3)) : item[field];
+      input.value = type === 'percent' ? Number((item[field] * 100).toFixed(2))
+        : isMoney ? Number(chfToDisplay(item[field]).toFixed(2)) : item[field];
     }
     if (type !== 'readonly') input.addEventListener('input', () => {
       const raw = input.value;
-      item[field] = type === 'text' || type === 'select' ? raw : type === 'percent' ? Number(raw) / 100 : type === 'int' ? Math.round(Number(raw)) : Number(raw);
+      item[field] = type === 'text' || type === 'select' ? raw : type === 'percent' ? Number(raw) / 100
+        : type === 'int' ? Math.round(Number(raw)) : isMoney ? displayToChf(raw) : Number(raw);
       item.source = 'user';
       setBadge(badge, 'user');
       refreshDown();
@@ -3238,24 +4151,63 @@ function showNewBranch(node, nodes, revision) {
 function renderReview(section, node, proposal, text, presetId = null) {
   const plan = structuredClone(proposal);
   section.replaceChildren();
-  const title = el('input', { type: 'text', id: 'branch-title', maxlength: 60 });
+  // Heading with the AI's assumptions and sources behind an (i), then the event name as an editable title.
+  const notes = [plan.assumptions ? el('p', { text: localizeAmounts(plan.assumptions) }) : null, sourceLinks(plan.source_urls)].filter(Boolean);
+  const info = notes.length ? el('details', { class: 'info-tip' },
+    el('summary', { 'aria-label': 'Assumptions and sources', title: 'Assumptions and sources', text: 'i' }),
+    el('div', { class: 'info-tip-body' }, ...notes)) : null;
+  const title = el('input', { type: 'text', id: 'branch-title', maxlength: 60, class: 'review-title-input', 'aria-label': 'Event name' });
   title.value = plan.title;
-  section.append(el('span', { class: 'card-kicker', text: 'REVIEW BEFORE BRANCHING' }), el('h3', { text: 'Check the numbers' }),
-    el('label', { for: 'branch-title', text: 'Event name' }), title);
-  if (plan.summary) section.append(el('p', { class: 'proposal-summary', text: plan.summary }));
-  if (plan.assumptions) section.append(el('p', { class: 'proposal-assumptions', text: plan.assumptions }));
-  if (plan.warnings?.length) section.append(el('ul', { class: 'proposal-warnings' }, ...plan.warnings.map(item => el('li', { text: item }))));
-  const sources = sourceLinks(plan.source_urls);
-  if (sources) section.append(sources);
-  const lists = { changes: el('div'), one_offs: el('div'), assets: el('div') };
-  const redraw = () => {
-    for (const key of Object.keys(lists)) lists[key].replaceChildren(...plan[key].map((item, index) => blockEditor(key, item, () => { plan[key].splice(index, 1); redraw(); })));
-  };
-  redraw();
-  const addButton = (key, label) => el('button', { type: 'button', class: 'add-block', text: `+ ${label}`, onclick: () => { plan[key].push(NEW_BLOCKS[key]()); redraw(); } });
+  section.append(el('h3', { class: 'review-heading with-info' }, 'Check the numbers ', info),
+    el('div', { class: 'review-title' }, title));
+  if (plan.warnings?.length) section.append(el('ul', { class: 'proposal-warnings' }, ...plan.warnings.map(item => el('li', { text: localizeAmounts(item) }))));
+
+  // One sentence row per amount, with Edit (opens its fields in place) and ×. "+ Add…" adds more.
+  const kinds = [['changes', 'Monthly change'], ['one_offs', 'One-off'], ['assets', 'Purchase']];
+  const opened = new Set();
+  const investmentItem = { source: 'assumption' };   // stands for the investment change in `opened`
   const shock = el('input', { type: 'number', step: 'any', id: 'branch-shock' });
   shock.value = Number(((plan.investment_multiplier - 1) * 100).toFixed(2));
+  let showInvestment = plan.investment_multiplier !== 1;
+  const rows = el('div', { class: 'proposal-rows' });
+  const addMenu = dropdownMenu('Add an amount', '+ Add…', [], { className: 'add-menu' });
+  const row = (item, sentence, editor, onRemove) => {
+    const text = el('span', { class: 'proposal-row-text', text: sentence() });
+    const badge = setBadge(el('span'), item.source);
+    const isOpen = opened.has(item);
+    const toggle = el('button', { type: 'button', class: 'proposal-row-edit', 'aria-expanded': String(isOpen), text: isOpen ? 'Done' : 'Edit',
+      onclick: () => { if (opened.has(item)) opened.delete(item); else opened.add(item); redraw(); } });
+    const remove = el('button', { type: 'button', class: 'block-remove', 'aria-label': 'Remove this item', text: '×', onclick: onRemove });
+    const wrapper = el('div', { class: `proposal-row${isOpen ? ' is-open' : ''}` },
+      el('div', { class: 'proposal-row-main' }, text, badge, toggle, remove));
+    if (isOpen) {
+      const fields = editor();
+      fields.addEventListener('input', () => { text.textContent = sentence(); setBadge(badge, item.source); });
+      wrapper.append(fields);
+    }
+    return wrapper;
+  };
+  const redraw = () => {
+    const parts = [];
+    for (const [key] of kinds) {
+      plan[key].forEach((item, index) => parts.push(row(item, () => BLOCK_SENTENCES[key](item),
+        () => blockEditor(key, item, null, { head: false }),
+        () => { plan[key].splice(index, 1); opened.delete(item); redraw(); })));
+    }
+    if (showInvestment) {
+      parts.push(row(investmentItem, () => investmentSentence(plan.investment_multiplier),
+        () => el('div', { class: 'block' }, el('label', { class: 'block-field', for: 'branch-shock' }, el('span', { text: 'Change in investment value (%)' }), shock)),
+        () => { plan.investment_multiplier = 1; shock.value = 0; showInvestment = false; opened.delete(investmentItem); redraw(); }));
+    }
+    if (!parts.length) parts.push(el('p', { class: 'proposal-empty', text: 'No amounts yet. Add one below.' }));
+    rows.replaceChildren(...parts);
+    addMenu.setItems([
+      ...kinds.map(([key, label]) => ({ label, onSelect: () => { const item = NEW_BLOCKS[key](); plan[key].push(item); opened.add(item); redraw(); } })),
+      ...(showInvestment ? [] : [{ label: 'Investment change', onSelect: () => { showInvestment = true; opened.add(investmentItem); redraw(); shock.focus(); } }]),
+    ]);
+  };
   shock.addEventListener('input', () => { plan.investment_multiplier = 1 + Number(shock.value) / 100; });
+  redraw();
   const options = branchOptions(node);
   const error = el('p', { class: 'form-error', role: 'alert' });
   const create = actionButton('Create branch');
@@ -3269,6 +4221,7 @@ function renderReview(section, node, proposal, text, presetId = null) {
       const result = await request('/api/branch/apply', { sequence, parent: node, event: name, months: options.months(), variables: options.variables(), proposal: { ...plan, title: name } });
       if (revision === state.revision && state.nodes.has(node.id) && state.run && result.branch) {
         state.run.branches.push(result.branch);
+        (state.run.operations ||= []).push({ type: 'branch', branch: structuredClone(result.branch) });
         state.run.next_sequence = Math.max(state.run.next_sequence, (result.branch.sequence ?? 0) + 1);
       }
       if (revision === state.revision && state.nodes.has(node.id) && result.nodes.length && result.comparison_bundle) {
@@ -3281,13 +4234,90 @@ function renderReview(section, node, proposal, text, presetId = null) {
       setButtonLoading(create, false, 'Simulating…', 'Create branch');
     }
   });
-  section.append(
-    el('h4', { text: 'Monthly changes' }), lists.changes, addButton('changes', 'Add monthly change'),
-    el('h4', { text: 'One-off amounts' }), lists.one_offs, addButton('one_offs', 'Add one-off'),
-    el('h4', { text: 'Purchases' }), lists.assets, addButton('assets', 'Add purchase'),
-    el('h4', { text: 'Investments' }), el('label', { class: 'block-field', for: 'branch-shock' }, el('span', { text: 'Change in investment value (%)' }), shock),
-    options.element, error, create,
+  // Second choice: add the event to the path this point is on, instead of branching off it.
+  const following = followingNode(node);
+  const pathLabel = pathName(node);
+  const append = el('button', { type: 'button', class: 'ghost-button wide append-button', text: 'Add to this path' });
+  const appendInfo = el('details', { class: 'info-tip' },
+    el('summary', { 'aria-label': 'What “Add to this path” does', title: 'What “Add to this path” does', text: 'i' }),
+    el('div', { class: 'info-tip-body' }, el('p', { text: following
+      ? `Instead of a new branch, the event is added to ${pathLabel} at this point. The months after it are recalculated with it, keeping the later events and the branches that split off later. Branches that split off at this point stay as they are.`
+      : `Instead of a new branch, the event is added to ${pathLabel}. This is its last point, so the path is extended by the period chosen above.` })));
+  append.addEventListener('click', async () => {
+    error.textContent = '';
+    append.disabled = create.disabled = true;
+    append.textContent = 'Recalculating…';
+    const revision = state.revision;
+    try {
+      const name = title.value.trim() || plan.title;
+      const sequence = state.run ? state.run.next_sequence : undefined;
+      const result = await request('/api/branch/append', {
+        sequence, nodes: [...state.nodes.values()], node_id: node.id, event: name,
+        proposal: { ...plan, title: name }, months: following ? undefined : options.months(),
+      });
+      showAppendedEvent(node, name, result, revision);
+    } catch (problem) {
+      error.textContent = problem.message;
+    } finally {
+      append.disabled = create.disabled = false;
+      append.textContent = 'Add to this path';
+    }
+  });
+  section.append(rows, addMenu,
+    options.element, error, create, el('div', { class: 'append-row' }, append, appendInfo),
     el('button', { type: 'button', class: 'back-button', text: '← Choose a different event', onclick: () => showComposer(section, node, text, presetId) }));
+}
+
+// The next point on the same path, if any (the starting point continues on the Original path).
+function followingNode(node) {
+  const path = node.branch_id === 'root' ? 'main' : node.branch_id;
+  return [...state.nodes.values()].find(item => item.parent_id === node.id && item.branch_id === path) || null;
+}
+
+function pathName(node) {
+  const path = node.branch_id === 'root' ? 'main' : node.branch_id;
+  return buildTreeIndex().branchMeta.get(path)?.label || (isOriginalBranch(path) ? 'the Original path' : 'this path');
+}
+
+// After /api/branch/append: replace the recalculated points and show where the event took effect.
+function showAppendedEvent(node, name, result, revision) {
+  if (revision !== state.revision || !state.nodes.has(node.id)) return;
+  state.revision += 1;
+  state.narratives.clear();
+  state.pathReports.clear();
+  for (const updated of result.nodes) state.nodes.set(updated.id, updated);
+  if (state.run && result.record) {
+    (state.run.operations ||= []).push({ type: 'append', append: structuredClone(result.record) });
+    state.run.next_sequence = Math.max(state.run.next_sequence, (result.record.sequence ?? 0) + 1);
+  }
+  const first = result.nodes[0];
+  if (!first) return;
+  state.activeBranchId = first.branch_id;
+  state.selectedId = first.id;
+  const later = result.nodes.length - 1;
+  showToast(`Added “${name}” to ${pathName(first)}${later ? ` · ${later} later point${later === 1 ? '' : 's'} recalculated` : ''}`);
+  if (state.resultsView === 'tree') {
+    renderTreeGraph({ focusId: first.id });
+    selectNode(first.id);
+  } else {
+    renderTimelineView();
+    selectNode(first.id, { openDrawer: false, skipTimelineRender: true });
+    scrollMilestoneIntoView(first.id);
+  }
+}
+
+// Events added to a path at this point (/api/branch/append), with what each one assumes.
+function renderAppendedEvents(node) {
+  if (!node.appended_events?.length) return null;
+  const box = el('details', { class: 'inspector-section branch-info', open: true },
+    el('summary', { text: node.appended_events.length === 1 ? 'Event added here' : `${node.appended_events.length} events added here` }));
+  for (const item of node.appended_events) {
+    const list = el('ul');
+    for (const [text, source] of describeBlocks(item.proposal)) list.append(el('li', {}, el('span', { text }), setBadge(el('span'), source)));
+    box.append(el('h4', { text: item.title }), list);
+    if (item.proposal.assumptions) box.append(el('p', { class: 'proposal-assumptions', text: localizeAmounts(item.proposal.assumptions) }));
+  }
+  return box;
 }
 
 function syncVerticalSelection() {
@@ -3336,6 +4366,64 @@ function confirmDialog({ kicker, title, message, confirmLabel }) {
 }
 
 const isOriginalBranch = branchId => branchId === 'main' || branchId === 'root';
+
+// The first point of a branch: the starting point, or a point whose parent belongs to another branch.
+function isBranchStart(node) {
+  const parent = state.nodes.get(node.parent_id);
+  return !parent || parent.branch_id !== node.branch_id;
+}
+
+// The point and everything that follows from it: the rest of its branch and every branch that split off later.
+function nodesFrom(nodeId) {
+  const removed = new Set([nodeId]);
+  const start = state.nodes.get(nodeId);
+  const ordered = [...state.nodes.values()].filter(item => item.month > start.month).sort((a, b) => a.month - b.month);
+  for (const item of ordered) {
+    if (removed.has(item.parent_id)) removed.add(item.id);
+  }
+  return removed;
+}
+
+// "Delete this path" in the inspector. On a branch's first point the whole branch goes (as deleteBranch);
+// on a later point the branch is cut there, keeping its earlier points.
+async function deleteFromNode(nodeId) {
+  const node = state.nodes.get(nodeId);
+  if (!node) return;
+  if (isBranchStart(node)) return deleteBranch(node.branch_id);
+
+  const before = nodesFrom(nodeId);
+  const points = [...before].filter(id => state.nodes.get(id).branch_id === node.branch_id).length;
+  const nested = new Set([...before].map(id => state.nodes.get(id).branch_id).filter(id => id !== node.branch_id)).size;
+  const label = buildTreeIndex().branchMeta.get(node.branch_id)?.label || (isOriginalBranch(node.branch_id) ? 'Original path' : milestoneTitle(node));
+
+  const confirmed = await confirmDialog({
+    kicker: 'DELETE FROM THIS POINT',
+    title: `${label} from ${node.date}`,
+    message: `This removes this point and the rest of ${label} after it (${points} point${points === 1 ? '' : 's'})`
+      + `${nested ? `, and the ${nested} branch${nested === 1 ? '' : 'es'} that split off from them` : ''}. `
+      + "Earlier points stay. This can't be undone.",
+    confirmLabel: 'Delete this path from here',
+  });
+  if (!confirmed || !state.nodes.has(nodeId)) return;
+
+  // Recompute: a branch may have finished loading while the pop-up was open.
+  for (const id of nodesFrom(nodeId)) {
+    state.nodes.delete(id);
+    state.narratives.delete(id);
+  }
+
+  // Stay on the same path, at its new last point.
+  const lastId = node.parent_id;
+  state.activeBranchId = node.branch_id;
+  state.selectedId = lastId;
+  if (state.resultsView === 'tree') {
+    renderTreeGraph({ focusId: lastId });
+    selectNode(lastId);
+  } else {
+    switchActivePath(state.activeBranchId, { focusNodeId: lastId });
+  }
+  showToast(`Deleted ${label} from ${node.date}`);
+}
 
 // Original-path nodes that no other branch grew out of. The shared history other branches depend on stays.
 function originalPathRemovals() {
@@ -3460,7 +4548,7 @@ async function selectNode(id, { openDrawer = false, focusBranchInput = false, sk
     state.narratives.set(id, result.narrative);
     if (state.selectedId === id) {
       const el = byId('node-narrative');
-      if (el) el.textContent = result.narrative;
+      if (el) el.textContent = localizeAmounts(result.narrative);
     }
   } catch {
     // Keep instant prose fallback
@@ -3476,6 +4564,8 @@ function renderResults(nodes, bundle = null) {
   state.activeBranchId = nodes.some(n => n.branch_id === 'main') ? 'main' : nodes[0].branch_id;
   state.selectedId = nodes[0].id;
   state.resultsView = 'timeline';
+  state.graphBuilder = { metricId: 'net_worth_chf', selectedBranchIds: [], zoom: null };
+  setSensitivityPanelOpen(false);
   setDrawerOpen(false);
   if (state.network) {
     state.graphNodes?.clear();
@@ -3503,6 +4593,7 @@ for (const btn of document.querySelectorAll('.metric-btn')) {
     state.chartMetric = btn.dataset.metric;
     for (const b of document.querySelectorAll('.metric-btn')) {
       b.classList.toggle('is-active', b === btn);
+      b.setAttribute('aria-pressed', String(b === btn));
     }
     if (state.nodes.size) {
       const index = buildTreeIndex();
@@ -3512,12 +4603,6 @@ for (const btn of document.querySelectorAll('.metric-btn')) {
   });
 }
 
-byId('jump-to-summary').addEventListener('click', () => {
-  byId('timeline-summary')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-});
-byId('back-to-top').addEventListener('click', () => {
-  window.scrollTo({ top: 0, behavior: 'smooth' });
-});
 byId('switch-to-tree').addEventListener('click', () => setResultsView('tree'));
 byId('back-to-timeline').addEventListener('click', () => setResultsView('timeline', { focusNodeId: state.selectedId }));
 byId('return-to-original').addEventListener('click', () => {
@@ -3574,8 +4659,103 @@ byId('tree-adjust-scenario').addEventListener('click', () => {
   showStage('tuning');
 });
 
+/* ==========================================================================
+   CURRENCY CHOICE (assumptions page)
+   ========================================================================== */
+
+const CURRENCY_STORAGE_KEY = 'financial_twin_currency';
+
+// What the figures assume. Written once; shown behind the (i) on the assumptions page and in the results.
+const ASSUMPTIONS_NOTE = 'Income is take-home pay: taxes and social contributions are not calculated separately. '
+  + 'Calculations are in CHF; other currencies use a dated reference rate, not future or transaction rates. '
+  + 'Inflation follows each path’s assumptions. Negative cash shows funding needed: the model does not borrow '
+  + 'or sell assets to cover it. Missing costs may come from synthetic sample averages, which may not fit your '
+  + 'household. The range shows the effect of changing assumptions and carries no probability.';
+for (const element of document.querySelectorAll('[data-caveat]')) element.textContent = ASSUMPTIONS_NOTE;
+
+// An open (i) or drop-down menu closes when you click elsewhere or press Escape.
+document.addEventListener('click', event => {
+  for (const open of document.querySelectorAll('.info-tip[open], .more-menu[open]')) if (!open.contains(event.target)) open.open = false;
+});
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape') for (const open of document.querySelectorAll('.info-tip[open], .more-menu[open]')) open.open = false;
+});
+
+// Re-renders text that depends on the chosen currency.
+function refreshCurrencyText() {
+  for (const pill of document.querySelectorAll('.currency-pill')) pill.title = currencyRateText();
+}
+
+function chooseCurrency(code) {
+  setCurrency(code);
+  try { localStorage.setItem(CURRENCY_STORAGE_KEY, state.currency.code); } catch { /* storage unavailable */ }
+  for (const select of document.querySelectorAll('.currency-select')) {
+    if (select.value !== state.currency.code) select.value = state.currency.code;
+  }
+  refreshCurrencyText();
+}
+
+async function loadCurrencies() {
+  let saved = 'CHF';
+  try { saved = localStorage.getItem(CURRENCY_STORAGE_KEY) || 'CHF'; } catch { /* storage unavailable */ }
+  try {
+    const response = await fetch('/api/currencies');
+    if (!response.ok) throw new Error('unavailable');
+    const data = await response.json();
+    state.currencies = data.currencies.map(item => ({ ...item, date: data.date, source: data.source, live: data.live }));
+    // Compact menus: codes, with the currency's name on hover.
+    for (const menu of document.querySelectorAll('.currency-select')) {
+      menu.replaceChildren(...state.currencies.map(item => {
+        const option = document.createElement('option');
+        option.value = item.code;
+        option.textContent = item.code;
+        option.title = item.name;
+        return option;
+      }));
+    }
+  } catch {
+    // Without rates only CHF can be shown; the select keeps its single CHF option.
+    state.currencies = [CHF];
+  }
+  chooseCurrency(saved);
+}
+
+// Switching currency redraws whatever is on screen in the new currency, keeping the values set so far.
+function redrawInCurrency() {
+  if (state.extraction?.variables && byId('sliders')) {
+    for (const variable of state.extraction.variables) {
+      const slider = byId(`slider-${variable.id}`);
+      if (slider?.value !== undefined && slider.value !== '' && Number.isFinite(Number(slider.value))) {
+        variable.value = Number(slider.value);
+        variable.min = Math.min(Number(variable.min), Number(slider.min));
+        variable.max = Math.max(Number(variable.max), Number(slider.max));
+      }
+    }
+    renderTuning(state.extraction);
+  }
+  if (state.nodes.size && state.stage === 'results') {
+    if (state.resultsView === 'tree') renderTreeGraph();
+    else renderTimelineView();
+    const selected = state.nodes.get(state.selectedId);
+    if (selected && (state.drawerOpen || state.resultsView === 'tree')) renderInspector(selected);
+  }
+}
+
+for (const menu of document.querySelectorAll('.currency-select')) {
+  menu.addEventListener('change', event => {
+    chooseCurrency(event.target.value);
+    redrawInCurrency();
+  });
+}
+loadCurrencies();
+
 byId('intake-form').addEventListener('submit', async event => {
   event.preventDefault();
+  const alexia = document.querySelector('.preset-chip[data-story^="I\'m Alexia"]');
+  if (alexia && byId('statement').value.trim() === alexia.dataset.story && Number(byId('years').value) === 5) {
+    await loadAlexiaDemo();
+    return;
+  }
   const button = byId('extract-button');
   byId('intake-error').textContent = '';
   setButtonLoading(button, true, 'Reading your story…', 'Explore my scenario');
@@ -3584,11 +4764,17 @@ byId('intake-form').addEventListener('submit', async event => {
     state.extraction = await request('/api/extract', {
       statement: byId('statement').value.trim(),
       years: state.years,
+      currency: state.currency.code,
     });
+    // Show results with the exact rate the server used to convert the story.
+    if (state.extraction.currency?.code === state.currency.code && state.extraction.currency.per_chf) {
+      state.currency = { ...state.currency, ...state.extraction.currency };
+    }
     renderTuning(state.extraction);
     showStage('tuning');
   } catch (error) {
     byId('intake-error').textContent = error.message;
+    byId('offline-demo')?.focus();
   } finally {
     setButtonLoading(button, false, 'Reading your story…', 'Explore my scenario');
   }
@@ -3614,7 +4800,7 @@ byId('simulate-form').addEventListener('submit', async event => {
     });
     state.run = {
       source: 'simulate', seed: null, start_date: result.scenario.start_date, years: state.years,
-      scenario: structuredClone(state.extraction.scenario), variables, branches: [], next_sequence: 0,
+      scenario: structuredClone(state.extraction.scenario), variables, branches: [], operations: [], next_sequence: 0,
       environment: result.environment,
     };
     renderResults(result.nodes, result.comparison_bundle);
@@ -3636,7 +4822,7 @@ byId('test-data').addEventListener('click', async () => {
     state.extraction = result.extraction;
     state.run = {
       source: 'test', seed: result.seed, start_date: result.start_date, years: result.years,
-      scenario: null, variables: {}, branches: [], next_sequence: result.next_sequence,
+      scenario: null, variables: {}, branches: [], operations: [], next_sequence: result.next_sequence,
       environment: result.environment,
     };
     renderTuning(state.extraction);
@@ -3646,6 +4832,176 @@ byId('test-data').addEventListener('click', async () => {
     showToast(`Could not generate test data: ${error.message}`, { error: true });
   } finally {
     button.disabled = false;
+  }
+});
+
+async function loadAlexiaDemo() {
+  const button = byId('offline-demo');
+  if (button) button.disabled = true;
+  try {
+    const response = await fetch('/api/demo/alexia');
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || 'Could not load the demo.');
+    state.years = result.years;
+    state.extraction = result.extraction;
+    state.run = result.run;
+    state.run.demo = 'alexia';
+    renderTuning(state.extraction);
+    renderResults(result.nodes);
+    showToast('Fictional Alexia demo loaded without AI. Your story remains in the intake form.');
+  } catch (error) {
+    byId('intake-error').textContent = error.message;
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+byId('offline-demo')?.addEventListener('click', loadAlexiaDemo);
+
+function renderStructuredComparison(container, result) {
+  container.replaceChildren();
+  const bundle = result.comparison_bundle;
+  const baselineName = bundle.baseline_path;
+  const baseline = bundle.paths[baselineName]?.metrics || {};
+  const cash = metrics => metrics.closing_cash_chf ?? metrics.terminal_cash_chf;
+  const worth = metrics => metrics.closing_net_worth_chf ?? metrics.terminal_net_worth_chf;
+  const liquidity = metrics => metrics.min_cash_chf ?? metrics.minimum_liquidity_chf;
+  const horizon = result.horizon_months ?? result.paths?.[baselineName]?.timeline?.at(-1)?.month;
+  const horizonLabel = horizon == null ? 'unavailable' : `${horizon} months`;
+  container.append(el('p', { text: `Baseline: ${baselineName}. Horizon: ${horizonLabel}.` }));
+  for (const [name, path] of Object.entries(bundle.paths)) {
+    const metrics = path.metrics;
+    const minDate = metrics.min_cash_date || metrics.minimum_liquidity_date;
+    let text = `${name}: cash ${money(cash(metrics))}, net worth ${money(worth(metrics))}, `;
+    text += `minimum liquidity ${money(liquidity(metrics))}${minDate ? ` on ${minDate}` : ''}`;
+    if (name !== baselineName) {
+      text += `, cash difference ${moneySigned(cash(metrics) - cash(baseline))}`;
+      text += `, net-worth difference ${moneySigned(worth(metrics) - worth(baseline))}`;
+    }
+    text += '.';
+    container.append(el('p', { text }));
+    if (name !== baselineName) {
+      const originalRows = new Map((result.paths?.[baselineName]?.timeline || []).map(row => [row.date, row]));
+      const pairs = (result.paths?.[name]?.timeline || [])
+        .map(row => [row, originalRows.get(row.date)])
+        .filter(([, original]) => original);
+      const comparison = bundle.comparisons?.[name] || result.comparisons?.[name] || {};
+      const largestGap = pairs.reduce((largest, [row, original]) => {
+        const delta = row.cash_chf - original.cash_chf;
+        return !largest || Math.abs(delta) > Math.abs(largest.delta) ? { delta, date: row.date } : largest;
+      }, null);
+      const shortfall = comparison.largest_cash_gap_chf == null ? 'unavailable'
+        : `${moneySigned(comparison.largest_cash_gap_chf)} on ${comparison.largest_cash_gap_date || 'date unavailable'}`;
+      const breakEven = comparison.break_even_date || 'not reached in the shared horizon';
+      const drivers = (path.sensitivity_summary?.drivers || [])
+        .filter(driver => Number.isFinite(driver.terminal_cash_delta_chf))
+        .sort((a, b) => Math.abs(b.terminal_cash_delta_chf) - Math.abs(a.terminal_cash_delta_chf))
+        .slice(0, 3);
+      const gapText = largestGap ? `${moneySigned(largestGap.delta)} on ${largestGap.date}` : 'unavailable';
+      container.append(el('p', { text: `Largest cash difference ${gapText}. Largest cash shortfall versus baseline ${shortfall}. Sustained net-worth break-even ${breakEven}.` }));
+      const flowFields = [
+        ['income_chf', 'income'], ['expenses_chf', 'living costs'],
+        ['one_off_costs_chf', 'one-off costs'], ['one_off_chf', 'one-off costs'],
+        ['debt_payments_chf', 'debt payments'], ['debt_payment_chf', 'debt payments'],
+      ];
+      const actualDrivers = flowFields.map(([field, label]) => ({
+        label,
+        delta: pairs.reduce((sum, [row, original]) => sum + (row[field] || 0) - (original[field] || 0), 0),
+      })).filter(item => Math.abs(item.delta) >= 1).sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta)).slice(0, 3);
+      container.append(el('p', { text: actualDrivers.length
+        ? `Cumulative path differences: ${actualDrivers.map(item => `${item.label} ${moneySigned(item.delta)}`).join(', ')}.`
+        : 'No cumulative income, expense, one-off or debt payment differences were recorded.' }));
+      const driverText = drivers.map(driver => {
+        const label = driver.label || driver.parameter || driver.field;
+        const tested = driver.base_value == null || driver.perturbed_value == null
+          ? 'input change unavailable'
+          : `${driver.base_value} to ${driver.perturbed_value} ${driver.unit || ''}`.trim();
+        return `${label} (${tested}) changes terminal cash by ${moneySigned(driver.terminal_cash_delta_chf)}`;
+      });
+      container.append(el('p', { text: drivers.length
+        ? `One-at-a-time sensitivity tests: ${driverText.join('; ')}.`
+        : 'Sensitivity drivers unavailable.' }));
+    }
+    const detail = el('details', { class: 'privacy-details' }, el('summary', { text: `${name} assumptions, goals and checks` }));
+    const checks = path.sanity_checks || [];
+    for (const check of checks) {
+      const resultText = check.passed === null ? 'unavailable' : check.passed ? 'passed' : 'needs review';
+      const residual = check.maximum_error_chf == null ? 'residual unavailable' : `maximum residual ${money(check.maximum_error_chf)}`;
+      detail.append(el('p', { text: `${check.name.replaceAll('_', ' ')}: ${resultText}, ${residual}.` }));
+    }
+    for (const goal of metrics.goals || []) {
+      detail.append(el('p', { text: `${goal.name}: ${goal.met === null ? 'beyond horizon' : goal.met ? 'met' : 'not met'} by ${goal.target_date || 'deadline'}, target ${money(goal.target_chf)}.` }));
+    }
+    const sources = [];
+    const collectSources = (value, label = '') => {
+      if (!value || typeof value !== 'object' || sources.length >= 12) return;
+      if (value.source && Object.hasOwn(value, 'value')) {
+        sources.push(`${value.label || label}: ${value.value ?? 'unavailable'} ${value.unit || ''}, ${value.source}${value.as_of_date ? `, ${value.as_of_date}` : ''}`);
+        return;
+      }
+      for (const [key, item] of Object.entries(value)) collectSources(item, key);
+    };
+    collectSources(path.provenance);
+    if (sources.length) detail.append(el('ul', {}, ...sources.map(text => el('li', { text }))));
+    else detail.append(el('p', { text: 'Detailed input sources unavailable.' }));
+    container.append(detail);
+  }
+  for (const limitation of bundle.limitations || []) container.append(el('p', { text: limitation }));
+}
+
+byId('starter-comparison')?.addEventListener('click', async () => {
+  const container = byId('starter-result');
+  try {
+    const response = await fetch('/api/comparisons/alexia');
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || 'Could not load the comparison.');
+    renderStructuredComparison(container, result);
+  } catch (error) {
+    container.textContent = error.message;
+  }
+});
+
+byId('run-project')?.addEventListener('click', async () => {
+  const container = byId('project-result');
+  try {
+    const result = await request('/api/project', JSON.parse(byId('project-input').value));
+    renderStructuredComparison(container, result);
+  } catch (error) {
+    container.textContent = error.message;
+  }
+});
+
+const projectControls = [
+  ['project-cash', 'cash_chf'],
+  ['project-income', 'monthly_net_income_chf'],
+  ['project-rent', 'monthly_rent_chf'],
+  ['project-month', 'start_month'],
+];
+for (const [id, field] of projectControls) {
+  byId(id)?.addEventListener('change', event => {
+    try {
+      const input = byId('project-input');
+      const data = JSON.parse(input.value);
+      if (field === 'start_month') {
+        for (const item of Object.values(data.scenarios).flat()) item.start_month = Number(event.target.value);
+      } else {
+        data.profile[field] = Number(event.target.value);
+      }
+      input.value = JSON.stringify(data, null, 2);
+    } catch {
+      byId('project-result').textContent = 'Correct the JSON inputs before changing these values.';
+    }
+  });
+}
+byId('project-input')?.addEventListener('change', event => {
+  try {
+    const data = JSON.parse(event.target.value);
+    byId('project-cash').value = data.profile.cash_chf ?? '';
+    byId('project-income').value = data.profile.monthly_net_income_chf ?? '';
+    byId('project-rent').value = data.profile.monthly_rent_chf ?? '';
+    const months = Object.values(data.scenarios).flat().map(item => item.start_month);
+    byId('project-month').value = months.every(month => month === months[0]) ? months[0] : '';
+  } catch {
+    byId('project-result').textContent = 'Correct the JSON inputs before running the comparison.';
   }
 });
 
@@ -3665,6 +5021,11 @@ document.addEventListener('visibilitychange', () => {
 });
 
 document.querySelectorAll('.range-toggle').forEach(toggle => toggle.addEventListener('click', () => setRangeVisible(!state.showRange)));
+for (const btn of document.querySelectorAll('.recaps-toggle')) {
+  btn.addEventListener('click', () => setHideRecaps(!state.hideRecaps));
+}
+byId('theme-toggle')?.addEventListener('click', () => setTheme(isLightTheme() ? 'dark' : 'light'));
+initTheme();
 fetch('/api/branch/presets').then(response => response.json()).then(data => { state.presets = data.presets || []; }).catch(() => {});
 startAstralBackdrop();
 
@@ -3684,9 +5045,12 @@ function buildRunFile() {
     start_date: run.start_date,
     years: run.years,
     units: { currency: 'CHF', time_step: 'month', horizon_years: run.years },
+    // Shown to the user in this currency; every number in this file is CHF.
+    display_currency: { code: state.currency.code, per_chf: state.currency.per_chf, date: state.currency.date, source: state.currency.source },
     scenario: run.scenario,
     variables: run.variables,
     branches: run.branches,
+    ...(run.operations ? { operations: run.operations } : {}),
     kept_node_ids: nodes.map(node => node.id).sort(),
     expected: nodes.map(node => ({
       id: node.id,
@@ -3714,5 +5078,666 @@ byId('download-run').addEventListener('click', () => {
   link.download = `financial-twin-run-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.json`;
   link.click();
   setTimeout(() => URL.revokeObjectURL(link.href), 1000);
-  showToast('Run file saved. Check it with: scripts/reproduce.py <file>');
+  showToast('Run file saved');
+});
+
+/* ==========================================================================
+   CUSTOM GRAPH STUDIO (Y-AXIS VARIABLE VS. TIME ACROSS LEAF BRANCHES)
+   ========================================================================== */
+
+const fmtPct1 = v => `${Number(v.toFixed(1))}%`;
+const fmtPts1 = v => `${Number(v.toFixed(1))} pts`;
+const fmtChfMo = v => `${money(v)}/mo`;
+const fmtChfSignedMo = v => `${moneySigned(v)}/mo`;
+
+const GRAPH_METRICS = [
+  // Balances & wealth
+  { id: 'net_worth_chf', group: 'Balances & wealth', label: 'Net worth', unit: 'CHF',
+    get: n => n.state?.net_worth_chf ?? 0, format: money, formatDiff: moneySigned, formatAxis: compactChf },
+  { id: 'real_net_worth_chf', group: 'Balances & wealth', label: 'Real net worth (inflation-adjusted)', unit: 'CHF',
+    get: n => n.state?.real_net_worth_chf ?? n.state?.net_worth_chf ?? 0, format: money, formatDiff: moneySigned, formatAxis: compactChf },
+  { id: 'cash_chf', group: 'Balances & wealth', label: 'Liquid cash', unit: 'CHF',
+    get: n => n.state?.cash_chf ?? 0, format: money, formatDiff: moneySigned, formatAxis: compactChf },
+  { id: 'real_cash_chf', group: 'Balances & wealth', label: 'Real cash (inflation-adjusted)', unit: 'CHF',
+    get: n => n.state?.real_cash_chf ?? n.state?.cash_chf ?? 0, format: money, formatDiff: moneySigned, formatAxis: compactChf },
+  { id: 'total_assets_chf', group: 'Balances & wealth', label: 'Total assets', unit: 'CHF',
+    get: n => n.state?.total_assets_chf ?? 0, format: money, formatDiff: moneySigned, formatAxis: compactChf },
+  { id: 'investment_value_chf', group: 'Balances & wealth', label: 'Investments', unit: 'CHF',
+    get: n => n.state?.risk_exposure?.investment_value_chf ?? 0, format: money, formatDiff: moneySigned, formatAxis: compactChf },
+  { id: 'total_debt_chf', group: 'Balances & wealth', label: 'Total debt', unit: 'CHF',
+    get: n => n.state?.total_debt_chf ?? 0, format: money, formatDiff: moneySigned, formatAxis: compactChf },
+
+  // Monthly cash flow (skip Month 0 opening snapshot where monthly flows are 0)
+  { id: 'income_chf', group: 'Monthly cash flow', label: 'Monthly income', unit: 'CHF/mo', skipMonthZero: true,
+    get: n => n.state?.cash_flow?.income_chf ?? 0, format: fmtChfMo, formatDiff: fmtChfSignedMo, formatAxis: compactChf },
+  { id: 'expenses_chf', group: 'Monthly cash flow', label: 'Monthly expenses', unit: 'CHF/mo', skipMonthZero: true,
+    get: n => n.state?.cash_flow?.expenses_chf ?? 0, format: fmtChfMo, formatDiff: fmtChfSignedMo, formatAxis: compactChf },
+  { id: 'operating_cash_flow_chf', group: 'Monthly cash flow', label: 'Operating cash flow', unit: 'CHF/mo', skipMonthZero: true,
+    get: n => n.state?.cash_flow?.operating_cash_flow_chf ?? 0, format: fmtChfMo, formatDiff: fmtChfSignedMo, formatAxis: compactChf },
+  { id: 'net_cash_flow_chf', group: 'Monthly cash flow', label: 'Net monthly cash flow', unit: 'CHF/mo', skipMonthZero: true,
+    get: n => n.state?.cash_flow?.net_cash_flow_chf ?? 0, format: fmtChfMo, formatDiff: fmtChfSignedMo, formatAxis: compactChf },
+  { id: 'investment_contribution_chf', group: 'Monthly cash flow', label: 'Monthly investment contribution', unit: 'CHF/mo', skipMonthZero: true,
+    get: n => n.state?.cash_flow?.investment_contribution_chf ?? 0, format: fmtChfMo, formatDiff: fmtChfSignedMo, formatAxis: compactChf },
+  { id: 'investment_return_chf', group: 'Monthly cash flow', label: 'Monthly investment return', unit: 'CHF/mo', skipMonthZero: true,
+    get: n => n.state?.cash_flow?.investment_return_chf ?? 0, format: fmtChfMo, formatDiff: fmtChfSignedMo, formatAxis: compactChf },
+  { id: 'debt_payments_chf', group: 'Monthly cash flow', label: 'Monthly debt payments', unit: 'CHF/mo', skipMonthZero: true,
+    get: n => n.state?.cash_flow?.debt_payments_chf ?? 0, format: fmtChfMo, formatDiff: fmtChfSignedMo, formatAxis: compactChf },
+  { id: 'debt_interest_chf', group: 'Monthly cash flow', label: 'Monthly debt interest', unit: 'CHF/mo', skipMonthZero: true,
+    get: n => n.state?.cash_flow?.debt_interest_chf ?? 0, format: fmtChfMo, formatDiff: fmtChfSignedMo, formatAxis: compactChf },
+  { id: 'one_off_costs_chf', group: 'Monthly cash flow', label: 'One-off costs', unit: 'CHF', skipMonthZero: true,
+    get: n => n.state?.cash_flow?.one_off_costs_chf ?? 0, format: money, formatDiff: moneySigned, formatAxis: compactChf },
+
+  // Risk & macro
+  { id: 'annual_volatility_chf', group: 'Risk & macro', label: 'Annual portfolio volatility', unit: 'CHF/yr',
+    get: n => n.state?.risk_exposure?.annual_volatility_chf ?? 0, format: v => `${money(v)}/yr`, formatDiff: v => `${moneySigned(v)}/yr`, formatAxis: compactChf },
+  { id: 'investment_share_of_assets', group: 'Risk & macro', label: 'Investment share of assets', unit: '%',
+    get: n => (n.state?.risk_exposure?.investment_share_of_assets ?? 0) * 100, format: fmtPct1, formatDiff: v => `${v >= 0 ? '+' : '−'}${Math.abs(v).toFixed(1)}%`, formatAxis: fmtPct1 },
+  { id: 'cpi', group: 'Risk & macro', label: 'Price index (CPI)', unit: 'pts',
+    get: n => n.state?.cpi ?? 100, format: fmtPts1, formatDiff: v => `${v >= 0 ? '+' : '−'}${Math.abs(v).toFixed(1)} pts`, formatAxis: v => String(Math.round(v)) },
+];
+
+const GRAPH_METRIC_MAP = new Map(GRAPH_METRICS.map(m => [m.id, m]));
+
+function getLeafPaths(index) {
+  const leaves = [];
+  for (const node of state.nodes.values()) {
+    const kids = index.childrenByParent.get(node.id);
+    if (kids && kids.length > 0) continue;
+
+    const chain = [];
+    let cur = node;
+    while (cur) {
+      chain.push(cur);
+      cur = cur.parent_id ? state.nodes.get(cur.parent_id) : null;
+    }
+    chain.reverse();
+
+    const bid = node.branch_id;
+    const meta = index.branchMeta.get(bid === 'root' ? 'main' : bid) || index.branchMeta.get(bid);
+    const label = meta?.label || (bid === 'main' || bid === 'root' ? 'Original path' : milestoneTitle(node));
+    const code = meta?.code || (bid === 'main' || bid === 'root' ? 'P0' : bid.slice(0, 6));
+    const color = meta?.color || getBranchPalette()[0];
+
+    // Build readable decision trail for tooltips/accessibility
+    const seenBranches = [];
+    for (const step of chain) {
+      const sb = step.branch_id;
+      if (sb === 'root' || sb === 'main') continue;
+      if (seenBranches[seenBranches.length - 1] !== sb) seenBranches.push(sb);
+    }
+    const trail = seenBranches.length > 1
+      ? seenBranches.map(b => shortBranchLabel(index.branchMeta.get(b)?.label || b, 22)).join(' → ')
+      : label;
+
+    leaves.push({
+      id: bid,
+      leafNodeId: node.id,
+      code,
+      shortId: code,
+      color,
+      label,
+      trail,
+      chain,
+      tipNode: node,
+      forkMonth: meta?.forkMonth ?? 0,
+      isOriginal: bid === 'main' || bid === 'root',
+    });
+  }
+
+  leaves.sort((a, b) => {
+    if (a.isOriginal !== b.isOriginal) return a.isOriginal ? -1 : 1;
+    return a.code.localeCompare(b.code, undefined, { numeric: true });
+  });
+  return leaves;
+}
+
+function niceTicks(minVal, maxVal, targetCount = 5) {
+  const span = maxVal - minVal;
+  if (span <= 0) return { min: minVal - 1, max: maxVal + 1, ticks: [minVal - 1, minVal, maxVal + 1] };
+  const rawStep = span / Math.max(2, targetCount - 1);
+  const mag = Math.pow(10, Math.floor(Math.log10(rawStep)));
+  const norm = rawStep / mag;
+  const niceNorm = norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 2.5 ? 2.5 : norm <= 5 ? 5 : 10;
+  const step = niceNorm * mag;
+  const min = Math.floor(minVal / step) * step;
+  const max = Math.ceil(maxVal / step) * step;
+  const ticks = [];
+  for (let v = min; v <= max + step * 0.25; v += step) {
+    ticks.push(Math.abs(v) < step * 1e-6 ? 0 : Number(v.toFixed(6)));
+  }
+  return { min, max, ticks };
+}
+
+const metricDisplayUnit = metric => metric.unit.replace('CHF', state.currency.code);
+
+function populateGraphMetricSelect() {
+  const select = byId('graph-y-metric');
+  if (!select) return;
+  if (select.options.length > 0 && select.dataset.currencyCode === state.currency.code) return;
+  const currentValue = select.value || state.graphBuilder.metricId;
+  select.replaceChildren();
+  const groups = new Map();
+  for (const metric of GRAPH_METRICS) {
+    if (!groups.has(metric.group)) {
+      const og = document.createElement('optgroup');
+      og.label = metric.group;
+      groups.set(metric.group, og);
+      select.append(og);
+    }
+    const opt = document.createElement('option');
+    opt.value = metric.id;
+    opt.textContent = `${metric.label} (${metricDisplayUnit(metric)})`;
+    groups.get(metric.group).append(opt);
+  }
+  select.dataset.currencyCode = state.currency.code;
+  if (currentValue) select.value = currentValue;
+}
+
+function formatGraphAxisTick(metric, val, step) {
+  if (metric.formatAxis === compactChf) {
+    const dispStep = Math.abs(chfToDisplay(step));
+    const dispVal = chfToDisplay(val);
+    if (dispStep < 1000) return money(val);
+    if (dispStep < 5000 && Math.abs(dispVal) >= 10_000 && Math.abs(dispVal % 1000) > 1) {
+      return `${currencyPrefix()}${dispVal < 0 ? '-' : ''}${(Math.abs(dispVal) / 1000).toFixed(1)}k`;
+    }
+  }
+  return metric.formatAxis(val);
+}
+
+function buildCustomGraphStage(config, leaves) {
+  const metric = GRAPH_METRIC_MAP.get(config.metricId) || GRAPH_METRICS[0];
+  const leafById = new Map(leaves.map(l => [l.id, l]));
+  const series = config.branchIds
+    .map(id => leafById.get(id))
+    .filter(Boolean)
+    .map(leaf => {
+      const pts = metric.skipMonthZero && leaf.chain.length > 1
+        ? leaf.chain.filter(n => n.month > 0)
+        : leaf.chain;
+      const byMonth = new Map();
+      for (const n of pts) byMonth.set(n.month, { node: n, value: Number(metric.get(n) || 0) });
+      return { ...leaf, pts, byMonth };
+    });
+
+  const W = 760;
+  const H = 310;
+  const padL = 86;
+  const padR = 24;
+  const padT = 18;
+  const padB = 34;
+  const innerW = W - padL - padR;
+  const innerH = H - padT - padB;
+
+  const svgNs = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(svgNs, 'svg');
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+  svg.setAttribute('role', 'img');
+  svg.setAttribute('aria-label', `${metric.label} chart${series.length ? ` for ${series.map(item => item.trail).join(', ')}` : ', no paths selected'}.`);
+
+  const stage = document.createElement('div');
+  stage.className = 'custom-graph-stage';
+  stage.setAttribute('role', 'region');
+  stage.setAttribute('aria-label', 'Scrollable comparison chart');
+  stage.tabIndex = 0;
+
+  const light = isLightTheme();
+  const surfaceBg = light ? '#ffffff' : '#261710';
+  const gridStroke = light ? 'rgba(20, 20, 18, 0.09)' : 'rgba(110, 70, 48, 0.38)';
+  const axisStroke = light ? 'rgba(20, 20, 18, 0.28)' : 'rgba(176, 118, 78, 0.48)';
+  const tickFill = light ? '#6e6e68' : '#bfa490';
+
+  // Clean minimalistic empty graph state: crisp time axis + subtle horizontal guide lines + quiet prompt
+  if (!series.length) {
+    const sampleChain = leaves[0]?.chain || [];
+    const pts = metric.skipMonthZero && sampleChain.length > 1
+      ? sampleChain.filter(n => n.month > 0)
+      : sampleChain;
+    const xTickCount = Math.min(5, Math.max(2, pts.length));
+    const xTicksHtml = pts.length
+      ? Array.from({ length: xTickCount }, (_, idx) => {
+          const n = pts[Math.round((idx / Math.max(1, xTickCount - 1)) * (pts.length - 1))];
+          const x = (padL + (idx / Math.max(1, xTickCount - 1)) * innerW).toFixed(1);
+          const anchor = idx === 0 ? 'start' : idx === xTickCount - 1 ? 'end' : 'middle';
+          return `<line x1="${x}" y1="${H - padB}" x2="${x}" y2="${H - padB + 5}" stroke="${axisStroke}" stroke-width="1" />
+                  <text x="${x}" y="${H - 10}" text-anchor="${anchor}" fill="${tickFill}" font-size="11" font-family="DM Sans, sans-serif">${escapeHtml(formatNiceDate(n.date))}</text>`;
+        }).join('')
+      : '';
+
+    const gridLines = [0, 0.33, 0.66, 1].map(frac => {
+      const y = (padT + frac * innerH).toFixed(1);
+      return `<line x1="${padL}" y1="${y}" x2="${W - padR}" y2="${y}" stroke="${gridStroke}" stroke-width="1" stroke-dasharray="3 5" />`;
+    }).join('');
+
+    svg.innerHTML = `
+      ${gridLines}
+      <line x1="${padL}" y1="${padT}" x2="${padL}" y2="${H - padB}" stroke="${axisStroke}" stroke-width="1.1" />
+      <line x1="${padL}" y1="${H - padB}" x2="${W - padR}" y2="${H - padB}" stroke="${axisStroke}" stroke-width="1.2" />
+      <text x="${padL - 12}" y="${padT + 10}" text-anchor="end" fill="${tickFill}" font-size="11" font-family="DM Sans, sans-serif">${escapeHtml(metricDisplayUnit(metric))}</text>
+      ${xTicksHtml}
+      <text x="${(padL + innerW / 2).toFixed(1)}" y="${(padT + innerH / 2 + 4).toFixed(1)}" text-anchor="middle" fill="${tickFill}" font-size="13.5" font-family="DM Sans, sans-serif">Choose a branch above to plot ${escapeHtml(metric.label.toLowerCase())}</text>
+    `;
+    stage.append(svg);
+    return stage;
+  }
+
+  // Full available month span across selected branches
+  const allMonthsSet = new Set();
+  const dateByMonth = new Map();
+  for (const s of series) {
+    for (const n of s.pts) {
+      allMonthsSet.add(n.month);
+      if (!dateByMonth.has(n.month)) dateByMonth.set(n.month, n.date);
+    }
+  }
+  const allMonths = [...allMonthsSet].sort((a, b) => a - b);
+  const fullMinMonth = allMonths[0] ?? 0;
+  const fullMaxMonth = Math.max(fullMinMonth + 1, allMonths[allMonths.length - 1] ?? 1);
+
+  // Active X zoom window (if zoomed in, Y-axis auto-fits tightly to ONLY the visible window!)
+  const zoom = config.zoom;
+  const isZoomed = Boolean(zoom && zoom.minMonth != null && zoom.maxMonth != null && (zoom.minMonth > fullMinMonth || zoom.maxMonth < fullMaxMonth));
+  const minMonth = isZoomed ? Math.max(fullMinMonth, Math.min(fullMaxMonth - 2, zoom.minMonth)) : fullMinMonth;
+  const maxMonth = isZoomed ? Math.min(fullMaxMonth, Math.max(minMonth + 2, zoom.maxMonth)) : fullMaxMonth;
+  const visibleMonths = allMonths.filter(m => m >= minMonth && m <= maxMonth);
+  const activeMonths = visibleMonths.length ? visibleMonths : allMonths;
+
+  let rawMin = Infinity;
+  let rawMax = -Infinity;
+  for (const s of series) {
+    for (const m of activeMonths) {
+      const hit = s.byMonth.get(m);
+      if (!hit) continue;
+      if (hit.value < rawMin) rawMin = hit.value;
+      if (hit.value > rawMax) rawMax = hit.value;
+    }
+  }
+  if (!Number.isFinite(rawMin) || !Number.isFinite(rawMax)) { rawMin = 0; rawMax = 100; }
+  if (rawMin === rawMax) {
+    rawMin -= Math.max(10, Math.abs(rawMin) * 0.08);
+    rawMax += Math.max(10, Math.abs(rawMax) * 0.08);
+  } else {
+    const pad = (rawMax - rawMin) * 0.08;
+    rawMin -= pad;
+    rawMax += pad;
+  }
+  // Only anchor to 0 when data naturally comes close to zero (keeps close high-value lines clearly separated!)
+  if (!isZoomed && rawMin > 0 && rawMin < rawMax * 0.12 && metric.id !== 'cpi') rawMin = 0;
+  const { min: minVal, max: maxVal, ticks: yTicks } = niceTicks(rawMin, rawMax, 5);
+  const yStep = yTicks.length > 1 ? Math.abs(yTicks[1] - yTicks[0]) : Math.max(1, maxVal - minVal);
+
+  const xOf = m => padL + ((m - minMonth) / (maxMonth - minMonth)) * innerW;
+  const yOf = v => padT + innerH - ((v - minVal) / (maxVal - minVal)) * innerH;
+
+  // Minimalistic zoom bar right above the plot area
+  const zoomBar = document.createElement('div');
+  zoomBar.className = 'graph-zoom-bar';
+  const zoomHint = document.createElement('span');
+  zoomHint.className = 'graph-zoom-hint';
+  zoomHint.textContent = isZoomed
+    ? `Zoomed: ${formatNiceDate(dateByMonth.get(minMonth) || '')} → ${formatNiceDate(dateByMonth.get(maxMonth) || '')} · Double-click to reset`
+    : 'Drag across the chart to zoom in';
+
+  const zoomControls = document.createElement('div');
+  zoomControls.className = 'graph-zoom-controls';
+
+  const applyZoom = (nextMin, nextMax) => {
+    const clampedMin = Math.max(fullMinMonth, Math.round(nextMin));
+    const clampedMax = Math.min(fullMaxMonth, Math.round(nextMax));
+    if (clampedMin <= fullMinMonth && clampedMax >= fullMaxMonth) {
+      state.graphBuilder.zoom = null;
+    } else if (clampedMax - clampedMin >= 2) {
+      state.graphBuilder.zoom = { minMonth: clampedMin, maxMonth: clampedMax };
+    }
+    renderGraphStudio();
+  };
+
+  const zoomOutBtn = document.createElement('button');
+  zoomOutBtn.type = 'button';
+  zoomOutBtn.className = 'graph-zoom-btn';
+  zoomOutBtn.textContent = '−';
+  zoomOutBtn.title = 'Zoom out';
+  zoomOutBtn.disabled = !isZoomed;
+  zoomOutBtn.addEventListener('click', () => {
+    const span = maxMonth - minMonth;
+    const expand = Math.max(3, Math.round(span * 0.35));
+    applyZoom(minMonth - expand, maxMonth + expand);
+  });
+
+  const zoomInBtn = document.createElement('button');
+  zoomInBtn.type = 'button';
+  zoomInBtn.className = 'graph-zoom-btn';
+  zoomInBtn.textContent = '+';
+  zoomInBtn.title = 'Zoom in';
+  zoomInBtn.disabled = (maxMonth - minMonth) <= 3;
+  zoomInBtn.addEventListener('click', () => {
+    const span = maxMonth - minMonth;
+    if (span <= 3) return;
+    // When starting from full view, focus toward the diverging later part where branches separate
+    const shrink = Math.max(2, Math.round(span * 0.25));
+    const nextMin = !isZoomed ? Math.min(maxMonth - 3, minMonth + Math.round(span * 0.35)) : minMonth + shrink;
+    const nextMax = !isZoomed ? maxMonth : maxMonth - shrink;
+    applyZoom(nextMin, nextMax);
+  });
+
+  zoomControls.append(zoomOutBtn, zoomInBtn);
+  if (isZoomed) {
+    const resetBtn = document.createElement('button');
+    resetBtn.type = 'button';
+    resetBtn.className = 'graph-zoom-btn';
+    resetBtn.textContent = 'Reset';
+    resetBtn.addEventListener('click', () => {
+      state.graphBuilder.zoom = null;
+      renderGraphStudio();
+    });
+    zoomControls.append(resetBtn);
+  }
+  zoomBar.append(zoomHint, zoomControls);
+  stage.append(zoomBar);
+
+  const clipId = `graph-clip-${Math.random().toString(36).slice(2, 8)}`;
+
+  const gridHtml = yTicks.map(v => {
+    const y = yOf(v).toFixed(1);
+    return `<line x1="${padL}" y1="${y}" x2="${W - padR}" y2="${y}" stroke="${gridStroke}" stroke-width="1" />
+            <text x="${padL - 10}" y="${Number(y) + 4}" text-anchor="end" fill="${tickFill}" font-size="11" font-family="DM Sans, sans-serif">${escapeHtml(formatGraphAxisTick(metric, v, yStep))}</text>`;
+  }).join('');
+
+  const zeroY = yOf(0);
+  const zeroHtml = minVal < 0 && maxVal > 0
+    ? `<line x1="${padL}" y1="${zeroY.toFixed(1)}" x2="${W - padR}" y2="${zeroY.toFixed(1)}" stroke="${light ? 'rgba(198, 56, 43, 0.55)' : 'rgba(255, 127, 112, 0.55)'}" stroke-dasharray="5 5" stroke-width="1.3" />`
+    : '';
+
+  const xTickCount = Math.min(6, Math.max(2, activeMonths.length));
+  const xTickMonths = [];
+  for (let i = 0; i < xTickCount; i++) {
+    const idx = Math.round((i / (xTickCount - 1)) * (activeMonths.length - 1));
+    const m = activeMonths[idx];
+    if (xTickMonths[xTickMonths.length - 1] !== m) xTickMonths.push(m);
+  }
+  const xTicksHtml = xTickMonths.map((m, idx) => {
+    const x = xOf(m).toFixed(1);
+    const anchor = idx === 0 ? 'start' : idx === xTickMonths.length - 1 ? 'end' : 'middle';
+    const label = formatNiceDate(dateByMonth.get(m) || '');
+    return `<line x1="${x}" y1="${H - padB}" x2="${x}" y2="${H - padB + 5}" stroke="${axisStroke}" stroke-width="1" />
+            <text x="${x}" y="${H - 10}" text-anchor="${anchor}" fill="${tickFill}" font-size="11" font-family="DM Sans, sans-serif">${escapeHtml(label)}</text>`;
+  }).join('');
+
+  // Crisp surface-colored casing stroke behind each line keeps even very close curves visually sharp and separated
+  const pathsHtml = series.map(s => {
+    const d = s.pts.map((n, i) => `${i === 0 ? 'M' : 'L'}${xOf(n.month).toFixed(1)},${yOf(s.byMonth.get(n.month).value).toFixed(1)}`).join(' ');
+    const last = s.pts[s.pts.length - 1];
+    const lastX = xOf(last.month).toFixed(1);
+    const lastY = yOf(s.byMonth.get(last.month).value).toFixed(1);
+    const forkPt = s.forkMonth > 0 && s.byMonth.has(s.forkMonth) ? s.byMonth.get(s.forkMonth) : null;
+    const forkDot = forkPt
+      ? `<circle cx="${xOf(s.forkMonth).toFixed(1)}" cy="${yOf(forkPt.value).toFixed(1)}" r="3.8" fill="${surfaceBg}" stroke="${s.color}" stroke-width="2" />`
+      : '';
+    return `
+      <path d="${d}" fill="none" stroke="${surfaceBg}" stroke-width="4.4" stroke-opacity="${light ? '0.88' : '0.72'}" stroke-linecap="round" stroke-linejoin="round" />
+      <path d="${d}" fill="none" stroke="${s.color}" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" />
+      ${forkDot}
+      <circle cx="${lastX}" cy="${lastY}" r="3.8" fill="${s.color}" stroke="${surfaceBg}" stroke-width="1.6" />
+    `;
+  }).join('');
+
+  svg.innerHTML = `
+    <defs>
+      <clipPath id="${clipId}">
+        <rect x="${padL - 4}" y="${padT - 6}" width="${innerW + 8}" height="${innerH + 12}" />
+      </clipPath>
+    </defs>
+    ${gridHtml}
+    ${zeroHtml}
+    <line x1="${padL}" y1="${padT}" x2="${padL}" y2="${H - padB}" stroke="${axisStroke}" stroke-width="1.1" />
+    <line x1="${padL}" y1="${H - padB}" x2="${W - padR}" y2="${H - padB}" stroke="${axisStroke}" stroke-width="1.2" />
+    ${xTicksHtml}
+    <g clip-path="url(#${clipId})">${pathsHtml}</g>
+    <rect data-interactive="true" class="graph-brush-rect" x="0" y="${padT}" width="0" height="${innerH}" fill="${light ? 'rgba(20, 20, 18, 0.08)' : 'rgba(255, 164, 94, 0.16)'}" stroke="${light ? 'rgba(20, 20, 18, 0.5)' : 'rgba(255, 164, 94, 0.72)'}" stroke-width="1.2" style="display:none;pointer-events:none;" />
+    <g data-interactive="true" class="graph-crosshair-layer" style="display:none;">
+      <line class="graph-crosshair-line" x1="0" y1="${padT}" x2="0" y2="${H - padB}" stroke="${light ? 'rgba(20, 20, 18, 0.32)' : 'rgba(255, 224, 192, 0.5)'}" stroke-dasharray="4 4" stroke-width="1.2" />
+      <g class="graph-crosshair-dots"></g>
+    </g>
+    <rect data-interactive="true" class="graph-hit-rect" x="${padL}" y="${padT}" width="${innerW}" height="${innerH}" fill="transparent" style="cursor:crosshair;" />
+  `;
+
+  const tooltip = document.createElement('div');
+  tooltip.className = 'custom-graph-tooltip';
+  tooltip.hidden = true;
+  stage.append(svg, tooltip);
+
+  const crosshairLayer = svg.querySelector('.graph-crosshair-layer');
+  const crosshairLine = svg.querySelector('.graph-crosshair-line');
+  const crosshairDots = svg.querySelector('.graph-crosshair-dots');
+  const brushRect = svg.querySelector('.graph-brush-rect');
+  const hitRect = svg.querySelector('.graph-hit-rect');
+
+  const clientXToSvgX = clientX => {
+    const rect = svg.getBoundingClientRect();
+    if (!rect.width) return padL;
+    return Math.max(padL, Math.min(W - padR, ((clientX - rect.left) / rect.width) * W));
+  };
+
+  const updateHover = clientX => {
+    const svgX = clientXToSvgX(clientX);
+    const frac = Math.max(0, Math.min(1, (svgX - padL) / innerW));
+    const approxMonth = minMonth + frac * (maxMonth - minMonth);
+    let nearest = activeMonths[0];
+    let bestDist = Infinity;
+    for (const m of activeMonths) {
+      const dist = Math.abs(m - approxMonth);
+      if (dist < bestDist) { bestDist = dist; nearest = m; }
+    }
+
+    const cx = xOf(nearest);
+    crosshairLayer.style.display = '';
+    crosshairLine.setAttribute('x1', cx.toFixed(1));
+    crosshairLine.setAttribute('x2', cx.toFixed(1));
+
+    const entries = [];
+    const dotsMarkup = [];
+    for (const s of series) {
+      const hit = s.byMonth.get(nearest);
+      if (!hit) continue;
+      const cy = yOf(hit.value);
+      dotsMarkup.push(`<circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="5" fill="${s.color}" stroke="${surfaceBg}" stroke-width="2" />`);
+      entries.push({ series: s, value: hit.value });
+    }
+    crosshairDots.innerHTML = dotsMarkup.join('');
+
+    const sorted = [...entries].sort((a, b) => b.value - a.value);
+    let diffHtml = '';
+    if (entries.length === 2) {
+      const spread = entries[1].value - entries[0].value;
+      diffHtml = `<div class="custom-graph-tooltip-diff">${escapeHtml(entries[1].series.code)} vs. ${escapeHtml(entries[0].series.code)}: <strong>${escapeHtml(metric.formatDiff(spread))}</strong></div>`;
+    } else if (sorted.length > 2) {
+      const spread = sorted[0].value - sorted[sorted.length - 1].value;
+      diffHtml = `<div class="custom-graph-tooltip-diff">Spread (${escapeHtml(sorted[0].series.code)} vs. ${escapeHtml(sorted[sorted.length - 1].series.code)}): <strong>${escapeHtml(metric.formatDiff(spread))}</strong></div>`;
+    }
+
+    tooltip.innerHTML = `
+      <div class="custom-graph-tooltip-date">${escapeHtml(formatNiceDate(dateByMonth.get(nearest) || '', { includeDay: true }))}</div>
+      ${sorted.map(e => `
+        <div class="custom-graph-tooltip-row">
+          <span class="custom-graph-tooltip-name"><i style="background:${e.series.color}"></i><strong>${escapeHtml(e.series.code)}</strong></span>
+          <span class="custom-graph-tooltip-val">${escapeHtml(metric.format(e.value))}</span>
+        </div>
+      `).join('')}
+      ${diffHtml}
+    `;
+    tooltip.hidden = false;
+    const pctX = (cx / W) * 100;
+    if (pctX > 62) {
+      tooltip.style.left = 'auto';
+      tooltip.style.right = `${Math.max(2, 100 - pctX + 2)}%`;
+    } else {
+      tooltip.style.right = 'auto';
+      tooltip.style.left = `${Math.min(72, pctX + 2)}%`;
+    }
+  };
+
+  let dragStartX = null;
+  hitRect.addEventListener('pointerdown', event => {
+    if (event.button !== 0) return;
+    dragStartX = clientXToSvgX(event.clientX);
+    hitRect.setPointerCapture(event.pointerId);
+    crosshairLayer.style.display = 'none';
+    tooltip.hidden = true;
+    brushRect.style.display = '';
+    brushRect.setAttribute('x', dragStartX.toFixed(1));
+    brushRect.setAttribute('width', '0');
+  });
+
+  hitRect.addEventListener('pointermove', event => {
+    if (dragStartX !== null) {
+      const curX = clientXToSvgX(event.clientX);
+      const x1 = Math.min(dragStartX, curX);
+      const w = Math.abs(curX - dragStartX);
+      brushRect.setAttribute('x', x1.toFixed(1));
+      brushRect.setAttribute('width', w.toFixed(1));
+      return;
+    }
+    updateHover(event.clientX);
+  });
+
+  const finishDrag = event => {
+    if (dragStartX === null) return;
+    const endX = clientXToSvgX(event.clientX);
+    const startX = dragStartX;
+    dragStartX = null;
+    brushRect.style.display = 'none';
+    if (Math.abs(endX - startX) > 14) {
+      const f1 = Math.max(0, Math.min(1, (Math.min(startX, endX) - padL) / innerW));
+      const f2 = Math.max(0, Math.min(1, (Math.max(startX, endX) - padL) / innerW));
+      const m1 = Math.floor(minMonth + f1 * (maxMonth - minMonth));
+      const m2 = Math.ceil(minMonth + f2 * (maxMonth - minMonth));
+      if (m2 - m1 >= 2) applyZoom(m1, m2);
+    }
+  };
+
+  hitRect.addEventListener('pointerup', finishDrag);
+  hitRect.addEventListener('pointercancel', () => {
+    dragStartX = null;
+    brushRect.style.display = 'none';
+  });
+  hitRect.addEventListener('pointerleave', () => {
+    if (dragStartX === null) {
+      crosshairLayer.style.display = 'none';
+      tooltip.hidden = true;
+    }
+  });
+  hitRect.addEventListener('dblclick', () => {
+    if (isZoomed) {
+      state.graphBuilder.zoom = null;
+      renderGraphStudio();
+    }
+  });
+
+  return stage;
+}
+
+function renderGraphStudio(index = buildTreeIndex()) {
+  // Only useful once there is a branch to compare with the Original path.
+  const studio = byId('graph-studio');
+  if (studio) studio.hidden = !state.nodes.size || !index.branchIds.some(id => !isOriginalBranch(id));
+  if (!state.nodes.size) return;
+  populateGraphMetricSelect();
+  const leaves = getLeafPaths(index);
+  const valid = new Set(leaves.map(l => l.id));
+  state.graphBuilder.selectedBranchIds = state.graphBuilder.selectedBranchIds.filter(id => valid.has(id));
+
+  const metricSelect = byId('graph-y-metric');
+  if (metricSelect) metricSelect.value = state.graphBuilder.metricId;
+
+  const selectedSet = new Set(state.graphBuilder.selectedBranchIds);
+  const branchSelect = byId('graph-branch-select');
+  if (branchSelect) {
+    branchSelect.replaceChildren();
+    const available = leaves.filter(l => !selectedSet.has(l.id));
+    const placeholder = document.createElement('option');
+    placeholder.value = '';
+    placeholder.textContent = available.length ? 'Select a branch…' : 'All branches added';
+    branchSelect.append(placeholder);
+    for (const leaf of available) {
+      const opt = document.createElement('option');
+      opt.value = leaf.id;
+      opt.textContent = leaf.code;
+      branchSelect.append(opt);
+    }
+    branchSelect.disabled = available.length === 0;
+  }
+
+  const clearBtn = byId('graph-clear-all');
+  if (clearBtn) clearBtn.hidden = state.graphBuilder.selectedBranchIds.length === 0;
+
+  const chipsWrap = byId('graph-selected-branches');
+  if (chipsWrap) {
+    chipsWrap.replaceChildren();
+    chipsWrap.hidden = state.graphBuilder.selectedBranchIds.length === 0;
+    const leafById = new Map(leaves.map(l => [l.id, l]));
+    for (const id of state.graphBuilder.selectedBranchIds) {
+      const leaf = leafById.get(id);
+      if (!leaf) continue;
+      const chip = document.createElement('span');
+      chip.className = 'graph-branch-chip';
+      chip.style.setProperty('--chip-color', leaf.color);
+      chip.title = leaf.trail;
+      chip.innerHTML = `
+        <span class="graph-branch-swatch" aria-hidden="true"></span>
+        <span class="graph-branch-code">${escapeHtml(leaf.code)}</span>
+      `;
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.className = 'graph-branch-remove';
+      remove.setAttribute('aria-label', `Remove ${leaf.trail}`);
+      remove.textContent = '×';
+      remove.addEventListener('click', () => {
+        state.graphBuilder.selectedBranchIds = state.graphBuilder.selectedBranchIds.filter(item => item !== leaf.id);
+        renderGraphStudio();
+      });
+      chip.append(remove);
+      chipsWrap.append(chip);
+    }
+  }
+
+  const previewSlot = byId('graph-preview-slot');
+  if (previewSlot) {
+    previewSlot.replaceChildren(
+      buildCustomGraphStage(
+        { metricId: state.graphBuilder.metricId, branchIds: state.graphBuilder.selectedBranchIds, zoom: state.graphBuilder.zoom },
+        leaves
+      )
+    );
+  }
+}
+
+byId('toggle-sensitivity-panel')?.addEventListener('click', () => {
+  const next = !state.sensitivityOpen;
+  setSensitivityPanelOpen(next);
+  if (next) {
+    requestAnimationFrame(() => {
+      byId('path-report-panel')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    });
+  }
+});
+
+byId('graph-y-metric')?.addEventListener('change', event => {
+  state.graphBuilder.metricId = event.target.value;
+  renderGraphStudio();
+});
+
+byId('graph-branch-select')?.addEventListener('change', event => {
+  const id = event.target.value;
+  if (!id) return;
+  if (!state.graphBuilder.selectedBranchIds.includes(id)) {
+    state.graphBuilder.selectedBranchIds.push(id);
+  }
+  renderGraphStudio();
+});
+
+byId('graph-clear-all')?.addEventListener('click', () => {
+  state.graphBuilder.selectedBranchIds = [];
+  state.graphBuilder.zoom = null;
+  renderGraphStudio();
 });

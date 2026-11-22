@@ -1,0 +1,4 @@
+[deploy]
+startCommand = "HOST=0.0.0.0 exec python -m financial_twin.server"
+healthcheckPath = "/"
+healthcheckTimeout = 120

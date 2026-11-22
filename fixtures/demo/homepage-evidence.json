@@ -1,0 +1,21 @@
+{
+  "source": "GET /api/demo/alexia",
+  "currency": "CHF",
+  "start_date": "2026-01-01",
+  "horizon_months": 60,
+  "opening_cash_chf": 8000,
+  "monthly_expenses_chf": 2400,
+  "annual_inflation": 0,
+  "work_monthly_income_chf": 4800,
+  "study_monthly_income_chf": 1500,
+  "study_months": 24,
+  "graduate_monthly_income_chf": 6500,
+  "tuition_chf": 8000,
+  "tuition_months": [0, 12],
+  "expected_work_terminal_cash_chf": 152000,
+  "expected_master_terminal_cash_chf": 118000,
+  "expected_master_minimum_cash_chf": -29600,
+  "expected_master_minimum_cash_date": "2028-01-01",
+  "expected_first_funding_gap_period_start": "2026-01-01",
+  "hand_calculation": "Work: 8000 + 60 * (4800 - 2400) = 152000. Master's at 24 months: 8000 + 24 * (1500 - 2400) - 2 * 8000 = -29600. At 60 months: -29600 + 36 * (6500 - 2400) = 118000."
+}

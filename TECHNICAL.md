@@ -4,19 +4,23 @@
 
 To configure the AI provider, copy `.env.example` to `.env`, set `AI_API_KEY_1`, `AI_BASE_URL`, and `AI_API_KEY_MODEL`, and restart the server. Put model names in preference order on one line, separated by commas, such as `AI_API_KEY_MODEL=model1,model2,model3`. When a model is unavailable, rate-limited, or times out, the server tries the next model and waits 60 seconds before trying the failed model on a later request. Set `AI_MODEL_RETRY_SECONDS` to change that interval. If all models are cooling down, the server tries them in order.
 
-To spread requests over several API keys, set `AI_API_KEY_1`, `AI_API_KEY_2`, `AI_API_KEY_3` and so on; any number of keys is read in numeric order, and gaps or blank values are skipped. Each AI request starts with the next key in turn. If a key is rate-limited (HTTP 429) or rejected (401 or 403), the same request is retried with the next key, and that key rests for `AI_MODEL_RETRY_SECONDS` before it is used again; if every key fails, the last error is shown. Network errors and invalid requests are not retried with other keys, since another key would not help. The single `AI_API_KEY` (or `GEMINI_API_KEY`) still works and joins the rotation if set. The website has no key settings, so keys are only configured in `.env`. Keys never leave the server: `/api/config` only reports whether a key is configured.
+To spread requests over several API keys, set `AI_API_KEY_1`, `AI_API_KEY_2`, `AI_API_KEY_3` and so on; any number of keys is read in numeric order, and gaps or blank values are skipped. Each AI request starts with the next key in turn. If a key is rate-limited (HTTP 429) or rejected (401 or 403), the same request is retried with the next key, and that key rests for `AI_MODEL_RETRY_SECONDS` before it is used again; if every key fails, the last error is shown. Network errors and invalid requests are not retried with other keys, since another key would not help. The single `AI_API_KEY` (or `GEMINI_API_KEY`) still works and joins the rotation if set. The website has no key settings, so keys are only configured in `.env`. The server authenticates directly with the configured provider. The browser receives only a key-presence flag from `/api/config`.
 
-Describe your finances and the decision you want to explore, using CHF for monetary amounts. Select a 5-, 10- or 20-year horizon and submit. The server sends the statement to Google Gemini to extract a starting scenario and choose three to five relevant controls. Review the assumptions, adjust the sliders, and choose **Simulate Future** to project the monthly timeline with the Python engine.
+Describe your finances and the decision you want to explore, using CHF for monetary amounts. Select a 5-, 10- or 20-year horizon and submit. The server sends the statement to the configured provider to extract a starting scenario and choose three to five relevant controls. Review the assumptions, adjust the sliders, and choose **Simulate Future** to project the monthly timeline with the Python engine.
 
-The server also exposes the [projection engine](#projection-engine-user-entered-profile), which projects a user's own starting numbers with rule-based decisions: `GET /api/schema` returns the input fields, event types, defaults and ranges, and `POST /api/project` returns the baseline and decision paths. The current web interface still uses the extraction flow above.
+The server also exposes the [projection engine](#projection-engine-user-entered-profile), which projects a user's own starting numbers with rule-based decisions: `GET /api/schema` returns the input fields, event types, defaults and ranges, and `POST /api/project` returns the baseline and decision paths. The homepage also exposes deterministic comparisons. API clients can supply custom event lists, synthetic profile IDs, or a frozen scenario record.
 
 ## PostgreSQL data
 
 The server requires `DATABASE_URL`. The provided Docker Compose database listens on localhost port 5433 and stores data in the `financial_twin_data` named volume, which survives application and database restarts. A local PostgreSQL instance or hosted PostgreSQL database can also be used by setting its URL in `.env`. Start the database before starting the server. The existing local PostgreSQL cluster in this workspace can instead be started with `/usr/lib/postgresql/16/bin/pg_ctl -D .local/postgres -l .local/postgres.log -o '-p 5433 -k /tmp' start` and stopped with `/usr/lib/postgresql/16/bin/pg_ctl -D .local/postgres stop`. Use either this local cluster or Compose at a time, since both use port 5433.
 
-On startup, PostgreSQL tables are created if needed. If every application data table is empty, all eleven supplied CSV files are loaded in one transaction under an advisory lock. If any table contains data, the import is skipped; subsequent starts do not read the CSVs. A failed import rolls back, and concurrent startups cannot duplicate the seed. To deliberately reset data, empty all application tables or create a new database; removing the Compose volume permanently deletes the stored data. The scenario catalog and the identical scenario library are retained as separate source tables. Most records link to profiles, accounts, or scenarios through foreign keys; asset account references remain unconstrained because some investment accounts are absent from the accounts CSV.
+On startup, PostgreSQL tables are created if needed. If every application data table is empty, the eleven bundled fictional seed tables in `fixtures/demo` are loaded in one transaction under an advisory lock. If any table contains data, the import is skipped; subsequent starts do not read the CSVs. A failed import rolls back, and concurrent startups cannot duplicate the seed. To deliberately reset data, empty all application tables or create a new database; removing the Compose volume permanently deletes the stored data. The catalog and library retain separate source tables. Most records link to profiles, accounts, or scenarios through foreign keys; asset account references remain unconstrained because some investment accounts are absent from the accounts CSV.
 
 To run the PostgreSQL integration test against a disposable schema, set `TEST_DATABASE_URL` to a database where the user can create schemas, then run `.local/venv/bin/python -m unittest discover -s tests -v`.
+
+### Optional organizer-data audit
+
+The default seed uses the packaged files. To audit a separately authorized copy of the full challenge, set `FINANCIAL_TWIN_DATA_ROOT` to its root and use a fresh database. Preserve `Data/*.csv` and `docs/scenario-library-120.csv`. Extract `Data/synthetic-transactions.zip` so the transaction table is at `Data/synthetic-transactions/synthetic-transactions.csv`. The root also selects the source for synthetic profile-ID projections. The canonical demo always reads its own packaged assumptions. Running the optional archive tests against the original collection requires placing it in the challenge directory expected by those tests.
 
 ## Simulation engine
 
@@ -29,9 +33,9 @@ This Python package models monthly financial decisions for the LauzHack challeng
 
 ## Challenge materials
 
-Stefania Stan’s [challenge brief](ai-financial-twin-lauzhack-2026/README.md) asks teams to let a user change a life decision and compare its consequences against a baseline. The examples follow Alexia, a fictional student in Lausanne with CHF 8,000 in cash. The [evaluation materials](ai-financial-twin-lauzhack-2026/evaluation/README.md) give draft judging guidance. They emphasize a demonstrable decision, sound accounting, visible assumptions, constraint breaches and explainable comparisons. Binding event rules come from the organizers.
+Stefania Stan’s challenge brief describes a fictional student comparing work with study. Historical sample statistics below describe the original challenge collection. The submission ships its own demonstration fixtures in `fixtures/demo`. See [data and software attribution](evaluation/attributions.md).
 
-The [Data directory](ai-financial-twin-lauzhack-2026/Data) contains 1,200 synthetic profiles, 1,200 accounts, 2,399 asset snapshots, 283 liability snapshots, 1,500 goals and 28,800 monthly cash reconciliations. The 120 catalog entries describe decisions. The 240 scenario assumption rows cover only a subset of profile/scenario combinations. The transaction and life-event CSVs are also loaded. Net monthly transactions alone cannot identify the underlying income and expense categories.
+The original challenge collection contained 1,200 synthetic profiles, 1,200 accounts, 2,399 asset snapshots, 283 liability snapshots, 1,500 goals and 28,800 monthly cash reconciliations. The 120 catalog entries describe decisions. The 240 scenario assumption rows cover only a subset of profile/scenario combinations. The transaction and life-event CSVs are also loaded. Net monthly transactions alone cannot identify the underlying income and expense categories.
 
 Profiling the data showed three limits that shape the projection engine:
 
@@ -41,7 +45,7 @@ Profiling the data showed three limits that shape the projection engine:
 
 The transactions reconcile exactly with `synthetic-cash-balances.csv`: opening cash plus each month's net transactions equals closing cash in all 28,800 rows.
 
-The [starter kit](ai-financial-twin-lauzhack-2026/starter-kit) supplies an independent cash-only reference with three ten-year paths. Its JSON assumptions differ from the CSV scenario assumptions. For example, the JSON charges Alexia CHF 2,500 at the beginning of each study year, whereas her S001 CSV assumption specifies CHF 8,000 per year. Her ledger also differs from the starter JSON: she averages CHF 1,176 of income and CHF 2,207 of spending per month, against CHF 1,200 and CHF 2,100 in the JSON. Select one set explicitly when comparing paths. The projection engine takes tuition from the CSV medians and uses the starter's CHF 4,800 graduate income and CHF 6,500 relocation cost only as labelled assumptions.
+The bundled ten-year reference uses two CHF 2,500 tuition charges. The generalized education default is CHF 4,800 annually, and the five-year homepage story explicitly specifies CHF 8,000 each year. Preserve the selected convention when comparing outcomes.
 
 ## Modelling choice
 
@@ -116,13 +120,27 @@ The event types in `financial_twin/branching.py` (Study, Career change, Relocate
 | Endpoint | Purpose |
 | --- | --- |
 | `GET /api/branch/presets` | Event types: id, label and an example of useful details |
-| `POST /api/branch/propose` | `{parent, preset?, event?}` with at least one of them → `{proposal, origin}`. Always calls the AI. |
+| `POST /api/branch/propose` | `{parent, preset?, event?}` with at least one of them → `{proposal, origin}`. Uses a cached proposal when available, otherwise asks the provider. |
 | `POST /api/branch/apply` | `{parent, event, months, variables, proposal}` → branch nodes. Deterministic; the first node stores the applied proposal as `branch_proposal`. |
+| `POST /api/branch/append` | `{nodes, node_id, event, proposal, sequence?, months?}` → the recalculated points. Adds the event to the selected point's path instead of branching; see below. Deterministic. |
 | `POST /api/branch` | One step (propose and apply without review), kept for compatibility |
 
 `/api/branch/apply` splits the engine's phases at every block boundary, so temporary changes end on time and their start and end appear as milestones. The random test scenario, which must work without the AI, builds its branches from fixed sample events (`SAMPLES`); these are not offered to users. `tests/test_branching.py` checks durations, purchase accounting, money received, warnings, every preset and the AI and no-AI paths.
 
-A branch continues the situation at the selected node and does not inherit phases or one-off costs that the original path planned after that node, so each branch explores one event at a time.
+A reviewed building-block branch continues the selected node’s balance sheet and scheduled commitments. Recurring changes split the inherited phases at their effective start and end. The fork record identifies inherited, added and replaced commitments.
+
+### Adding an event to a path
+
+The review card also offers **Add to this path**. Instead of starting a branch, the event is added to the path the selected point is on, and every later month of that path is simulated again with it:
+
+- **Effect:** the event takes effect from the selected point, like a branch: monthly changes, one-off amounts, purchases with their loans and the investment change. It is added on top of what the path had already planned, so the path keeps its own later phases and costs.
+- **Later events stay.** Events further along the path (purchases, loans, other added events) are applied again on top of the new figures, using the same re-simulation as **Edit this point** (`resimulate_node` in `financial_twin/server.py`).
+- **Branches that split off later** get the parts of the event that had started by the time they split off. Since a branch replaces the plans made after its fork, a change or one-off scheduled after that is not theirs. Their own event is applied on top.
+- **Branches that split off at the selected point itself** are alternatives to the event and stay unchanged. So do earlier points and every other path.
+- **IDs stay:** the recalculated points keep their IDs, so nothing else on screen needs to change. The point after the selected one shows the event's name as a milestone and lists what it assumes under **Event added here**. Several events can be added at the same point; their effects add up.
+- **Last point:** if the selected point is the last one on its path, the path is extended by the period chosen in the card.
+
+Each addition is recorded in the run file's `branches` list as `kind: "append"` with its proposal, so replay repeats it in order. `tests/test_append_event.py` checks the recalculated future, accounting identities on every month, later branches, extensions, two events at one point, an earlier addition keeping a later one, a later edit keeping the addition, exact replay, and the HTTP endpoint.
 
 ## Uncertainty range
 
@@ -139,11 +157,11 @@ A branch continues the situation at the selected node and does not inherit phase
 | Investment returns | − / + volatility ÷ √(horizon in years), the uncertainty of an average return |
 | Inflation | ±1 percentage point; the side that lowers final net worth counts as pessimistic |
 
-The pessimistic run moves every input to its unfavourable side at once and the optimistic run to its favourable side, so the band is an outer bound, not a probability. Ranges are centred on the values shown: low = shown + (pessimistic − unadjusted re-simulation), so the band never drifts from the timeline. The response also lists, per branch, the first month cash turns negative in the pessimistic case and the inputs ranked by their effect on the branch's final net worth (each moved on its own). The start screen does not yet tag which values the user stated, so today's living costs vary even when typed in. `tests/test_uncertainty.py` checks that the unadjusted re-simulation reproduces every node exactly, hand-calculated driver effects, widening over time and input validation.
+The pessimistic run moves every input to its unfavourable side at once and the optimistic run to its favourable side, to construct two stress scenarios. Neither line estimates a probability or bounds every possible outcome. Ranges are centred on the values shown: low = shown + (pessimistic − unadjusted re-simulation), so the band never drifts from the timeline. The response also lists, per branch, the first month cash turns negative in the pessimistic case and the inputs ranked by their effect on the branch's final net worth (each moved on its own). The starting-cost stress applies even when someone has entered that value. `tests/test_uncertainty.py` checks that the unadjusted re-simulation reproduces every node exactly, hand-calculated driver effects, widening over time and input validation.
 
 ## Check the implementation
 
-Run `.local/venv/bin/python -m unittest discover -s tests -v` from the workspace root with the challenge checkout present. This also runs the browser-logic tests when Node.js is installed; run them on their own with `node --test tests/web/app.test.mjs`. The starter's original tests can also be run from `ai-financial-twin-lauzhack-2026/starter-kit` with `python3 -m unittest -v`.
+Run `.local/venv/bin/python -m unittest discover -s tests -v` from the workspace root. Historical organizer-data audits additionally use a local, authorized copy of the challenge files. This also runs the browser-logic tests when Node.js is installed; run them on their own with `node --test tests/web/app.test.mjs`. The starter's original tests can also be run from `ai-financial-twin-lauzhack-2026/starter-kit` with `python3 -m unittest -v`.
 
 | Test file | What it checks |
 | --- | --- |
@@ -154,24 +172,34 @@ Run `.local/venv/bin/python -m unittest discover -s tests -v` from the workspace
 | `test_web.py` | AI request format, model fallback and cooldown, slider handling and nested branches. |
 | `test_reproducibility.py` | Identical results from identical inputs, seeds, deterministic branch IDs and exact replay of run files. |
 | `test_ai_cache.py` | Same input, same numbers: with a fake AI that answers differently every time, the same story or branch event still gives identical numbers, also through the HTTP API, after a restart and under concurrent requests; invalid answers are not cached. |
+| `test_currency.py` | Currencies: amounts written in other currencies (symbols, codes, words, `k`/`million`, Swiss and European separators) are converted to CHF exactly, CHF amounts and bare numbers are left alone, live rates are reused, offline falls back to saved and then built-in rates, the AI gets the story, branch events and branch proposals in CHF, and unsupported currencies are rejected. No test uses the network. |
+| `test_append_event.py` | Adding an event to an existing path: the later months are recalculated with it, earlier points and alternatives at the same point stay, later branches keep their own event and only get what had started before they split off, accounting holds every month, the last point extends the path, events add up, later edits keep them, and run files replay them exactly. |
 | `test_api_keys.py` | Taking turns across `AI_API_KEY_1`, `AI_API_KEY_2`, …, failover on rate limits and rejected keys, rest periods, and `scripts/check_keys.py`. |
 | `test_event_resolver.py`, `test_event_cache_postgres.py` | Reference figures for named institutions and places: cache hits and refreshes, aliases, grounded citations and failed lookups (the PostgreSQL test needs `TEST_DATABASE_URL`). |
-| `test_frontend.py`, `web/app.test.mjs` | Browser logic: branch and Original-path deletion, the confirmation flow, the tree index, timeline milestones, health flags, number formatting, HTML escaping, and that a run file written by the browser replays exactly in Python. |
+| `test_frontend.py`, `web/app.test.mjs` | Browser logic: branch and Original-path deletion, cutting a path from a later point (with the branches that split off after it), the confirmation flow, the tree index, timeline milestones, health flags, number formatting, HTML escaping, and that a run file written by the browser replays exactly in Python. |
 | `test_projection.py`, `test_loaders.py`, `test_database.py` | The projection engine, the challenge data loaders and the PostgreSQL seed (needs `TEST_DATABASE_URL`). |
 
 `tests/test_projection.py` runs without the challenge data, except for one ledger replay. That test feeds the monthly income and spending of profiles P00001–P00050 from `synthetic-transactions.csv` through the projection recurrence and requires every month to match `closing_cash_chf` in `synthetic-cash-balances.csv`. It looks for the data in `ai-financial-twin-lauzhack-2026-main/Data` or `ai-financial-twin-lauzhack-2026/Data` inside the repository, or in `../ai-financial-twin-lauzhack-2026-main/Data`, and is skipped when none exists.
 
+## Currencies
+
+The assumptions page has a **Currency** menu with CHF, EUR, USD, GBP, JPY, CNY, CAD, AUD, SEK, NOK, DKK, PLN and INR, and the timeline and full-tree views have a compact one next to their buttons. All menus stay in sync. Switching redraws what is on screen in the new currency and keeps the values set so far. The choice is remembered in the browser, and the next story is read with it: amounts written without a currency count as that currency, which the assumptions page's ⓘ states.
+
+The engine always calculates in CHF, because the Swiss reference data is in CHF. Another currency is a view on the same numbers:
+
+- **Shown amounts** are converted from CHF: the timeline, charts, summaries, the inspector, path reports, branch proposals and server-written text that quotes CHF amounts.
+- **Typed amounts** are read in the chosen currency and converted to CHF before they are sent: assumption text boxes, node edits and the building blocks of a branch proposal.
+- **The story and branch events** are converted on the server before the AI sees them. An amount written with a currency (`€15,000`, `4'200 EUR`, `50k euros`, `£1.5m`, `USD 20,000`) is rewritten as CHF in code, for example `CHF 13,835.09 (written as €15,000)`, so the AI does no arithmetic on it. For amounts without a currency, the prompt states the chosen currency and the exact rate. `$`, `¥` and `kr` mean the chosen currency when it uses that symbol; otherwise `$` is USD, `¥` is JPY, and `kr` is left to the AI. The assumptions page lists every conversion it made.
+
+Rates are the European Central Bank reference rates from the free Frankfurter service (`https://api.frankfurter.dev`, no key; only the base currency is sent). They are kept for 6 hours and saved in `.local/exchange-rates.json`. If the service cannot be reached, the saved rates are used, and failing that, built-in rates of 2026-11-20 in `financial_twin/currency.py`; offline, the service is tried again after 5 minutes. Hovering over a currency menu shows the rate, its date and its source, and `GET /api/currencies` returns them.
+
+Run files keep every number in CHF and record the display currency and its rate under `display_currency`, so replays are unaffected. The AI cache key includes the converted text and the rate: the same story in the same currency gives the same numbers for as long as the rate is unchanged. Comparison API amounts carry explicit CHF units.
+
 ## Same input, same numbers
 
-The language model is the only part of the pipeline that is not deterministic: asked the same question twice, it can answer differently. The server therefore caches every validated AI answer in `.local/ai-cache` (set `AI_CACHE_DIR` to move it), so the same input always produces the same numbers:
+A saved scenario, start date, horizon, reviewed changes and model implementation determine the replay. Fresh natural-language extraction can vary. The extraction date is assigned when the answer is validated. FX rates and public event references can also change.
 
-- **Same story, same assumptions.** The scenario answer is stored under the full question: the story text, the horizon, the answer format and a prompt version. Asking again, after a restart too, returns the stored answer without calling the AI, so the simulation and the final year are identical. Differences in spacing do not count as a different story.
-- **Same event, same branch.** A branch's answer is stored under the event text and the exact moment it starts from, so adding the same event at the same point gives the same branch.
-- **Independent of keys and models.** API keys and model names are not part of the question, so key rotation and model fallback cannot change a cached answer.
-- **Only valid answers are kept.** An answer that fails validation is not stored, so the next request asks again. If two identical requests arrive at once, the first stored answer is used by both.
-- **Stable first answers.** New questions are sent with `temperature` 0 (and `seed` 0 for Gemini), which makes first answers as consistent as the provider allows. Set `AI_TEMPERATURE` to change this, or leave it blank for models that reject the setting.
-
-To get fresh answers, change the wording or delete `.local/ai-cache`. Dates follow the day a projection is started, so a repeat on a later day shows the same numbers with later dates. `tests/test_ai_cache.py` uses a fake AI that answers differently every time and checks that the same story, through the website's API, still gives identical numbers for every month.
+The server hashes a whitespace-normalized prompt, schema, request kind and prompt version for its AI response cache. An unchanged cache key can reuse a validated answer across restarts, model changes and key rotation. A new prompt, currency conversion or cache deletion can produce new assumptions. The cache contains structured answers which can include sensitive amounts and text. The application sets no expiry on these files. Operators can remove the relevant entries from `AI_CACHE_DIR` (default `.local/ai-cache`). PostgreSQL caches named milestone lookups separately. Expiry limits reuse and does not itself erase a database row. Downloaded run files remain under the recipient’s control.
 
 ## Reproduce a run
 
@@ -186,6 +214,7 @@ A run file records everything the calculation needs:
 | --- | --- |
 | `source`, `seed`, `start_date` | `simulate` for a story-based run; `test` for the **Test** button's random data, which is regenerated from its seed. The seed is shown when the test data is generated. |
 | `scenario`, `variables`, `years`, `units` | The engine inputs for the original path: the scenario the AI extracted, the slider values, the horizon, CHF and monthly steps. |
+| `operations` | Ordered successful node edits, branches and events added to an existing path (`append`). Replay applies each against the state that existed at that step. Older files use the branch list. |
 | `branches` | Every branch in creation order, with the change the AI produced for it and a sequence number that makes its node IDs deterministic. |
 | `kept_node_ids`, `expected` | The nodes still on screen after any deletions, and their cash, net worth, total assets, total debt and net cash flow. |
 | `environment` | The Python and NumPy versions that produced the results. |
@@ -196,7 +225,7 @@ The AI steps are the only nondeterministic part: asking the model again can retu
 
 ## Projection engine (user-entered profile)
 
-`financial_twin/projection.py` projects the user's own starting numbers rather than a dataset profile. The projection starts in the month of the request (month 0), and point *k* of a timeline is the state after *k* monthly transitions. The paths are conditional projections under stated assumptions, not forecasts.
+`financial_twin/projection.py` projects the user's own starting numbers rather than a dataset profile. The projection starts at the explicit start month, synthetic snapshot month, or current month (month 0), and point *k* of a timeline is the state after *k* monthly transitions. The paths are conditional projections under stated assumptions, not forecasts.
 
 ### Inputs
 
@@ -217,7 +246,7 @@ Only four profile fields are required. Every other value is filled in when missi
 | `debts[]` | `{name, principal_chf, annual_interest_rate, monthly_payment_chf}` | user |
 | `goals[]` | `{name, target_chf, in_months or date, priority: high, medium or low}` | user |
 
-The dataset defaults live in `financial_twin/defaults.json`, so the app never reads the CSVs at runtime. Regenerate the file with `python scripts/build_defaults.py path/to/Data` after unzipping `synthetic-transactions.zip`.
+The dataset defaults live in `financial_twin/defaults.json`, and ordinary user-entered projections read that aggregate file. Synthetic profile-ID projections read the bundled snapshot CSVs. Regenerate the file with `python scripts/build_defaults.py path/to/Data` after unzipping `synthetic-transactions.zip`.
 
 ### Decisions
 
@@ -225,10 +254,10 @@ A scenario is a named list of events `{"type", "in_months" or "date": "YYYY-MM",
 
 | Type | Effect | Parameters and defaults |
 | --- | --- | --- |
-| `education` | Adds tuition/12 to fixed costs and scales income while studying, then sets the graduate income | `duration_months` 24 and `annual_tuition_chf` 4,800 (dataset); `income_share_while_studying` 1.0 for students, 0.2 otherwise; `income_after_chf` the larger of income +15% and CHF 4,800 |
+| `education` | Adds tuition/12 to fixed costs and scales income while studying, then sets the graduate income | `duration_months` 24 and `annual_tuition_chf` 4,800 (dataset); `income_share_while_studying` 1.0 for students, 0.2 otherwise; `income_after_chf` current monthly net income × 1.15, rounded to CHF |
 | `career_change` | Scales income during a gap, then applies a percentage change or a new absolute income | `gap_months` 3; `income_share_during_gap` 0; `income_change_pct` 0.15; `new_income_chf` none; `one_off_cost_chf` 0 |
-| `relocation` | One-off moving cost, then scales rent, income and other living costs | `moving_cost_chf` 6,500 (starter kit); `rent_change_pct`, `income_change_pct` and `cost_of_living_change_pct` 0 |
-| `housing_change` | Sets the new rent and moves the rent deposit from cash into a locked asset, so liquidity falls but net worth does not | `new_rent_chf` current rent; `deposit_months` 3 (the legal maximum); `moving_cost_chf` 1,500. The refund of an old deposit is not modelled. |
+| `relocation` | One-off moving cost, then scales rent, income and other living costs | `moving_cost_chf` 1,500 (illustrative general default); `rent_change_pct`, `income_change_pct` and `cost_of_living_change_pct` 0 |
+| `housing_change` | Sets the new rent and moves the rent deposit from cash into a locked asset, so liquidity falls but net worth does not | `new_rent_chf` current rent; `deposit_months` 3 (illustrative default); `moving_cost_chf` 1,500. The refund of an old deposit is not modelled. |
 | `unexpected_expense` | One-off cost | `amount_chf` CHF 958 (dataset median) |
 | `custom` | Adds monthly income and expense changes for a period, plus a one-off cost | All 0; `duration_months` 0 means permanent |
 
@@ -254,16 +283,12 @@ Debt accrues interest at `annual_interest_rate / 12` and is reduced by its month
 - `comparisons`: for each scenario against the baseline, the cash and net-worth difference at the end, the largest cash gap and its month, and the break-even month after which net worth stays at or above the baseline (`null` if not reached within the horizon).
 - `assumptions`: every value not entered by the user, with its source and note.
 
-Example for Alexia (age 20, CHF 8,000 cash, CHF 1,200 income, CHF 900 rent, student) with a master's degree starting in September 2027 and a ten-year horizon from November 2026: the baseline ends at about CHF −125,000 because she spends about CHF 1,100 more than she earns each month. The master's path falls up to CHF 9,600 behind the baseline while she studies, catches up three months after graduation, and ends at about CHF 175,000.
+### Housing and frozen replay
 
-```python
-from financial_twin.projection import project
+For a rental change, a deposit reduces available cash and increases locked assets. A purchase with a positive purchase price consumes the down payment, fees and moving costs. In the simplified mode the engine locks the equity contribution and charges maintenance and mortgage interest as recurring costs. With `detailed_housing: 1` it books the property asset, opens the mortgage for the financed balance and amortizes it using its rate and term. Principal reduces both cash and debt. Fees reduce wealth. The engine reports the cash shortfall if the purchase requires more cash than is available.
 
-result = project(
-    {"age": 20, "cash_chf": 8000, "monthly_net_income_chf": 1200,
-     "monthly_rent_chf": 900, "employment_status": "student"},
-    {"Master's": [{"type": "education", "date": "2027-09"}]},
-    horizon_years=10, start="2026-11",
-)
-print(result["comparisons"]["Master's"]["break_even_date"])
-```
+Pass the returned `scenario_record` as the sole payload field to `POST /api/project` to reuse the resolved profile, events, timing, inflation and input provenance, including explicit nulls. This bypasses fresh event lookup and default resolution. Use this contract for generalized projections and the downloaded run verifier for an interactive node tree.
+
+### Interface and API
+
+The untouched five-year Alexia preset and the offline control use `GET /api/demo/alexia`, which builds a fixed work baseline and reviewed study intervention without AI. The homepage supports story extraction, review, simulation, branch proposal and application, node editing, sensitivity, path reports and run downloads. The canonical comparison returns its full bundle from `GET /api/comparisons/alexia`. For programmatic integration, `GET /api/schema` describes accepted fields and bounds, `GET /api/events/presets` lists unexpired public milestone references, and `POST /api/project` accepts up to five named decision paths. `POST /api/branch` remains a one-step compatibility API. [Worked demonstration and startup](README.md)

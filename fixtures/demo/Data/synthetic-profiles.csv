@@ -1,0 +1,3 @@
+profile_id,display_name,age_at_start,city,canton,country,currency,employment_status,household_type,opening_cash_chf,reference_monthly_net_income_chf,reference_monthly_rent_chf,as_of_date,synthetic
+P00001,Alexia,20,Lausanne,VD,CH,CHF,student,single,8000,1200,900,2025-01-01,true
+P00013,Camille,32,Lausanne,VD,CH,CHF,employed,single,8139.79,5000,1500,2025-01-01,true
