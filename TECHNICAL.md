@@ -161,17 +161,47 @@ The pessimistic run moves every input to its unfavourable side at once and the o
 
 ## Goals scorecard
 
-**Goals** (in the results header and the tree's top bar) opens a panel where users describe their goals in their own words or add them in a form, then rank every path on screen with **Find the best path**. Goals are kept in the browser (`localStorage`).
+**Goals** (in the results header and the tree's top bar) opens a panel where users describe their goals in their own words or add them in a form, then rank every path on screen with **Find the best path** and open **Explain** for any path. Goals are kept in the browser (`localStorage`).
 
-The AI does one thing: `POST /api/goals/parse` turns the user's sentence into structured goals (`financial_twin/goals.py`, `GOALS_SCHEMA`), through the AI cache, for the user to review and edit. Nothing is trained, and the AI never ranks. `POST /api/goals/score` is deterministic: it takes the nodes on screen and the goals, computes the uncertainty range (`financial_twin/uncertainty.py`) and checks every path:
+**AI step.** `POST /api/goals/parse` is the only AI call (through the AI cache). It turns the user's sentence into measurable goals for review (`financial_twin/goals.py`, `GOALS_SCHEMA`). Goals with a clear financial stand-in are translated with a visible note, for example buying a home becomes cash for a 20% down payment plus about 5% purchase costs, and retiring becomes net worth of 25 × yearly living costs (the 4% rule, an assumption). Goals that cannot be measured with money and dates come back in `unsupported` with a reason and are not scored. Nothing is trained and the AI never ranks.
 
-| Goal type | Met when |
+**Goal types**
+
+| Type | Met when |
 | --- | --- |
-| `cash_by_date` | cash at the goal month ≥ target (e.g. a down payment) |
+| `cash_by_date` | cash at the goal month ≥ target |
 | `net_worth_by_date` | net worth at the goal month ≥ target |
-| `never_short` | cash never negative over the path |
+| `never_short` | cash never negative over the window |
+| `debt_free_by_date` | debt at the goal month is zero; a later loan counts again |
+| `monthly_surplus` | average monthly net cash flow from the date onwards ≥ target |
+| `reserve_months` | cash always ≥ N × that month's living costs |
 
-Per goal and path the response gives the gap (value − target), the closeness (value ÷ target capped at 100%, or the share of months with cash ≥ 0) and a status: *robust* (met even in the pessimistic range), *fragile* (met, but not pessimistically), *within reach* (met only in the optimistic range) or *missed*. A path's score is the priority-weighted mean closeness (high 3, medium 2, low 1); ties go to more robust goals, then higher final net worth. Goals are judged independently, so two cash goals do not share one pot of money, and a goal dated after a path ends is judged at its last month. `tests/test_goals.py` checks hand-calculated statuses and gaps, the weighting, ranking, validation and the parsing step.
+**Fair comparison.** `POST /api/goals/score` judges every path over the same window, from the start to the scenario horizon. Paths that end earlier are continued for scoring only (`engine.simulate` from their last node, at their last situation); the continued months are flagged and never added to the tree. Goals dated after the horizon are reported as *beyond horizon* and left out of the score.
+
+**Scoring.** Per goal and path: the gap (value − target), the closeness (value ÷ target capped at 100%, or the share of months that meet the goal) and a status: *robust* (met even in the pessimistic uncertainty range), *fragile* (met, but not pessimistically), *within reach* (met only optimistically), *met* (types without a range check), *missed* or *beyond horizon*. A path's score is the priority-weighted mean closeness (high 3, medium 2, low 1) over the scored goals; ties go to more robust goals, then higher net worth at the horizon. Goals are judged independently, so two cash goals do not share one pot of money.
+
+**Explanations.** Each goal and path also gets a headline and levers, built from fixed templates and calculated numbers: *money* (gap ÷ months until the goal date), *time* (the month the path reaches the target, or the trend beyond the horizon), *reachable* (what the path reaches by the date), *why* (the cash flow that differs most from the original path up to the goal date: income, living costs, one-off costs, loan payments or money moved into investments), *safety* (the buffer a fragile goal needs) and the stand-in note. `tests/test_goals.py` checks hand-calculated statuses, gaps and levers, the common horizon, every goal type, the weighting, validation and the parsing step.
+
+## Compare paths
+
+**Compare paths** (next to Goals) shows every path over the same years. `POST /api/paths/compare` continues paths that end early to the common horizon (as the goals scorecard does) and returns, per path: net worth and cash at the horizon and their difference from the original path, the lowest cash and when cash first runs out (months short), the month a path overtakes the original path and stays ahead, the net-worth range if estimates are off, and plain-language sentences (`financial_twin/path_compare.py`). The sentences come from fixed templates filled with calculated numbers.
+
+**One explanation.** `financial_twin/explain.py` is the only place a difference between two paths is explained. `attribute(chain, base, field, until)` splits the difference in cash or net worth at a date into the money flows that caused it, summed from the start:
+
+| Field | Parts |
+|---|---|
+| Net worth | income, living costs, one-off costs, loan interest, investment returns, changes in the value of what you own (home, investments, deposits) |
+| Cash | income, living costs, one-off costs and purchases, loan payments, money moved into investments, money borrowed, other cash movements |
+
+The last part is whatever the listed flows do not cover, so the parts always add up to the difference. Parts under CHF 100 or 2% of the difference are left out. For net worth, a purchase's cash payment is netted against the value of what it bought, so buying a home or car is not shown as a loss. Compare paths uses it at the common horizon for net worth; a goal's **Why** lever uses it at the goal's deadline, for cash or net worth depending on the goal. In the app, **Explain** in Goals and in Compare paths opens the same panel: *Why it differs from the original path* (for the original path itself: *How the original path goes*) and *Your goals on this path* with the levers (once goals are scored). `tests/test_path_compare.py` checks a raise, a study break that is caught up later, a purchase, a cash shortfall, continuation, and that the cash and net-worth parts add up and match the goal lever.
+
+**One goal list.** Goals mentioned in the story (the engine's scenario goals, checked per node with cash set aside for goals already met) are imported into the Goals panel as *cash by a date* goals marked "From your story" when the panel opens. Once the paths are scored, the node details show the scorecard's verdict for that node's path (**Your goals on this path**), so the panel and the details agree; before scoring they show the story goals with a button to compare every path.
+
+## Which estimates matter most (sensitivity)
+
+**Sensitivity** on a path (`POST /api/path-report`, `financial_twin/engine_report.py`) answers: *which of my inputs moves the result most?* It raises one input at a time by 15% (or a small step if it is zero), keeps everything else the same, re-runs the path from its last change and reports how much **cash at the end** and the **lowest cash** move. The table lists inputs in plain words (for example *Monthly income from 2027-09* instead of `phases[2].monthly_income_chf`, which stays in the tooltip), sorted by the size of the effect, so the inputs worth checking first are at the top. It is a ranking of influence, not a forecast, and gives no probabilities; the uncertainty range does the "what if several estimates are off at once" part.
+
+The table has no goal column: goals are judged in one place, the Goals scorecard, whose robust / fragile status already shows whether a goal survives estimates being off. Goal targets are not tested as inputs, because changing a target moves no money. The engine still returns `goal_impacts` per input in the path report for run files and scripts.
 
 ## Check the implementation
 

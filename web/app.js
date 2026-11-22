@@ -1893,8 +1893,8 @@ function renderTimelineView() {
     }
   }
   byId('active-path-subtitle').textContent = isAlternate
-    ? `Branched from ${parentLabel} · ${horizonYears}-year projection.`
-    : `Your ${horizonYears}-year baseline projection.`;
+    ? `Branched from ${parentLabel} · ${horizonYears}-year path under the assumptions shown.`
+    : `Your ${horizonYears}-year starting path, under the assumptions shown.`;
 
   const returnBtn = byId('return-to-original');
   if (returnBtn) returnBtn.hidden = !isAlternate;
@@ -2568,6 +2568,47 @@ function formatSensitivityValue(value, unit) {
   return `${Number(num.toFixed(2))}${unit ? ` ${unit}` : ''}`;
 }
 
+const SENSITIVITY_PREFERENCE_LABELS = {
+  savings_rate: 'Share of spare cash you invest',
+  risk_tolerance: 'Risk tolerance (scales how much is invested)',
+  safety_priority: 'Safety priority (bigger cash reserve, less invested)',
+  emergency_months: 'Emergency reserve, in months of costs',
+  investment_annual_return: 'Expected investment return',
+  investment_annual_volatility: 'Investment ups and downs (volatility)',
+};
+
+function monthFrom(startDate, offset) {
+  const [year, month] = String(startDate).split('-').map(Number);
+  const total = year * 12 + month - 1 + offset;
+  return `${Math.floor(total / 12)}-${String(total % 12 + 1).padStart(2, '0')}`;
+}
+
+// A sensitivity input in plain words, e.g. "Monthly income from 2027-09" instead of phases[2].monthly_income_chf.
+function sensitivityLabel(driver, record) {
+  const scenario = record?.scenario || {};
+  const held = record?.checkpoint?.state || {};
+  const name = item => item?.label || item?.description || item?.name || item?.id || `item ${Number(driver.index) + 1}`;
+  const i = driver.index;
+  switch (driver.scope) {
+    case 'scenario':
+      return driver.field === 'opening_cash_chf' ? 'Starting cash' : 'Inflation, every year';
+    case 'phases': {
+      const phase = scenario.phases?.[i];
+      const what = driver.field === 'monthly_income_chf' ? 'Monthly income' : 'Monthly living costs';
+      if (!phase || !scenario.start_date) return `${what}, period ${i + 1}`;
+      const from = monthFrom(scenario.start_date, phase.start_month);
+      return phase.end_month == null ? `${what} from ${from}` : `${what} ${from} until ${monthFrom(scenario.start_date, phase.end_month)}`;
+    }
+    case 'one_off_costs': { const cost = scenario.one_off_costs?.[i]; return `One-off cost: ${name(cost)}${cost && scenario.start_date ? ` (${monthFrom(scenario.start_date, cost.month)})` : ''}`; }
+    case 'expense_terms': return `Recurring cost: ${name(scenario.expense_terms?.[i])}`;
+    case 'inflation_by_year': return `Inflation in ${i}`;
+    case 'preferences': return SENSITIVITY_PREFERENCE_LABELS[driver.field] || driver.field.replaceAll('_', ' ');
+    case 'assets': return `${name(held.assets?.[i])}: ${driver.field === 'value_chf' ? 'value today' : 'yearly return'}`;
+    case 'debts': return `${name(held.debts?.[i])}: ${{ principal_chf: 'amount owed', annual_interest_rate: 'interest rate', term_months: 'term', monthly_payment_chf: 'monthly payment' }[driver.field] || driver.field}`;
+    default: return localizeAmounts(driver.label || driver.field);
+  }
+}
+
 function setSensitivityPanelOpen(open) {
   state.sensitivityOpen = open;
   const panel = byId('path-report-panel');
@@ -2618,35 +2659,38 @@ async function loadAndRenderSensitivityReport(activeMeta) {
   if (revision !== state.revision || !state.sensitivityOpen) return;
 
   const report = bundle.paths[bundle.baseline_path];
-  const drivers = report.sensitivity_summary?.drivers || [];
+  // Goal targets are not inputs to the money (changing one moves nothing); goals are judged in Goals ◎.
+  const impact = driver => Math.max(Math.abs(driver.terminal_cash_delta_chf || 0), Math.abs(driver.minimum_liquidity_delta_chf || 0));
+  const tested = (report.sensitivity_summary?.drivers || []).filter(driver => driver.scope !== 'goals')
+    .sort((a, b) => impact(b) - impact(a));
+  const drivers = tested.filter(driver => impact(driver) >= 0.5);
+  const still = tested.filter(driver => impact(driver) < 0.5).map(driver => sensitivityLabel(driver, bundle.scenario_record));
   const deltaCell = value => {
     if (value == null) return '<td class="is-num">—</td>';
-    const cls = value > 0.5 ? ' is-pos' : value < -0.5 ? ' is-neg' : '';
-    return `<td class="is-num${cls}">${escapeHtml(moneySigned(value))}</td>`;
+    if (Math.abs(value) < 0.5) return '<td class="is-num is-flat">no change</td>';
+    return `<td class="is-num ${value > 0 ? 'is-pos' : 'is-neg'}">${escapeHtml(moneySigned(value).replace('-', '−'))}</td>`;
   };
   const rows = drivers.map(driver => {
     const source = driver.source || 'assumption';
     const sourceLabel = SOURCE_LABELS[source] || source;
     const baseText = formatSensitivityValue(driver.base_value, driver.unit);
     const pertText = formatSensitivityValue(driver.perturbed_value, driver.unit);
-    const goals = (driver.goal_impacts || [])
-      .map(goal => `${goal.name}: ${goal.deadline_gap_delta_chf == null ? 'unavailable' : moneySigned(goal.deadline_gap_delta_chf)}`)
-      .join(' · ');
     return `
       <tr>
         <td>
-          <div class="path-report-driver">
-            <strong>${escapeHtml(localizeAmounts(driver.label || driver.field))}</strong>
+          <div class="path-report-driver" title="${escapeHtml(driver.label || driver.field)}">
+            <strong>${escapeHtml(sensitivityLabel(driver, bundle.scenario_record))}</strong>
             <span class="source-badge source-${escapeHtml(source)}">${escapeHtml(sourceLabel)}</span>
           </div>
         </td>
         <td style="white-space:nowrap;">${escapeHtml(baseText)} → ${escapeHtml(pertText)}</td>
         ${deltaCell(driver.terminal_cash_delta_chf)}
         ${deltaCell(driver.minimum_liquidity_delta_chf)}
-        <td>${escapeHtml(goals || 'No goal')}</td>
       </tr>
     `;
   }).join('');
+  const start = bundle.scenario_record?.sensitivity_start_month;
+  const startNote = start ? ` Only inputs from the last change on this path (${bundle.scenario_record?.scenario?.start_date ? monthFrom(bundle.scenario_record.scenario.start_date, start) : 'month ' + start}) onward are tested; the months before it stay fixed.` : '';
 
   const checksHtml = (report.sanity_checks || []).map(check => {
     const rawName = String(check.name || '').replaceAll('_', ' ');
@@ -2659,23 +2703,24 @@ async function loadAndRenderSensitivityReport(activeMeta) {
   const limitationsHtml = (bundle.limitations || []).map(item => `<li>${escapeHtml(localizeAmounts(item))}</li>`).join('');
 
   renderShell(`
-    <div class="path-report-section-title">One-at-a-time sensitivity</div>
+    <div class="path-report-section-title">Which estimates matter most</div>
+    <p class="path-report-intro">Each row raises one input by 15% (or a small step if it is zero), keeps everything else the same and re-runs this path. The two columns show how much that moves your cash at the end and your lowest cash point. Inputs near the top matter most, so they are the ones worth checking first. This is not a forecast and gives no probabilities.${escapeHtml(startNote)}</p>
     <div class="path-report-table">
       <table>
         <thead>
           <tr>
             <th>Input</th>
             <th>Change tested</th>
-            <th style="text-align:right;">Terminal cash</th>
-            <th style="text-align:right;">Minimum liquidity</th>
-            <th>Goal effect</th>
+            <th style="text-align:right;">Cash at the end</th>
+            <th style="text-align:right;">Lowest cash</th>
           </tr>
         </thead>
         <tbody>
-          ${rows || '<tr><td colspan="5">No sensitivity drivers available for this path.</td></tr>'}
+          ${rows || '<tr><td colspan="4">No input moves cash on this path.</td></tr>'}
         </tbody>
       </table>
     </div>
+    ${still.length ? `<p class="path-report-intro path-report-still"><strong>No effect on cash here:</strong> ${escapeHtml(still.join(' · '))}. These mostly shape investments rather than cash, or only matter when there is spare cash to invest.</p>` : ''}
     <div class="path-report-footer">
       <div>
         <div class="path-report-section-title">Model checks</div>
@@ -3607,7 +3652,7 @@ function renderInspector(node, { focusBranchInput = false } = {}) {
   worth.textContent = money(s.net_worth_chf);
 
   const worthLabel = document.createElement('p');
-  worthLabel.textContent = 'Projected net worth';
+  worthLabel.textContent = 'Net worth on this path';
 
   header.append(kicker, titleRow, worth, worthLabel);
 
@@ -3698,10 +3743,17 @@ function renderInspector(node, { focusBranchInput = false } = {}) {
 
   const goalSec = document.createElement('section');
   goalSec.className = 'inspector-section';
-  if (s.goals?.length) {
+  const scoredRow = scoredGoalRow(node.branch_id);
+  if (scoredRow) {
+    goalSec.append(el('h3', { text: 'Your goals on this path' }));
+    state.goalCard.goals.forEach((goal, index) => goalSec.append(goalBlock(goal, scoredRow.results[index], { levers: false })));
+    goalSec.append(el('button', { type: 'button', class: 'text-button', text: 'Open goals and what would close the gaps', onclick: openGoals }));
+  } else if (s.goals?.length) {
     const heading = document.createElement('h3');
-    heading.textContent = 'Goal commitments';
+    heading.textContent = 'Goals from your story';
     goalSec.append(heading);
+    goalSec.append(el('p', { class: 'inspector-note', text: 'Checked on cash at each deadline, setting aside cash for goals already met. Open Goals to compare every path against them.' }));
+    goalSec.append(el('button', { type: 'button', class: 'text-button', text: 'Compare all paths against my goals', onclick: openGoals }));
     for (const goal of s.goals) {
       const item = document.createElement('div');
       item.className = 'goal-result';
@@ -3849,7 +3901,7 @@ function renderInspector(node, { focusBranchInput = false } = {}) {
   if (focusBranchInput) state.inspectorTab = 'whatif';
   const overview = [rangeSection, narrativeSec, renderBranchInfo(node), renderAppendedEvents(node)];
   // Fork and goal commitments only exist on some points; an empty fold would show as a blank "Details".
-  const numbers = [acctSec, feasibility, commitmentSec, s.goals?.length ? goalSec : null, provenance];
+  const numbers = [acctSec, feasibility, commitmentSec, goalSec.childElementCount ? goalSec : null, provenance];
   const composer = el('div', { class: 'branch-form' });
   const whatIf = [composer, editDetails];
   panel.append(header, inspectorTabs([
@@ -5022,55 +5074,96 @@ document.addEventListener('visibilitychange', () => {
 
 document.querySelectorAll('.range-toggle').forEach(toggle => toggle.addEventListener('click', () => setRangeVisible(!state.showRange)));
 
+// ── Disclaimers: model limits and data handling ──
+
+for (const button of document.querySelectorAll('.open-limits')) {
+  button.addEventListener('click', () => byId('limits-dialog').showModal());
+}
+byId('limits-close')?.addEventListener('click', () => byId('limits-dialog').close());
+for (const button of document.querySelectorAll('.clear-local-data')) {
+  button.addEventListener('click', () => {
+    for (const key of ['eclipse_goals', 'financial_twin_theme', 'financial_twin_currency', 'financial_twin_tree_hint_seen']) {
+      try { localStorage.removeItem(key); } catch { /* storage unavailable */ }
+    }
+    state.goals = [];
+    showToast('Cleared the goals and settings this browser saved.');
+  });
+}
+
 // ── Goals scorecard: the user's goals, checked against every path (POST /api/goals/score) ──
 
-const GOAL_TYPES = { cash_by_date: 'Cash by a date', net_worth_by_date: 'Net worth by a date', never_short: 'Never run out of cash' };
-const GOAL_STATUS = {
-  robust: ['✓', 'Met, even if estimates are off'], fragile: ['✓', 'Met, but not if estimates are worse'],
-  within_reach: ['~', 'Only met if estimates turn out better'], missed: ['✗', 'Missed'],
+const GOAL_TYPES = {
+  cash_by_date: 'Cash by a date', net_worth_by_date: 'Net worth by a date', never_short: 'Never run out of cash',
+  debt_free_by_date: 'Debt-free by a date', monthly_surplus: 'Save per month', reserve_months: 'Keep a cash reserve',
 };
+const GOAL_NEEDS_TARGET = new Set(['cash_by_date', 'net_worth_by_date', 'monthly_surplus']);
+const GOAL_NEEDS_DATE = new Set(['cash_by_date', 'net_worth_by_date', 'debt_free_by_date', 'monthly_surplus']);
+const GOAL_STATUS = {
+  robust: ['✓', 'Met, even if estimates are off'], fragile: ['✓', 'Met, but not if estimates turn out worse'],
+  met: ['✓', 'Met'], within_reach: ['~', 'Only met if estimates turn out better'], missed: ['✗', 'Missed'],
+  beyond_horizon: ['—', 'After the projection horizon; not scored'],
+};
+const LEVER_LABELS = { money: 'Money', time: 'Time', target: 'Reachable', cause: 'Why', buffer: 'Safety', note: 'Note' };
 const GOALS_STORAGE = 'eclipse_goals';
 state.goals = (() => { try { return JSON.parse(localStorage.getItem(GOALS_STORAGE)) || []; } catch { return []; } })();
+state.goalCard = null;
 
 function saveGoals() {
   try { localStorage.setItem(GOALS_STORAGE, JSON.stringify(state.goals)); } catch { /* storage unavailable */ }
 }
 
+function rootNode() {
+  return [...state.nodes.values()].find(node => !node.parent_id);
+}
+
 function startMonth(offsetMonths = 0) {
-  const root = [...state.nodes.values()].find(node => !node.parent_id);
-  const base = new Date(`${(root?.date || new Date().toISOString()).slice(0, 7)}-01T00:00:00`);
+  const base = new Date(`${(rootNode()?.date || new Date().toISOString()).slice(0, 7)}-01T00:00:00`);
   base.setMonth(base.getMonth() + offsetMonths);
   return `${base.getFullYear()}-${String(base.getMonth() + 1).padStart(2, '0')}`;
 }
 
 function goalRow(goal, index) {
-  const update = () => { saveGoals(); };
   const name = el('input', { type: 'text', maxlength: 60, placeholder: 'Name', 'aria-label': 'Goal name' });
   name.value = goal.name || '';
-  name.addEventListener('input', () => { goal.name = name.value; update(); });
+  name.addEventListener('input', () => { goal.name = name.value; saveGoals(); });
   const type = el('select', { 'aria-label': 'Goal type' }, ...Object.entries(GOAL_TYPES).map(([value, text]) => el('option', { value, text })));
   type.value = goal.type;
   const amount = el('input', { type: 'number', min: 0, step: 100, 'aria-label': 'Target in CHF' });
   amount.value = goal.target_chf ?? '';
-  amount.addEventListener('input', () => { goal.target_chf = amount.value === '' ? null : Number(amount.value); update(); });
-  const when = el('input', { type: 'month', 'aria-label': 'Target month' });
+  amount.addEventListener('input', () => { goal.target_chf = amount.value === '' ? null : Number(amount.value); saveGoals(); });
+  const months = el('input', { type: 'number', min: 1, max: 60, step: 1, 'aria-label': 'Months of living costs' });
+  months.value = goal.target_months ?? 6;
+  months.addEventListener('input', () => { goal.target_months = months.value === '' ? null : Number(months.value); saveGoals(); });
+  const when = el('input', { type: 'month', 'aria-label': 'Month' });
   when.value = goal.date || '';
-  when.addEventListener('input', () => { goal.date = when.value; update(); });
+  when.addEventListener('input', () => { goal.date = when.value; saveGoals(); });
   const priority = el('select', { 'aria-label': 'Priority' }, ...['high', 'medium', 'low'].map(value => el('option', { value, text: `${value[0].toUpperCase()}${value.slice(1)} priority` })));
   priority.value = goal.priority || 'medium';
-  priority.addEventListener('change', () => { goal.priority = priority.value; update(); });
-  const amountWrap = el('label', { class: 'goal-field' }, el('span', { text: 'Target (CHF)' }), amount);
-  const whenWrap = el('label', { class: 'goal-field' }, el('span', { text: 'By' }), when);
-  const showFields = () => { const hidden = goal.type === 'never_short'; amountWrap.hidden = hidden; whenWrap.hidden = hidden; };
-  type.addEventListener('change', () => { goal.type = type.value; showFields(); update(); });
+  priority.addEventListener('change', () => { goal.priority = priority.value; saveGoals(); });
+  const amountLabel = el('span', { text: 'Target (CHF)' });
+  const amountWrap = el('label', { class: 'goal-field' }, amountLabel, amount);
+  const monthsWrap = el('label', { class: 'goal-field' }, el('span', { text: 'Months of costs' }), months);
+  const whenLabel = el('span', { text: 'By' });
+  const whenWrap = el('label', { class: 'goal-field' }, whenLabel, when);
+  const showFields = () => {
+    amountWrap.hidden = !GOAL_NEEDS_TARGET.has(goal.type);
+    amountLabel.textContent = goal.type === 'monthly_surplus' ? 'Per month (CHF)' : 'Target (CHF)';
+    monthsWrap.hidden = goal.type !== 'reserve_months';
+    whenWrap.hidden = !GOAL_NEEDS_DATE.has(goal.type);
+    whenLabel.textContent = goal.type === 'monthly_surplus' ? 'From' : 'By';
+    if (goal.type === 'reserve_months' && !goal.target_months) goal.target_months = Number(months.value) || 6;
+    if (GOAL_NEEDS_DATE.has(goal.type) && !goal.date) { goal.date = startMonth(36); when.value = goal.date; }
+  };
+  type.addEventListener('change', () => { goal.type = type.value; delete goal.note; showFields(); saveGoals(); renderGoalsList(); });
   showFields();
   const remove = el('button', { type: 'button', class: 'block-remove', 'aria-label': 'Remove this goal', text: '×',
     onclick: () => { state.goals.splice(index, 1); saveGoals(); renderGoalsList(); } });
   return el('div', { class: 'goal-row' },
     el('div', { class: 'goal-row-top' }, name, remove),
     el('div', { class: 'goal-row-fields' },
-      el('label', { class: 'goal-field' }, el('span', { text: 'Type' }), type), amountWrap, whenWrap,
-      el('label', { class: 'goal-field' }, el('span', { text: 'Priority' }), priority)));
+      el('label', { class: 'goal-field' }, el('span', { text: 'Type' }), type), amountWrap, monthsWrap, whenWrap,
+      el('label', { class: 'goal-field' }, el('span', { text: 'Priority' }), priority)),
+    goal.note ? el('p', { class: 'goal-note', text: `Measured as: ${goal.note}` }) : null);
 }
 
 function renderGoalsList() {
@@ -5079,37 +5172,117 @@ function renderGoalsList() {
   if (!state.goals.length) list.append(el('p', { class: 'goals-empty', text: 'No goals yet. Describe them above or add one.' }));
 }
 
+function renderUnsupported(items) {
+  const box = byId('goals-unsupported');
+  box.replaceChildren();
+  if (!items?.length) return;
+  box.append(el('p', { class: 'goals-unsupported-title', text: 'Not scored, because they can’t be measured with money and dates:' }),
+    el('ul', {}, ...items.map(item => el('li', {}, el('strong', { text: item.text }), el('span', { text: item.reason ? ` — ${item.reason}` : '' })))));
+}
+
+function pathLabel(branchId) {
+  return buildTreeIndex().branchMeta.get(branchId)?.label || (branchId === 'main' ? 'Original path' : 'Path');
+}
+
 function goalCell(result) {
   const [icon, title] = GOAL_STATUS[result.status] || ['?', result.status];
-  const gap = result.gap_chf === null || result.gap_chf === undefined ? '' : ` ${result.gap_chf >= 0 ? '+' : '−'}${compactChf(Math.abs(result.gap_chf))}`;
-  return el('td', { class: `goal-cell is-${result.status}`, title: [title, result.note].filter(Boolean).join(' · ') },
-    el('span', { class: 'goal-icon', text: icon }), el('span', { text: result.gap_chf ? gap : '' }));
+  const gap = result.gap_chf ? ` ${result.gap_chf >= 0 ? '+' : '−'}${compactChf(Math.abs(result.gap_chf))}` : '';
+  return el('td', { class: `goal-cell is-${result.status}`, title: [title, result.explain?.headline].filter(Boolean).join(' · ') },
+    el('span', { class: 'goal-icon', text: icon }), el('span', { text: result.status === 'beyond_horizon' ? '' : gap }));
+}
+
+// One goal verdict, drawn the same way everywhere (scorecard, Compare paths, node details).
+function goalBlock(goal, result, { levers = true } = {}) {
+  const [icon, title] = GOAL_STATUS[result.status] || ['?', result.status];
+  return el('div', { class: `goal-explain is-${result.status}` },
+    el('div', { class: 'goal-explain-head' }, el('span', { class: 'goal-icon', text: icon }),
+      el('strong', { text: goal.name }), el('span', { class: 'goal-explain-status', text: title })),
+    el('p', { class: 'goal-explain-headline', text: result.explain.headline }),
+    levers && result.explain.levers.length ? el('ul', { class: 'goal-levers' }, ...result.explain.levers.map(lever =>
+      el('li', {}, el('span', { class: `lever-kind lever-${lever.kind}`, text: LEVER_LABELS[lever.kind] || lever.kind }), el('span', { text: lever.text })))) : null);
+}
+
+// The scorecard row for a path, if goals were scored on the paths now on screen.
+function scoredGoalRow(branchId) {
+  if (!state.goalCard || state.goalCardKey !== nodesKey()) return null;
+  return state.goalCard.paths.find(row => row.branch_id === branchId) || null;
+}
+
+// The equal-horizon comparison for the paths on screen, fetched once per set of paths.
+async function pathComparison() {
+  const key = nodesKey();
+  if (state.comparison?.key !== key) {
+    const result = await request('/api/paths/compare', { nodes: [...state.nodes.values()], horizon_months: state.years * 12 });
+    state.comparison = { key, result };
+  }
+  return state.comparison.result;
+}
+
+// ── One explanation per path, opened by Explain in Goals and in Compare paths ──
+// Why this path differs from the original (always), then how it does on your goals (once goals are scored).
+async function showPathExplanation(box, branchId) {
+  box.replaceChildren(el('h3', { text: pathLabel(branchId) }), el('p', { class: 'range-pending', text: 'Explaining…' }));
+  box.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  let why = null;
+  try {
+    why = (await pathComparison()).paths.find(row => row.branch_id === branchId);
+  } catch (problem) {
+    why = { explanation: [`The comparison is unavailable: ${problem.message}`] };
+  }
+  const parts = [el('h3', { text: pathLabel(branchId) }),
+    el('h4', { class: 'explain-part', text: why?.is_original ? 'How the original path goes (the one others are compared with)' : 'Why it differs from the original path' }),
+    el('ul', { class: 'compare-sentences' }, ...(why?.explanation || []).map(text => el('li', { text })))];
+  const scored = scoredGoalRow(branchId);
+  if (scored) {
+    parts.push(el('h4', { class: 'explain-part', text: 'Your goals on this path' }),
+      ...state.goalCard.goals.map((goal, index) => goalBlock(goal, scored.results[index])));
+  } else {
+    parts.push(el('p', { class: 'goals-legend' }, 'Set goals in ',
+      el('button', { type: 'button', class: 'text-button', text: 'Goals ◎', onclick: () => { byId('compare-dialog')?.close(); openGoals(); } }),
+      ' to also see how this path does on them and what would close the gaps.'));
+  }
+  box.replaceChildren(...parts);
+}
+
+// Open a path from the scorecard in whichever view is showing: the timeline follows the path, the tree
+// focuses and selects the path's last node.
+function goToPath(branchId, nodeId) {
+  for (const id of ['goals-dialog', 'compare-dialog']) if (byId(id)?.open) byId(id).close();
+  if (state.resultsView === 'tree') {
+    state.activeBranchId = branchId;
+    state.selectedId = nodeId;
+    renderTreeGraph({ focusId: nodeId });
+    selectNode(nodeId);
+  } else {
+    switchActivePath(branchId, { focusNodeId: nodeId });
+  }
 }
 
 function renderScorecard(card) {
+  state.goalCard = card;
+  state.goalCardKey = nodesKey();
   const box = byId('goals-result');
-  const index = buildTreeIndex();
   const table = el('table', { class: 'goals-table' },
     el('thead', {}, el('tr', {}, el('th', { text: '#' }), el('th', { text: 'Path' }), el('th', { text: 'Closeness' }),
       ...card.goals.map(goal => el('th', { text: goal.name, title: GOAL_TYPES[goal.type] })), el('th', { text: '' }))));
   const body = el('tbody');
   for (const row of card.paths) {
-    const label = index.branchMeta.get(row.branch_id)?.label || (row.branch_id === 'main' ? 'Original path' : 'Path');
+    const explain = el('button', { type: 'button', class: 'text-button goals-view', text: 'Explain', onclick: () => showPathExplanation(byId('goals-explain'), row.branch_id) });
     const view = el('button', { type: 'button', class: 'text-button goals-view', text: 'View',
-      onclick: () => { byId('goals-dialog').close(); switchActivePath(row.branch_id, { focusNodeId: row.tip_id }); } });
+      onclick: () => goToPath(row.branch_id, row.tip_id) });
     body.append(el('tr', { class: row.rank === 1 ? 'is-best' : '' },
-      el('td', { text: String(row.rank) }), el('td', { class: 'goals-path', text: label }),
-      el('td', { text: `${Math.round(row.score * 100)}%`, title: `${row.goals_met} of ${card.goals.length} goals met, ${row.robust} robustly` }),
-      ...row.results.map(goalCell), el('td', {}, view)));
+      el('td', { text: String(row.rank) }), el('td', { class: 'goals-path', text: pathLabel(row.branch_id) }),
+      el('td', { text: row.score === null ? '—' : `${Math.round(row.score * 100)}%`, title: `${row.goals_met} of ${row.goals_scored} scored goals met` }),
+      ...row.results.map(goalCell), el('td', { class: 'goals-actions' }, explain, view)));
   }
   table.append(body);
   const best = card.paths[0];
-  const bestLabel = index.branchMeta.get(best.branch_id)?.label || 'Original path';
   box.replaceChildren(
-    el('h3', { text: `Closest to your goals: ${bestLabel}` }),
-    el('p', { class: 'goals-summary', text: `${best.goals_met} of ${card.goals.length} goals met (${best.robust} even if estimates are off).` }),
+    el('h3', { text: `Closest to your goals: ${pathLabel(best.branch_id)}` }),
+    el('p', { class: 'goals-summary', text: `${best.goals_met} of ${best.goals_scored} goals met (${best.robust} even if estimates are off). Every path is judged up to ${card.horizon}.` }),
     el('div', { class: 'goals-table-wrap' }, table),
-    el('p', { class: 'goals-legend', text: '✓ met · ~ only if estimates turn out better · ✗ missed · amounts show how far above or below the target the path is. Hover a cell for details.' }),
+    el('p', { class: 'goals-legend', text: '✓ met · ~ only if estimates turn out better · ✗ missed · — after the horizon. Amounts show how far above or below the target a path is. Explain shows what would close the gap.' }),
+    el('div', { id: 'goals-explain', class: 'goals-explain' }),
     el('p', { class: 'range-note', text: card.method }));
 }
 
@@ -5121,11 +5294,12 @@ async function readGoals() {
   const button = byId('goals-read');
   setButtonLoading(button, true, 'Reading…', 'Read my goals');
   try {
-    const root = [...state.nodes.values()].find(node => !node.parent_id);
-    const result = await request('/api/goals/parse', { text, start_date: root?.date });
+    const first = [...state.nodes.values()].find(node => node.month === 1);
+    const result = await request('/api/goals/parse', { text, start_date: rootNode()?.date, monthly_costs_chf: first?.state?.cash_flow?.expenses_chf });
     state.goals = result.goals.map(({ id, ...goal }) => goal);
     saveGoals();
     renderGoalsList();
+    renderUnsupported(result.unsupported);
   } catch (problem) { error.textContent = problem.message; }
   finally { setButtonLoading(button, false, 'Reading…', 'Read my goals'); }
 }
@@ -5138,16 +5312,86 @@ async function scoreGoals() {
   const button = byId('goals-score');
   setButtonLoading(button, true, 'Checking every path…', 'Find the best path');
   try {
-    const card = await request('/api/goals/score', { nodes: [...state.nodes.values()], goals: state.goals });
+    const card = await request('/api/goals/score', { nodes: [...state.nodes.values()], goals: state.goals, horizon_months: state.years * 12 });
     renderScorecard(card);
     byId('goals-result').scrollIntoView({ behavior: 'smooth', block: 'start' });
   } catch (problem) { error.textContent = problem.message; }
   finally { setButtonLoading(button, false, 'Checking every path…', 'Find the best path'); }
 }
 
-for (const button of document.querySelectorAll('.goals-open')) {
-  button.addEventListener('click', () => { renderGoalsList(); byId('goals-dialog').showModal(); });
+// Goals mentioned in the story (engine goals in the scenario) join the Goals panel, so there is one goal list.
+function importStoryGoals() {
+  const storyGoals = rootNode()?.scenario?.goals || [];
+  let added = 0;
+  for (const goal of storyGoals) {
+    const date = String(goal.target_date || '').slice(0, 7);
+    if (!date || !(goal.target_chf > 0)) continue;
+    const exists = state.goals.some(item => item.type === 'cash_by_date' && item.date === date && Math.abs((item.target_chf || 0) - goal.target_chf) < 0.5);
+    if (exists) continue;
+    state.goals.push({ name: goal.name || 'Goal', type: 'cash_by_date', target_chf: goal.target_chf, date, priority: goal.priority || 'medium', note: 'From your story.' });
+    added += 1;
+  }
+  if (added) saveGoals();
+  return added;
 }
+
+function openGoals() {
+  const added = importStoryGoals();
+  renderGoalsList();
+  byId('goals-dialog').showModal();
+  if (added) showToast(`Added ${added} goal${added === 1 ? '' : 's'} from your story.`);
+}
+
+for (const button of document.querySelectorAll('.goals-open')) button.addEventListener('click', openGoals);
+
+// ── Compare paths: every path over the same horizon, in plain language (POST /api/paths/compare) ──
+
+function renderComparison(result) {
+  const box = byId('compare-result');
+  const signedK = value => value === null || value === undefined ? '—' : `${value >= 0 ? '+' : '−'}${compactChf(Math.abs(value))}`;
+  const table = el('table', { class: 'goals-table' }, el('thead', {}, el('tr', {},
+    ...['Path', `Net worth ${result.horizon}`, 'vs original', `Cash ${result.horizon}`, 'Lowest cash', 'Runs out of cash', 'Catches up', ''].map(text => el('th', { text })))));
+  const body = el('tbody');
+  const explain = el('div', { id: 'compare-explain', class: 'goals-explain' });
+  const breakEven = row => row.is_original ? '—' : { always: 'Never behind', overtakes: row.break_even.date, never: 'Not by the horizon' }[row.break_even.status] || '—';
+  for (const row of result.paths) {
+    const range = row.net_worth_range_chf ? `${compactChf(row.net_worth_range_chf[0])}–${compactChf(row.net_worth_range_chf[1])} if estimates are off` : '';
+    const showWhy = () => showPathExplanation(explain, row.branch_id);
+    body.append(el('tr', { class: row.is_original ? 'is-original' : '' },
+      el('td', { class: 'goals-path', text: pathLabel(row.branch_id) + (row.continued_from ? ' *' : '') }),
+      el('td', { text: compactChf(row.net_worth_chf), title: range }),
+      el('td', { class: row.is_original ? '' : (row.net_worth_vs_original_chf >= 0 ? 'is-up' : 'is-down'), text: row.is_original ? '—' : signedK(row.net_worth_vs_original_chf) }),
+      el('td', { text: compactChf(row.cash_chf) }),
+      el('td', { class: row.lowest_cash_chf < 0 ? 'is-down' : '', text: `${row.lowest_cash_chf < 0 ? '−' : ''}${compactChf(Math.abs(row.lowest_cash_chf))} (${row.lowest_cash_date})` }),
+      el('td', { class: row.first_shortfall ? 'is-down' : '', text: row.first_shortfall || 'Never' }),
+      el('td', { text: breakEven(row) }),
+      el('td', { class: 'goals-actions' },
+        el('button', { type: 'button', class: 'text-button goals-view', text: 'Explain', onclick: showWhy }),
+        el('button', { type: 'button', class: 'text-button goals-view', text: 'View', onclick: () => goToPath(row.branch_id, row.tip_id) }))));
+  }
+  table.append(body);
+  const continued = result.paths.some(row => row.continued_from);
+  box.replaceChildren(el('div', { class: 'goals-table-wrap' }, table),
+    el('p', { class: 'goals-legend', text: `Hover a net worth for its range if estimates are off. "Catches up" is the month a path overtakes the original path and stays ahead.${continued ? ' * continued at its last situation to reach the same end date.' : ''}` }),
+    explain, el('p', { class: 'range-note', text: result.method }));
+}
+
+async function openComparison() {
+  if (!state.nodes.size) return;
+  const dialog = byId('compare-dialog');
+  byId('compare-error').textContent = '';
+  byId('compare-result').replaceChildren(el('p', { class: 'range-pending', text: 'Comparing every path…' }));
+  dialog.showModal();
+  try {
+    renderComparison(await pathComparison());
+  } catch (problem) {
+    byId('compare-error').textContent = problem.message;
+    byId('compare-result').replaceChildren();
+  }
+}
+
+for (const button of document.querySelectorAll('.compare-open')) button.addEventListener('click', openComparison);
+byId('compare-close')?.addEventListener('click', () => byId('compare-dialog').close());
 byId('goals-close')?.addEventListener('click', () => byId('goals-dialog').close());
 byId('goals-read')?.addEventListener('click', readGoals);
 byId('goals-score')?.addEventListener('click', scoreGoals);
