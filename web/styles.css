@@ -2270,7 +2270,7 @@ input[type="text"].slider-number.is-invalid { color: var(--danger); }
   background: none; border: 1px solid var(--border-strong); color: var(--accent-bright); border-radius: 999px;
   padding: 4px 11px; font: 600 12px var(--font-sans); cursor: pointer; width: auto;
 }
-.range-toggle[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); }
+.range-toggle[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-bright); }
 .range-toggle.is-loading { opacity: .6; cursor: progress; }
 .range-inline-toggle { margin-top: 12px; }
 .legend-swatch.is-range { background: rgba(255, 161, 89, 0.3); border: 1px solid rgba(255, 161, 89, 0.6); }

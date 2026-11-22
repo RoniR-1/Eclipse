@@ -1257,7 +1257,7 @@ async function ensureRange() {
   const key = nodesKey();
   if ((state.range && state.rangeKey === key) || state.rangeLoading === key) return;
   state.rangeLoading = key;
-  byId('range-toggle')?.classList.add('is-loading');
+  document.querySelectorAll('.range-toggle').forEach(toggle => toggle.classList.add('is-loading'));
   try {
     const result = await request('/api/uncertainty', { nodes: [...state.nodes.values()] });
     if (state.rangeLoading !== key) return;
@@ -1269,14 +1269,13 @@ async function ensureRange() {
     setRangeVisible(false);
   } finally {
     if (state.rangeLoading === key) state.rangeLoading = '';
-    byId('range-toggle')?.classList.remove('is-loading');
+    document.querySelectorAll('.range-toggle').forEach(toggle => toggle.classList.remove('is-loading'));
   }
 }
 
 function setRangeVisible(on) {
   state.showRange = on;
-  const toggle = byId('range-toggle');
-  if (toggle) {
+  for (const toggle of document.querySelectorAll('.range-toggle')) {
     toggle.setAttribute('aria-pressed', String(on));
     toggle.textContent = on ? 'Hide range' : 'Show range';
   }
@@ -1286,15 +1285,16 @@ function setRangeVisible(on) {
 
 const rangeOf = (range, node) => range?.nodes?.[node.id] || null;
 
-// Compact ±label for an edge or card: % of the central value, or CHF when a % would mislead.
+// Compact ±label for edges and tree nodes, always in CHF: half the width of the range.
+// A percentage of the central value would shrink whenever net worth grows faster than the uncertainty
+// and explode near zero, so the graph uses one stable unit; percentages appear only where they are
+// labelled "vs. central" (timeline cards and the details table).
 function rangeBadge(range, node, field = 'net_worth') {
   const span = rangeOf(range, node)?.[field];
   if (!span) return null;
-  const centre = node.state[`${field}_chf`];
   const half = (span[1] - span[0]) / 2;
   if (half < 0.5) return null;
-  const share = half / Math.abs(centre || 1);
-  return Math.abs(centre) >= 5000 && share <= 1 ? `±${Math.round(share * 100)}%` : `±${compactChf(half)}`;
+  return `±${compactChf(half)}`;
 }
 
 function rangeDelta(value, centre) {
@@ -2405,7 +2405,7 @@ function renderTreeGraph({ fit = false, focusId = null } = {}) {
 
     return {
       id: node.id,
-      label: `${titleHtml}\n${escapeHtml(money(node.state.net_worth_chf))}`,
+      label: `${titleHtml}\n${escapeHtml(money(node.state.net_worth_chf))}${rangeBadge(treeRange, node) ? `\n<i>${rangeBadge(treeRange, node)} range</i>` : ''}`,
       x: dates.indexOf(node.date) * TREE_COL_STEP,
       y: (laneOffsets.get(node.branch_id) + rowOffset) * TREE_ROW_STEP,
       color: {
@@ -2424,6 +2424,7 @@ function renderTreeGraph({ fit = false, focusId = null } = {}) {
           face: 'DM Sans',
           mod: 'bold',
         },
+        ital: { color: '#ffb27a', size: 20, face: 'DM Sans', mod: '' },
       },
       borderWidth: isSelected ? (isEvent ? 4 : 3.4) : isEvent ? 3.5 : 2.2,
       shape: 'box',
@@ -2463,7 +2464,8 @@ function renderTreeGraph({ fit = false, focusId = null } = {}) {
     const [gr, gg, gb] = hexToRgb(baseColor);
     const glowColor = `rgba(${gr}, ${gg}, ${gb}, 0.45)`;
     const isActiveEdge = activeSet.has(node.id) && activeSet.has(parentId);
-    const edgeRange = isActiveEdge ? rangeBadge(treeRange, state.nodes.get(node.id)) : null;
+    // Only long edges have room for a label; the node boxes always show the range.
+    const edgeRange = Math.abs(child.x - parent.x) > TREE_COL_STEP * 1.5 ? rangeBadge(treeRange, state.nodes.get(node.id)) : null;
 
     edges.push({
       id: `${parentId}>${node.id}`,
@@ -2474,7 +2476,7 @@ function renderTreeGraph({ fit = false, focusId = null } = {}) {
       glowColor,
       width: isActiveEdge ? 5.8 : 4.6,
       label: edgeRange || '',
-      font: { color: '#f6e9dc', size: 11, strokeWidth: 3, strokeColor: '#180d07', align: 'middle' },
+      font: { color: '#ffc89a', size: 20, face: 'DM Sans', strokeWidth: 5, strokeColor: '#180d07', align: 'middle' },
       color: { color: baseColor, highlight: baseColor, hover: baseColor },
       shadow: { enabled: true, color: glowColor, size: isActiveEdge ? 14 : 10, x: 0, y: 0 },
       smooth: isSameLane
@@ -3662,7 +3664,7 @@ document.addEventListener('visibilitychange', () => {
   }
 });
 
-byId('range-toggle')?.addEventListener('click', () => setRangeVisible(!state.showRange));
+document.querySelectorAll('.range-toggle').forEach(toggle => toggle.addEventListener('click', () => setRangeVisible(!state.showRange)));
 fetch('/api/branch/presets').then(response => response.json()).then(data => { state.presets = data.presets || []; }).catch(() => {});
 startAstralBackdrop();
 

@@ -126,7 +126,7 @@ A branch continues the situation at the selected node and does not inherit phase
 
 ## Uncertainty range
 
-**Show range** in the results view adds, for the selected path only, a band to the trajectory chart, a ±% badge on each timeline edge and tree edge, the range on each timeline card, and a table in the node details (pessimistic, central and optimistic net worth and cash, in CHF and as % of the central value). The badge falls back to ±CHF when the central value is below CHF 5,000 or the range exceeds 100%, because percentages near zero mislead. The range is off by default and is not a branch: it adds no nodes and cannot be branched from.
+**Show range** in the results view adds, for the selected path only, a band to the trajectory chart, a ±CHF badge (half the width of the range) on each timeline edge and on every tree node and edge, the range on each timeline card, and a table in the node details (pessimistic, central and optimistic net worth and cash, in CHF and as % of the central value). Badges use CHF rather than %: a percentage of the central value shrinks whenever net worth grows faster than the uncertainty and explodes near zero, while the CHF range never shrinks along a path. The range is off by default and is not a branch: it adds no nodes and cannot be branched from.
 
 `POST /api/uncertainty` takes the nodes on screen and re-simulates the whole tree month by month, the way `/api/edit-nodes` does, with adjusted inputs (`financial_twin/uncertainty.py`). Every monthly amount is split into today's situation (the first phase of the starting point) and the change since (later phases and events):
 
