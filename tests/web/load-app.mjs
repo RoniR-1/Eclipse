@@ -10,7 +10,7 @@ const EXPORTS = [
   'formatVariable', 'milestoneTitle', 'money', 'moneySigned', 'compactChf', 'escapeHtml',
   'variableToDisplay', 'parseVariableInput', 'renderTuning', 'renderStructuredComparison', 'inputSource',
   'setCurrency', 'localizeAmounts', 'currencyRateText', 'conversionText', 'chfToDisplay', 'displayToChf',
-  'setTheme', 'getBranchPalette',
+  'setTheme', 'getBranchPalette', 'renderScorecard',
 ];
 
 // An object that accepts any property access, assignment or call, standing in for DOM elements.

@@ -104,6 +104,40 @@ class GoalScorecardTests(unittest.TestCase):
                       robust=False)["paths"][0]
         self.assertEqual(row["score"], 0.625)                                  # (3 × 0.5 + 1 × 1) / 4
 
+    def test_opening_cash_is_checked_for_reserve_and_shortfall(self):
+        goals = [{"type": "reserve_months", "target_months": 3}, {"type": "never_short"}]
+        card = results(path(income=10000, expenses=1000, cash=-100, months=1), goals, robust=False)
+        reserve, liquidity = card["paths"][0]["results"]
+        self.assertEqual((reserve["status"], reserve["value_chf"], reserve["date"]), ("missed", -100, "2026-01"))
+        self.assertEqual((liquidity["status"], liquidity["value_chf"], liquidity["date"]), ("missed", -100, "2026-01"))
+
+        nodes = path(income=10000, expenses=1000, cash=4000, months=1)
+        branch = apply_branch({"parent": nodes[0], "event": "Costs", "months": 1,
+                               "proposal": change("expenses", 1000)})["nodes"]
+        rows = results(nodes + branch, [goals[0]], robust=False)["paths"]
+        by_branch = {row["branch_id"]: row["results"][0] for row in rows}
+        self.assertEqual(by_branch["main"]["status"], "met")
+        self.assertEqual(by_branch[branch[0]["branch_id"]]["status"], "missed")
+
+    def test_met_goals_without_ranges_have_consistent_explanations(self):
+        goals = [cash_goal(500, "2026-02"), {"type": "never_short"}]
+        row = score_goals({"nodes": path(months=1), "goals": goals, "robust": False})["paths"][0]
+        amount, liquidity = row["results"]
+        self.assertEqual((amount["status"], liquidity["status"], row["robust"]), ("met", "met", 0))
+        self.assertIn("above the target", amount["explain"]["headline"])
+        self.assertIn("never runs out", liquidity["explain"]["headline"])
+
+    def test_surplus_needs_a_complete_month_from_goal_date(self):
+        goals = [{"type": "monthly_surplus", "date": "2026-02", "target_chf": 100}]
+        row = score_goals({"nodes": path(months=1), "goals": goals})["paths"][0]
+        result = row["results"][0]
+        self.assertEqual(result["status"], "no_observed_months")
+        self.assertIsNone(result["closeness"])
+        self.assertIsNone(row["score"])
+        self.assertIsNone(row["rank"])
+        later = score_goals({"nodes": path(months=2), "goals": goals})["paths"][0]["results"][0]
+        self.assertEqual((later["status"], later["value_chf"]), ("met", 2000))
+
     def test_invalid_goals_are_rejected(self):
         for goals in ([], [{"type": "lottery"}], [cash_goal(-5)], [cash_goal(100, when="soon")],
                       [dict(cash_goal(100), priority="urgent")], [cash_goal(100)] * 9,

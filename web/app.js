@@ -1508,6 +1508,24 @@ function addBaseline(label, text, source = 'assumption') {
   return { amount, badge: row.lastElementChild };
 }
 
+function provenanceFieldLabel(path, scenario) {
+  const labels = {
+    opening_cash_chf: 'Starting cash',
+    annual_inflation: 'Annual inflation',
+    start_date: 'Start date',
+    currency: 'Currency',
+  };
+  const readable = key => labels[key] || key.replace(/_chf$/, '').replaceAll('_', ' ').replace(/^./, letter => letter.toUpperCase());
+  return path.split('.').map(part => {
+    const match = part.match(/^([^\[]+)\[(\d+)\]$/);
+    if (!match) return readable(part);
+    const [, collection, index] = match;
+    const singular = { phases: 'Phase', goals: 'Goal', assets: 'Asset', debts: 'Debt', one_off_costs: 'One-time cost' }[collection] || readable(collection);
+    const item = scenario[collection]?.[Number(index)];
+    return item?.name ? `${singular} ${Number(index) + 1} (${item.name})` : `${singular} ${Number(index) + 1}`;
+  }).join(' · ');
+}
+
 function renderTuning(data) {
   byId('scenario-summary').textContent = localizeAmounts(data.summary);
   const currencyNote = byId('currency-note');
@@ -1524,7 +1542,7 @@ function renderTuning(data) {
     const row = document.createElement('div');
     row.className = 'provenance-row';
     const name = document.createElement('span');
-    name.textContent = path.replaceAll('_', ' ');
+    name.textContent = provenanceFieldLabel(path, scenario);
     const value = document.createElement('span');
     value.textContent = `${record.value ?? '—'} ${record.unit || ''}`.trim();
     const badge = document.createElement('span');
@@ -3783,7 +3801,7 @@ function renderInspector(node, { focusBranchInput = false } = {}) {
     row.className = 'provenance-row';
     const value = record.value === null ? 'Open-ended' : String(record.value);
     const detail = [record.unit, record.frequency, record.as_of_date, record.file, record.row, record.transformation].filter(Boolean).join(' · ');
-    row.innerHTML = `<div><strong>${escapeHtml(field)}</strong><span class="source-badge">${escapeHtml(record.source || 'unknown')}</span></div>
+    row.innerHTML = `<div class="provenance-heading"><strong>${escapeHtml(provenanceFieldLabel(field, node.scenario))}</strong><span class="source-badge">${escapeHtml(record.source || 'unknown')}</span></div>
       <span>${escapeHtml(value)}${detail ? ` · ${escapeHtml(detail)}` : ''}</span>`;
     provenance.append(row);
   }
@@ -5169,6 +5187,7 @@ const GOAL_STATUS = {
   robust: ['✓', 'Met, even if estimates are off'], fragile: ['✓', 'Met, but not if estimates turn out worse'],
   met: ['✓', 'Met'], within_reach: ['~', 'Only met if estimates turn out better'], missed: ['✗', 'Missed'],
   beyond_horizon: ['—', 'After the projection horizon; not scored'],
+  no_observed_months: ['—', 'No complete months in the projection; not scored'],
 };
 const LEVER_LABELS = { money: 'Money', time: 'Time', target: 'Reachable', cause: 'Why', buffer: 'Safety', note: 'Note' };
 const GOALS_STORAGE = 'eclipse_goals';
@@ -5337,18 +5356,19 @@ function renderScorecard(card) {
     const explain = el('button', { type: 'button', class: 'text-button goals-view', text: 'Explain', onclick: () => showPathExplanation(byId('goals-explain'), row.branch_id) });
     const view = el('button', { type: 'button', class: 'text-button goals-view', text: 'View',
       onclick: () => goToPath(row.branch_id, row.tip_id) });
-    body.append(el('tr', { class: row.rank === 1 ? 'is-best' : '' },
-      el('td', { text: String(row.rank) }), el('td', { class: 'goals-path', text: pathLabel(row.branch_id) }),
+    body.append(el('tr', { class: row.score !== null && row.rank === 1 ? 'is-best' : '' },
+      el('td', { text: row.score === null ? '—' : String(row.rank) }), el('td', { class: 'goals-path', text: pathLabel(row.branch_id) }),
       el('td', { text: row.score === null ? '—' : `${Math.round(row.score * 100)}%`, title: `${row.goals_met} of ${row.goals_scored} scored goals met` }),
       ...row.results.map(goalCell), el('td', { class: 'goals-actions' }, explain, view)));
   }
   table.append(body);
-  const best = card.paths[0];
+  const best = card.paths.find(row => row.score !== null);
   box.replaceChildren(
-    el('h3', { text: `Closest to your goals: ${pathLabel(best.branch_id)}` }),
-    el('p', { class: 'goals-summary', text: `${best.goals_met} of ${best.goals_scored} goals met (${best.robust} even if estimates are off). Every path is judged up to ${card.horizon}.` }),
+    el('h3', { text: best ? `Closest to your goals: ${pathLabel(best.branch_id)}` : 'No goals can be scored yet' }),
+    el('p', { class: 'goals-summary', text: best ? `${best.goals_met} of ${best.goals_scored} goals met (${best.robust} even if estimates are off). Every path is judged up to ${card.horizon}.` : `Extend the projection or adjust your goals to compare paths. The current horizon is ${card.horizon}.` }),
     el('div', { class: 'goals-table-wrap' }, table),
-    el('p', { class: 'goals-legend', text: '✓ met · ~ only if estimates turn out better · ✗ missed · — after the horizon' }),
+    el('p', { class: 'goals-legend', text: '✓ met · ~ only if estimates turn out better · ✗ missed · — not scored' }),
+    el('p', { class: 'goals-legend', text: 'Each goal is checked independently. The same cash can count toward multiple goals, so meeting each target does not establish that all planned spending can be funded.' }),
     el('div', { id: 'goals-explain', class: 'goals-explain' }),
     el('p', { class: 'range-note', text: card.method }));
 }

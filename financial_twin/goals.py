@@ -26,7 +26,7 @@ ties go to more robust goals, then higher net worth at the horizon. Goals are ju
 from datetime import date
 import math
 
-from financial_twin.engine import simulate
+from financial_twin.engine import expense_terms_at, simulate
 from financial_twin.explain import attribute, chf as _chf, holding_back
 
 GOAL_TYPES = {
@@ -261,7 +261,9 @@ def _amount_goal(goal, chain, ranges, main_chain, start_key, horizon_key):
     status = _status(value >= target, low >= target, high >= target, bool(ranges))
     gap = value - target
     levers = []
-    if status == "robust":
+    if status == "met":
+        headline = f"On track: {_chf(gap)} above the target in {when}."
+    elif status == "robust":
         headline = f"On track: {_chf(gap)} above the target in {when}, even if estimates turn out worse."
     elif status == "fragile":
         headline = f"Met in {when} with {_chf(gap)} to spare, but not if estimates turn out worse."
@@ -293,7 +295,7 @@ def _amount_goal(goal, chain, ranges, main_chain, start_key, horizon_key):
 
 
 def _never_short(goal, chain, ranges, main_chain, horizon_key):
-    months = chain[1:] or chain
+    months = chain
     negative = [node for node in months if node["state"]["cash_chf"] < 0]
     worst = min(months, key=lambda node: node["state"]["cash_chf"])
     pessimistic = [node for node in months if _span(ranges, node, "cash_chf")[0] < 0]
@@ -301,7 +303,9 @@ def _never_short(goal, chain, ranges, main_chain, horizon_key):
     status = _status(not negative, not pessimistic, optimistic_ok, bool(ranges))
     levers = []
     lowest = worst["state"]["cash_chf"]
-    if status == "robust":
+    if status == "met":
+        headline = f"Cash never runs out; its lowest point is {_chf(lowest)} in {worst['date'][:7]}."
+    elif status == "robust":
         headline = f"Cash never runs out; its lowest point is {_chf(lowest)} in {worst['date'][:7]}, even if estimates turn out worse."
     elif status == "fragile":
         low_node = min(pessimistic, key=lambda node: _span(ranges, node, "cash_chf")[0])
@@ -360,7 +364,11 @@ def _debt_free(goal, chain, start_key):
 
 def _surplus(goal, chain, main_chain):
     when, target = goal["date"], goal["target_chf"]
-    window = [node for node in chain[1:] if node["date"][:7] > when] or chain[-1:]
+    window = [node for node in chain[1:] if node["date"][:7] > when]
+    if not window:
+        return {"status": "no_observed_months", "closeness": None, "value_chf": None, "gap_chf": None,
+                "date": when, "explain": {"headline": f"No complete month is available from {when} to the projection horizon.",
+                                           "levers": [{"kind": "note", "text": "Extend the horizon to evaluate this goal."}]}}
     average = sum(node["state"]["cash_flow"].get("operating_cash_flow_chf", 0.0) for node in window) / len(window)
     met = average >= target
     levers = []
@@ -380,8 +388,12 @@ def _surplus(goal, chain, main_chain):
 def _reserve(goal, chain, ranges):
     months_needed = goal["target_months"]
     points = []
-    for node in chain[1:] or chain:
-        costs = node["state"].get("cash_flow", {}).get("expenses_chf", 0.0)
+    for index, node in enumerate(chain):
+        if index == 0:
+            scenario = chain[1]["scenario"] if len(chain) > 1 else node["scenario"]
+            costs = expense_terms_at(scenario, node["month"])["actual_monthly_expenses_chf"]
+        else:
+            costs = node["state"].get("cash_flow", {}).get("expenses_chf", 0.0)
         if costs > 0:
             low = _span(ranges, node, "cash_chf")[0]
             points.append((node, node["state"]["cash_chf"] / costs, low / costs, costs))
@@ -446,12 +458,12 @@ def scorecard(nodes, goals, ranges=None, horizon_months=None):
         rows.append({"branch_id": branch, "tip_id": last_shown["id"], "score": None if score is None else round(score, 4),
                      "goals_met": sum(1 for r in results if r["status"] in ("robust", "fragile", "met")),
                      "goals_scored": len(scored),
-                     "robust": sum(1 for r in results if r["status"] in ("robust", "met")),
+                     "robust": sum(1 for r in results if r["status"] == "robust"),
                      "continued_from": last_shown["date"][:7] if chain[-1].get("continued") else None,
                      "end_net_worth_chf": round(chain[-1]["state"]["net_worth_chf"], 2), "results": results})
     rows.sort(key=lambda row: (row["score"] if row["score"] is not None else -1, row["robust"], row["end_net_worth_chf"]), reverse=True)
     for rank, row in enumerate(rows, 1):
-        row["rank"] = rank
+        row["rank"] = rank if row["score"] is not None else None
     return {"goals": goals, "paths": rows, "uses_range": bool(ranges), "horizon": horizon_key,
             "method": (f"Every path is judged up to {horizon_key}; paths that end earlier are continued at their last "
                        "situation for scoring. Closeness is value ÷ target (capped at 100%) or the share of months that meet "
