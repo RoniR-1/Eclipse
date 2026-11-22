@@ -465,7 +465,6 @@ def scorecard(nodes, goals, ranges=None, horizon_months=None):
     for rank, row in enumerate(rows, 1):
         row["rank"] = rank if row["score"] is not None else None
     return {"goals": goals, "paths": rows, "uses_range": bool(ranges), "horizon": horizon_key,
-            "method": (f"Every path is judged up to {horizon_key}; paths that end earlier are continued at their last "
-                       "situation for scoring. Closeness is value ÷ target (capped at 100%) or the share of months that meet "
-                       "the goal, weighted by priority (high 3, medium 2, low 1). Robust = met even in the pessimistic range. "
-                       "Goals are judged independently; goals after the horizon are not scored.")}
+            "method": (f"Every path is judged up to {horizon_key}. Closeness is value ÷ target (capped at 100%) or the "
+                       "share of months that meet the goal, weighted by priority (high 3, medium 2, low 1). "
+                       "Goals after the horizon are not scored.")}

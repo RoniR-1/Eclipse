@@ -5,7 +5,7 @@ import vm from 'node:vm';
 
 const EXPORTS = [
   'state', 'branchNodeIds', 'originalPathRemovals', 'isOriginalBranch', 'deleteBranch', 'buildRunFile',
-  'buildTreeIndex', 'renderBreakdown', 'holdingName', 'inspectorTabs', 'fillRangeSection', 'nodesKey', 'renderReview', 'dropdownMenu', 'pathPoints', 'whenField', 'renderReplacedPlans', 'followingNode', 'showAppendedEvent', 'pathName', 'deleteFromNode', 'nodesFrom', 'isBranchStart',
+  'buildTreeIndex', 'renderBreakdown', 'holdingName', 'inspectorTabs', 'fillRangeSection', 'nodesKey', 'renderReview', 'dropdownMenu', 'goalsResultText', 'pathPoints', 'whenField', 'renderReplacedPlans', 'followingNode', 'showAppendedEvent', 'pathName', 'deleteFromNode', 'nodesFrom', 'isBranchStart',
   'getPathMilestones', 'getAllGraphMilestones', 'setHideRecaps', 'getLeafPaths', 'niceTicks', 'GRAPH_METRICS', 'nodeHealth',
   'formatVariable', 'milestoneTitle', 'money', 'moneySigned', 'compactChf', 'escapeHtml',
   'variableToDisplay', 'parseVariableInput', 'renderTuning', 'renderStructuredComparison', 'inputSource',

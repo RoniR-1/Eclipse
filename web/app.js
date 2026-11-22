@@ -5344,6 +5344,15 @@ function goToPath(branchId, nodeId) {
   }
 }
 
+// The best path's result in one line: "2 of 3 goals met (1 even if estimates are off)", or
+// "1 of 1 goals met, even if estimates are off" when every met goal also holds in the pessimistic case.
+// The horizon is stated once, in the method note under the table.
+function goalsResultText(path) {
+  const met = `${path.goals_met} of ${path.goals_scored} goals met`;
+  if (!path.goals_met) return met;
+  return path.robust === path.goals_met ? `${met}, even if estimates are off` : `${met} (${path.robust} even if estimates are off)`;
+}
+
 function renderScorecard(card) {
   state.goalCard = card;
   state.goalCardKey = nodesKey();
@@ -5365,12 +5374,13 @@ function renderScorecard(card) {
   const best = card.paths.find(row => row.score !== null);
   box.replaceChildren(
     el('h3', { text: best ? `Closest to your goals: ${pathLabel(best.branch_id)}` : 'No goals can be scored yet' }),
-    el('p', { class: 'goals-summary', text: best ? `${best.goals_met} of ${best.goals_scored} goals met (${best.robust} even if estimates are off). Every path is judged up to ${card.horizon}.` : `Extend the projection or adjust your goals to compare paths. The current horizon is ${card.horizon}.` }),
+    el('p', { class: 'goals-summary', text: best ? goalsResultText(best) : `Extend the projection or adjust your goals to compare paths. The current horizon is ${card.horizon}.` }),
     el('div', { class: 'goals-table-wrap' }, table),
     el('p', { class: 'goals-legend', text: '✓ met · ~ only if estimates turn out better · ✗ missed · — not scored' }),
-    el('p', { class: 'goals-legend', text: 'Each goal is checked independently. The same cash can count toward multiple goals, so meeting each target does not establish that all planned spending can be funded.' }),
     el('div', { id: 'goals-explain', class: 'goals-explain' }),
-    el('p', { class: 'range-note', text: card.method }));
+    // One note under the table: how paths are scored, then why separate goals do not add up to one plan.
+    el('p', { class: 'range-note', text: `${card.method} Each goal is checked on its own, so the same cash can count toward `
+      + 'several goals: meeting every target doesn\'t mean they can all be funded together.' }));
 }
 
 async function readGoals() {
