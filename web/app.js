@@ -5502,6 +5502,10 @@ for (const btn of document.querySelectorAll('.recaps-toggle')) {
   btn.addEventListener('click', () => setHideRecaps(!state.hideRecaps));
 }
 byId('theme-toggle')?.addEventListener('click', () => setTheme(isLightTheme() ? 'dark' : 'light'));
+// QR code pop-up: opens from the top bar; closes with ×, Escape or a click outside the card.
+const qrDialog = byId('qr-dialog');
+byId('show-qr')?.addEventListener('click', () => qrDialog?.showModal());
+qrDialog?.addEventListener('click', event => { if (event.target === qrDialog) qrDialog.close(); });
 initTheme();
 fetch('/api/branch/presets').then(response => response.json()).then(data => { state.presets = data.presets || []; }).catch(() => {});
 startAstralBackdrop();
