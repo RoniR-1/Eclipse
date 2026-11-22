@@ -112,36 +112,36 @@ main {
   color: var(--text-strong);
   text-decoration: none;
   font-size: 21px;
-  font-weight: 700;
-  letter-spacing: -1px;
+  font-weight: 600;
+  letter-spacing: -0.03em;
   display: inline-flex;
   align-items: center;
-  gap: 11px;
+  gap: 10px;
 }
 
-.brand-light {
-  font-weight: 400;
+.brand-wordmark {
+  line-height: 1;
 }
 
 .brand-mark {
-  width: 29px;
-  height: 29px;
-  display: flex;
-  gap: 3px;
-  align-items: end;
-  transform: rotate(-25deg);
-}
-
-.brand-mark i {
+  width: 28px;
+  height: 28px;
+  flex: none;
   display: block;
-  width: 7px;
-  background: var(--accent);
-  border-radius: 7px;
+  overflow: visible;
+  filter: drop-shadow(0 0 8px rgba(255, 138, 61, 0.26));
+  transition: transform 0.3s cubic-bezier(0.22, 1, 0.36, 1), filter 0.25s ease;
 }
 
-.brand-mark i:nth-child(1) { height: 16px; }
-.brand-mark i:nth-child(2) { height: 27px; }
-.brand-mark i:nth-child(3) { height: 20px; }
+.brand:hover .brand-mark {
+  transform: scale(1.06);
+  filter: drop-shadow(0 0 12px rgba(255, 164, 94, 0.45));
+}
+
+.eclipse-stop-start { stop-color: #ffd5a8; }
+.eclipse-stop-end { stop-color: #ff7e2e; }
+.eclipse-ring { stroke: rgba(255, 164, 94, 0.34); }
+.eclipse-flash { fill: #fff6ec; }
 
 .topbar-actions {
   display: flex;
@@ -3069,9 +3069,18 @@ html[data-theme="light"] a:focus-visible {
   outline-color: #141412;
 }
 
-html[data-theme="light"] .brand-mark i {
-  background: #141412;
+html[data-theme="light"] .brand-mark {
+  filter: none;
 }
+
+html[data-theme="light"] .brand:hover .brand-mark {
+  filter: none;
+}
+
+html[data-theme="light"] .eclipse-stop-start { stop-color: #141412; }
+html[data-theme="light"] .eclipse-stop-end { stop-color: #2f2f2b; }
+html[data-theme="light"] .eclipse-ring { stroke: rgba(20, 20, 18, 0.24); }
+html[data-theme="light"] .eclipse-flash { fill: #141412; }
 
 html[data-theme="light"] .topbar {
   border-bottom-color: rgba(20, 20, 18, 0.09);
