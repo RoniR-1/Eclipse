@@ -343,6 +343,46 @@ describe('how far this could move', () => {
   });
 });
 
+describe('when the event happens', () => {
+  const text = item => typeof item === 'string' ? item : [item.textContent, ...(item.children || []).map(text)].join(' ');
+  const setup = () => {
+    ({ app } = loadApp({ document: fakeDocument() }));
+    app.state.nodes = new Map(graph().map(item => [item.id, item]));
+    app.state.extraction = { scenario: {}, variables: [] };
+  };
+
+  test('offers every month of the selected point\'s own path, starting at that point', () => {
+    setup();
+    assert.deepEqual(plain(app.pathPoints(app.state.nodes.get('a4')).map(item => item.id)), ['a3', 'a4', 'a5'], 'a branch: its own months only');
+    assert.deepEqual(plain(app.pathPoints(app.state.nodes.get('m3')).map(item => item.id)), ['root', 'm1', 'm2', 'm3', 'm4', 'm5', 'm6'], 'the Original path includes the start');
+    const field = app.whenField(app.state.nodes.get('a4'));
+    const selects = field.element.find(item => item.classList?.contains('when-selects'));
+    const [month, year] = [...selects.walk()].filter(item => item.tagName === 'SELECT');
+    assert.equal(year.value, '2026');
+    assert.equal(month.value, '05', 'a4 is May 2026');
+    assert.deepEqual(plain(month.children.map(option => option.textContent)), ['April', 'May', 'June'], 'only the months the branch covers');
+    month.value = '06';
+    month.dispatch('change');
+    assert.equal(field.point().id, 'a5');
+  });
+
+  test('moving the event in the review card updates what the buttons do and flags the estimate', () => {
+    setup();
+    const section = new FakeElement('div');
+    const plan = { title: 'Raise', summary: '', assumptions: '', warnings: [], one_offs: [], assets: [], investment_multiplier: 1,
+      changes: [{ kind: 'income', label: 'Raise', amount_chf: 500, start_offset_months: 0, duration_months: 0, source: 'ai_estimate' }] };
+    app.renderReview(section, app.state.nodes.get('a3'), plan, 'raise', null, { origin: app.state.nodes.get('a3'), estimatedFor: app.state.nodes.get('a3') });
+    const note = [...section.walk()].find(item => item.classList?.contains('when-note'));
+    assert.equal(note.attributes.hidden, '', 'hidden while the month is the estimated one');
+    const select = [...section.walk()].find(item => item.attributes?.id === 'event-when');
+    select.value = '06';   // June 2026 is a5, the last month of branch A
+    select.dispatch('change');
+    assert.equal(note.hidden, false);
+    assert.match(note.textContent, /estimated for .*check that they still fit/);
+    assert.match(text(section), /is its last month, so the path is extended/, 'a5 is the last month of A');
+  });
+});
+
 describe('adding an event to a path', () => {
   test('the next point is on the same path, and the starting point continues on the Original path', () => {
     assert.equal(app.followingNode(app.state.nodes.get('a3')).id, 'a4');
@@ -386,7 +426,12 @@ describe('tree index', () => {
     assert.equal(index.baselineByMonth.get(4).id, 'm4');
   });
 
+  test('recaps are hidden by default', () => {
+    assert.equal(app.state.hideRecaps, true);
+  });
+
   test('timeline milestones keep quarters, forks, branch starts, the first shortfall and the tip', () => {
+    app.state.hideRecaps = false;   // recaps are hidden by default; these tests start from them shown
     const index = app.buildTreeIndex();
     const chain = index.branchMeta.get('A').chain;
     // m1 starts the Original path, m2 is a fork, a3 starts branch A, a4 is a fork, a5 is the first shortfall and the tip.
@@ -394,6 +439,7 @@ describe('tree index', () => {
   });
 
   test('hiding recaps drops both 6-month and full-year recaps (including non-event fork recaps) while keeping starts, events and tips', () => {
+    app.state.hideRecaps = false;   // recaps are hidden by default; these tests start from them shown
     // Extend main path past month 6 and month 12 to month 18 so m6 (6m) and m12 (Year 1) are pure recaps and m18 is the tip
     let prev = 'm6';
     for (let m = 7; m <= 18; m++) {
