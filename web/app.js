@@ -14,6 +14,7 @@ const state = {
   nodes: new Map(),
   narratives: new Map(),
   pathReports: new Map(),
+  inspectorTab: 'overview', // details panel tab: 'overview' | 'details' | 'whatif'
   activeBranchId: 'main',
   selectedId: null,
   network: null,
@@ -1082,6 +1083,18 @@ function mountInspectorForView() {
   }
 }
 
+// "Drag to pan · Scroll to zoom · Click a point for details", once per browser, for a few seconds.
+function showTreeHintOnce() {
+  const hint = byId('tree-hint');
+  let seen = false;
+  try { seen = localStorage.getItem('financial_twin_tree_hint_seen') === '1'; localStorage.setItem('financial_twin_tree_hint_seen', '1'); } catch { /* storage unavailable */ }
+  if (!hint || seen) return;
+  hint.hidden = false;
+  hint.classList.remove('is-fading');
+  setTimeout(() => hint.classList.add('is-fading'), 4500);
+  setTimeout(() => { hint.hidden = true; }, 5200);
+}
+
 function setResultsView(mode, { focusNodeId = null } = {}) {
   state.resultsView = mode;
   const isTree = mode === 'tree';
@@ -1099,6 +1112,7 @@ function setResultsView(mode, { focusNodeId = null } = {}) {
   }
 
   if (isTree) {
+    showTreeHintOnce();
     stopSpineAnimation();
     window.scrollTo({ top: 0, behavior: 'smooth' });
     requestAnimationFrame(() => {
@@ -1795,6 +1809,8 @@ function rangeDelta(value, centre) {
   return `${moneySigned(delta)}${percent}`;
 }
 
+// "How far this could move", in the Overview tab: a bar per figure from the pessimistic to the optimistic
+// case with the projection marked, one warning at most, and the drivers and method folded away.
 function fillRangeSection(section, node) {
   section.replaceChildren();
   const range = currentRange();
@@ -1806,29 +1822,37 @@ function fillRangeSection(section, node) {
   if (!range) { section.append(el('p', { class: 'range-pending', text: 'Calculating the range…' })); return; }
   const span = rangeOf(range, node);
   if (!span) return;
-  const table = el('table', { class: 'range-table' },
-    el('thead', {}, el('tr', {}, el('th', { text: '' }), el('th', { text: 'Value' }), el('th', { text: 'vs. central' }))));
-  const body = el('tbody');
+  const info = el('details', { class: 'info-tip' },
+    el('summary', { 'aria-label': 'About this range', title: 'About this range', text: 'i' }),
+    el('div', { class: 'info-tip-body' },
+      el('p', { text: 'Each bar runs from the pessimistic to the optimistic case; the dot is the projection.' }),
+      range.note ? el('p', { text: range.note }) : null));
+  section.append(el('h4', { class: 'range-heading with-info' }, 'How far this could move ', info));
   for (const [field, title] of [['net_worth', 'Net worth'], ['cash', 'Cash']]) {
     const centre = node.state[`${field}_chf`];
     const [low, high] = span[field];
-    body.append(el('tr', { class: 'range-group' }, el('th', { colspan: 3, text: title })));
-    body.append(el('tr', {}, el('td', { text: 'Pessimistic' }), el('td', { class: low < 0 ? 'is-neg' : '', text: money(low) }), el('td', { text: rangeDelta(low, centre) })));
-    body.append(el('tr', { class: 'is-central' }, el('td', { text: 'Central' }), el('td', { text: money(centre) }), el('td', { text: '—' })));
-    body.append(el('tr', {}, el('td', { text: 'Optimistic' }), el('td', { text: money(high) }), el('td', { text: rangeDelta(high, centre) })));
+    const position = high > low ? Math.min(100, Math.max(0, (centre - low) / (high - low) * 100)) : 50;
+    section.append(el('div', {
+      class: 'range-row',
+      title: `Pessimistic ${money(low)} ${rangeDelta(low, centre)} · projected ${money(centre)} · optimistic ${money(high)} ${rangeDelta(high, centre)}`,
+    },
+    el('span', { class: 'range-label', text: title }),
+    el('span', { class: `range-end${low < 0 ? ' is-neg' : ''}`, text: compactChf(low) }),
+    el('span', { class: 'range-bar' }, el('span', { class: 'range-dot', style: `left: ${position.toFixed(1)}%` })),
+    el('span', { class: 'range-end', text: compactChf(high) })));
   }
-  table.append(body);
-  section.append(el('h3', { text: 'How far this could move' }), table);
-  if (span.cash[0] < 0 && node.state.cash_chf >= 0) section.append(el('p', { class: 'range-warning', text: '⚠ Cash would be negative here in the pessimistic case.' }));
   const shortfall = range.first_shortfall?.[node.branch_id];
-  if (shortfall) section.append(el('p', { class: 'range-warning', text: `In the pessimistic case this path first runs out of cash in ${shortfall.date}.` }));
-  const drivers = (range.drivers?.[node.branch_id] || []).filter(item => Math.abs(item.high - item.low) >= 1).slice(0, 4);
+  const warning = shortfall ? `Pessimistic case: this path runs out of cash in ${shortfall.date}.`
+    : span.cash[0] < 0 && node.state.cash_chf >= 0 ? 'Pessimistic case: cash would be negative here.' : '';
+  if (warning) section.append(el('p', { class: 'range-warning', text: `⚠ ${warning}` }));
+  const drivers = (range.drivers?.[node.branch_id] || []).filter(item => Math.abs(item.high - item.low) >= 1).slice(0, 3);
   if (drivers.length) {
-    section.append(el('h4', { text: 'What matters most (end of this path)' }),
+    const fold = el('details', { class: 'range-drivers-fold' }, el('summary', { text: 'What matters most' }),
       el('ul', { class: 'range-drivers' }, ...drivers.map(item => el('li', {}, el('span', { text: item.label }),
         el('strong', { text: `${moneySigned(item.low)} / ${moneySigned(item.high)}` })))));
+    rememberOpen(fold, 'range.drivers');
+    section.append(fold);
   }
-  section.append(el('p', { class: 'range-note', text: range.note }));
 }
 
 function renderTimelineView() {
@@ -2003,7 +2027,7 @@ function renderVerticalTimeline(milestones, activeMeta, index, layout) {
     const inspectLink = document.createElement('button');
     inspectLink.type = 'button';
     inspectLink.className = 'vnode-link';
-    inspectLink.textContent = 'Explore this moment';
+    inspectLink.textContent = 'Details';
     inspectLink.addEventListener('click', event => {
       event.stopPropagation();
       selectNode(node.id, { openDrawer: true });
@@ -3391,8 +3415,116 @@ function rememberOpen(group, path) {
   });
 }
 
+// A readable name for an asset or loan: its own name, else its ID in words ("student-loan" → "Student loan").
+function holdingName(item) {
+  if (item.id === '__contributions__') return 'Invested savings';
+  if (item.name) return item.name;
+  const words = String(item.id ?? '').replace(/^event-(asset|debt)-[^-]+-\d+$/, 'Purchase').replace(/[-_]+/g, ' ').trim();
+  if (!words) return 'Unnamed';
+  return words.length <= 4 ? words.toUpperCase() : words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+const percentText = value => `${twoDecimals(value * 100)}%`;
+
+// The Breakdown: what moved cash this month, what is owned and owed, and values in today's prices.
+// Every engine field is still available under "Show all fields".
+function renderBreakdown(node) {
+  const s = node.state;
+  const f = s.cash_flow || {};
+  const root = el('div', { class: 'breakdown-body' });
+  const row = (label, value, { sub, cls = '' } = {}) => el('div', { class: `detail-row ${cls}`.trim() },
+    el('span', {}, label, sub ? el('small', { class: 'detail-sub', text: sub }) : null), el('strong', { text: value }));
+  const group = (title, ...rows) => {
+    const items = rows.filter(Boolean);
+    if (items.length) root.append(el('section', { class: 'breakdown-group' }, el('h4', { text: title }), ...items));
+  };
+  const flow = (label, value, options) => (Math.abs(value || 0) >= 0.005 ? row(label, moneySigned(value), options) : null);
+
+  if (node.month > 0) {
+    const change = f.cash_change_after_transfers_chf ?? f.net_cash_flow_chf;
+    group('This month',
+      flow('Income', f.income_chf),
+      flow('Living costs', -(f.expenses_chf || 0)),
+      flow('One-off costs', -(f.one_off_costs_chf || 0)),
+      flow('Loan payments', -(f.debt_payments_chf || 0), f.debt_interest_chf ? { sub: `of which interest ${money(f.debt_interest_chf)}` } : undefined),
+      flow('Moved into investments', -(f.investment_contribution_chf || 0)),
+      flow('Borrowed', f.borrowing_proceeds_chf),
+      row('Change in cash', moneySigned(change), { cls: `is-total${change < 0 ? ' is-neg' : ''}` }),
+      flow('Investment growth', f.investment_return_chf, { sub: 'added to investments, not cash' }));
+  }
+
+  const assets = (s.assets || []).filter(asset => Math.abs(asset.value_chf) >= 0.005);
+  group('What you own',
+    row('Cash', money(s.cash_chf), { cls: s.cash_chf < 0 ? 'is-neg' : '' }),
+    ...assets.map(asset => row(holdingName(asset), money(asset.value_chf), {
+      sub: [asset.type, asset.annual_return ? `${percentText(asset.annual_return)} a year` : null].filter(Boolean).join(' · ') })),
+    row('Total', money(s.total_assets_chf), { cls: 'is-total' }));
+
+  const debts = (s.debts || []).filter(debt => debt.principal_chf >= 0.005);
+  if (debts.length) {
+    group('What you owe',
+      ...debts.map(debt => row(holdingName(debt), money(debt.principal_chf), {
+        sub: [debt.annual_interest_rate ? `${percentText(debt.annual_interest_rate)} a year` : 'no interest',
+          debt.monthly_payment_chf ? `${money(debt.monthly_payment_chf)} a month` : null].filter(Boolean).join(' · ') })),
+      row('Total', money(s.total_debt_chf), { cls: 'is-total' }));
+  }
+
+  if (s.price_factor && Math.abs(s.price_factor - 1) >= 0.0005 && s.real_net_worth_chf != null) {
+    group('In today’s prices',
+      row('Net worth', money(s.real_net_worth_chf), { sub: `prices are ${percentText(s.price_factor - 1)} ${s.price_factor > 1 ? 'higher' : 'lower'} than at the start` }),
+      s.real_cash_chf != null ? row('Cash', money(s.real_cash_chf)) : null);
+  }
+
+  const all = el('details', { class: 'breakdown-all' }, el('summary', { text: 'Show all fields' }));
+  rememberOpen(all, 'breakdown.all');
+  appendDetails(all, s);
+  root.append(all);
+  return root;
+}
+
+const PREFERENCE_LABELS = {
+  savings_rate: 'Savings rate', risk_tolerance: 'Risk tolerance', safety_priority: 'Safety priority',
+  emergency_months: 'Emergency fund', investment_annual_return: 'Investment return', investment_annual_volatility: 'Investment volatility',
+};
+const preferenceText = (key, value) => key === 'emergency_months' ? `${twoDecimals(value)} months` : percentText(value);
+
+// On a branch's first point: what the path it split off from had planned that this branch no longer follows.
+// From the fork commitments the server records; the rest of that record (what is inherited or new) is already
+// shown by Breakdown and "What … assumes". Returns null when nothing was replaced.
+function renderReplacedPlans(node) {
+  const commitments = node.branch_commitments;
+  if (!commitments?.replaced) return null;
+  const { replaced, fork_month: forkMonth } = commitments;
+  const items = [];
+  // Only phases scheduled after the split: the one running at the split continues, with the event on top.
+  for (const phase of replaced.phases || []) {
+    if (phase.start_month <= forkMonth) continue;
+    items.push(`${phase.name || 'Planned change'} from ${phase.effective_date}: income ${money(phase.monthly_income_chf)}, `
+      + `costs ${money(phase.monthly_expenses_chf)} a month`);
+  }
+  for (const cost of replaced.one_off_costs || []) {
+    items.push(`${cost.description || 'One-off cost'} on ${cost.date}: ${money(cost.amount_chf)}`);
+  }
+  const newPreferences = commitments.new?.preferences || {};
+  for (const [key, value] of Object.entries(replaced.preferences || {})) {
+    const label = PREFERENCE_LABELS[key] || detailLabel(key);
+    items.push(`${label}: ${preferenceText(key, value)}${key in newPreferences ? ` → ${preferenceText(key, newPreferences[key])}` : ''}`);
+  }
+  if (replaced.annual_inflation != null) {
+    const now = commitments.new?.annual_inflation;
+    items.push(`Inflation: ${percentText(replaced.annual_inflation)}${now != null ? ` → ${percentText(now)}` : ''}`);
+  }
+  if (!items.length) return null;
+  return el('section', { class: 'inspector-section replaced-plans' },
+    el('h3', { text: 'Replaced plans' }),
+    el('p', { class: 'inspector-note', text: `From ${commitments.fork_date}, this branch no longer follows these plans of the path it split off from:` }),
+    el('ul', {}, ...items.map(text => el('li', { text }))));
+}
+
+// Every field of an engine object, as nested groups. Empty values (null) are left out.
 function appendDetails(container, value, path = 'breakdown') {
   for (const [key, item] of Object.entries(value)) {
+    if (item === null || item === undefined) continue;
     if (item && typeof item === 'object') {
       const group = document.createElement('details');
       const groupPath = `${path}.${key}`;
@@ -3454,6 +3586,18 @@ function renderInspector(node, { focusBranchInput = false } = {}) {
 
   const title = document.createElement('h2');
   title.textContent = milestoneTitle(node);
+  // Trash button next to the point's name. On a branch's first point it removes the whole branch; further
+  // along, it cuts the path from here (both ask for confirmation first). It shakes briefly when the selection
+  // moves to another path, so it is clear which path it deletes.
+  const removeLabel = isBranchStart(node) ? 'Delete this path' : 'Delete this path from here';
+  const removePath = node.branch_id === 'root' ? 'main' : node.branch_id;
+  const removeButton = el('button', { type: 'button', class: 'delete-path-button', title: removeLabel, 'aria-label': removeLabel });
+  removeButton.innerHTML = '<svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true" fill="none" stroke="currentColor" '
+    + 'stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V4.5h6V7M6.5 7l1 13h9l1-13M10 11v6M14 11v6"/></svg>';
+  removeButton.addEventListener('click', () => deleteFromNode(node.id));
+  if (state.deleteButtonPath && state.deleteButtonPath !== removePath) removeButton.classList.add('is-shaking');
+  state.deleteButtonPath = removePath;
+  const titleRow = el('div', { class: 'inspector-title-row' }, title, removeButton);
 
   const worth = document.createElement('div');
   worth.className = 'inspector-worth';
@@ -3462,7 +3606,7 @@ function renderInspector(node, { focusBranchInput = false } = {}) {
   const worthLabel = document.createElement('p');
   worthLabel.textContent = 'Projected net worth';
 
-  header.append(kicker, title, worth, worthLabel);
+  header.append(kicker, titleRow, worth, worthLabel);
 
   const status = nodeHealth(node);
   if (status.issues) {
@@ -3485,18 +3629,8 @@ function renderInspector(node, { focusBranchInput = false } = {}) {
     header.append(compare);
   }
   const rangeSection = el('div', { id: 'inspector-range', class: 'inspector-range' });
-  header.append(rangeSection);
   fillRangeSection(rangeSection, node);
 
-  {
-    const remove = document.createElement('button');
-    remove.type = 'button';
-    remove.className = 'delete-branch';
-    // On a branch's first point this removes the whole branch; further along, it cuts the path from here.
-    remove.textContent = isBranchStart(node) ? 'Delete this path' : 'Delete this path from here';
-    remove.addEventListener('click', () => deleteFromNode(node.id));
-    header.append(remove);
-  }
 
   const narrativeSec = document.createElement('div');
   narrativeSec.className = 'inspector-section';
@@ -3528,9 +3662,9 @@ function renderInspector(node, { focusBranchInput = false } = {}) {
   breakdown.style.marginTop = '12px';
   rememberOpen(breakdown, 'breakdown');
   const breakdownTitle = document.createElement('summary');
-  breakdownTitle.textContent = 'Full breakdown & parameters';
+  breakdownTitle.textContent = 'Breakdown';
   breakdown.append(breakdownTitle);
-  appendDetails(breakdown, node.state);
+  breakdown.append(renderBreakdown(node));
   acctSec.append(breakdown);
 
   const feasibility = document.createElement('section');
@@ -3557,14 +3691,7 @@ function renderInspector(node, { focusBranchInput = false } = {}) {
     feasibility.append(warning);
   }
 
-  const commitmentSec = document.createElement('details');
-  commitmentSec.className = 'inspector-section';
-  if (node.branch_commitments) {
-    const heading = document.createElement('summary');
-    heading.textContent = 'Fork commitments';
-    commitmentSec.append(heading);
-    appendDetails(commitmentSec, node.branch_commitments);
-  }
+  const commitmentSec = renderReplacedPlans(node);
 
   const goalSec = document.createElement('section');
   goalSec.className = 'inspector-section';
@@ -3587,7 +3714,7 @@ function renderInspector(node, { focusBranchInput = false } = {}) {
   const provenance = document.createElement('details');
   provenance.className = 'inspector-section provenance-details';
   const provenanceTitle = document.createElement('summary');
-  provenanceTitle.textContent = 'Inputs and assumption sources';
+  provenanceTitle.textContent = 'Sources';
   provenance.append(provenanceTitle);
   const records = Object.entries(node.scenario.provenance || {});
   if (!records.length) {
@@ -3715,15 +3842,18 @@ function renderInspector(node, { focusBranchInput = false } = {}) {
     editDetails.append(editForm);
   }
 
-  panel.append(header, narrativeSec);
-  const info = renderBranchInfo(node);
-  if (info) panel.append(info);
-  const appendedInfo = renderAppendedEvents(node);
-  if (appendedInfo) panel.append(appendedInfo);
-  panel.append(acctSec, feasibility, commitmentSec, goalSec, provenance);
-  if (editDetails) panel.append(editDetails);
+  // Three tabs under the header: the story of this point, its numbers, and what you can change from here.
+  if (focusBranchInput) state.inspectorTab = 'whatif';
+  const overview = [rangeSection, narrativeSec, renderBranchInfo(node), renderAppendedEvents(node)];
+  // Fork and goal commitments only exist on some points; an empty fold would show as a blank "Details".
+  const numbers = [acctSec, feasibility, commitmentSec, s.goals?.length ? goalSec : null, provenance];
   const composer = el('div', { class: 'branch-form' });
-  panel.append(composer);
+  const whatIf = [composer, editDetails];
+  panel.append(header, inspectorTabs([
+    { id: 'overview', label: 'Overview', content: overview },
+    { id: 'details', label: 'Details', content: numbers },
+    { id: 'whatif', label: 'What if', content: whatIf },
+  ]));
   showComposer(composer, node);
 
   if (focusBranchInput) {
@@ -3733,6 +3863,58 @@ function renderInspector(node, { focusBranchInput = false } = {}) {
       box?.focus();
     });
   }
+}
+
+// A small drop-down menu, such as "+ Add…". Closes after a choice, on a click elsewhere or with Escape.
+function dropdownMenu(label, text, items, { className = '' } = {}) {
+  const list = el('div', { class: 'more-menu-list' });
+  const menu = el('details', { class: `more-menu ${className}`.trim() },
+    el('summary', { 'aria-label': label, title: label, text }), list);
+  const fill = entries => list.replaceChildren(...entries.map(item => el('button', {
+    type: 'button', class: item.danger ? 'is-danger' : null, text: item.label,
+    onclick: () => { menu.open = false; item.onSelect(); },
+  })));
+  fill(items);
+  menu.setItems = fill;
+  return menu;
+}
+
+// Tabs for the details panel. The chosen tab is kept when another point is selected.
+function inspectorTabs(tabs) {
+  if (!tabs.some(tab => tab.id === state.inspectorTab)) state.inspectorTab = tabs[0].id;
+  const list = el('div', { class: 'inspector-tabs', role: 'tablist', 'aria-label': 'Point details' });
+  const wrapper = el('div', { class: 'inspector-tabbed' }, list);
+  const buttons = [];
+  const panels = [];
+  const select = (id, { focus = false } = {}) => {
+    state.inspectorTab = id;
+    tabs.forEach((tab, index) => {
+      const active = tab.id === id;
+      buttons[index].setAttribute('aria-selected', String(active));
+      buttons[index].tabIndex = active ? 0 : -1;
+      buttons[index].classList.toggle('is-active', active);
+      panels[index].hidden = !active;
+      if (active && focus) buttons[index].focus();
+    });
+  };
+  tabs.forEach((tab, index) => {
+    const button = el('button', { type: 'button', role: 'tab', id: `inspector-tab-${tab.id}`, 'aria-controls': `inspector-panel-${tab.id}`, class: 'inspector-tab', text: tab.label });
+    button.addEventListener('click', () => select(tab.id));
+    button.addEventListener('keydown', event => {
+      const step = { ArrowRight: 1, ArrowLeft: -1 }[event.key];
+      if (!step) return;
+      event.preventDefault();
+      select(tabs[(index + step + tabs.length) % tabs.length].id, { focus: true });
+    });
+    const panel = el('div', { role: 'tabpanel', id: `inspector-panel-${tab.id}`, 'aria-labelledby': `inspector-tab-${tab.id}`, class: 'inspector-tabpanel' },
+      ...tab.content.filter(Boolean));
+    buttons.push(button);
+    panels.push(panel);
+    list.append(button);
+    wrapper.append(panel);
+  });
+  select(state.inspectorTab);
+  return wrapper;
 }
 
 // ── Branching: preset or free text → editable building blocks → simulated branch ──
@@ -3780,11 +3962,18 @@ function setBadge(badge, source) {
 
 const timing = (offset, duration) => `${offset ? `after ${offset} months` : 'from now'}${duration ? `, for ${duration} months` : ', permanently'}`;
 
+// One sentence per building block, e.g. "Course fee: pay CHF 4,500 now".
+const BLOCK_SENTENCES = {
+  changes: c => `${c.label}: ${c.kind} ${moneySigned(c.amount_chf)}/month ${timing(c.start_offset_months, c.duration_months)}`,
+  one_offs: o => `${o.label}: ${o.amount_chf < 0 ? `receive ${money(-o.amount_chf)}` : `pay ${money(o.amount_chf)}`} ${o.offset_months ? `after ${o.offset_months} months` : 'now'}`,
+  assets: a => `${a.label}: ${money(a.price_chf)} = ${money(a.loan_chf)} loan + ${money(a.down_payment_chf)} down${a.transaction_costs_chf ? `, ${money(a.transaction_costs_chf)} costs` : ''}`,
+};
+const investmentSentence = multiplier => `Investments ${multiplier >= 1 ? '+' : '−'}${Math.abs(Math.round((multiplier - 1) * 100))}%`;
+
 function describeBlocks(plan) {
-  const items = plan.changes.map(c => [`${c.label}: ${c.kind} ${moneySigned(c.amount_chf)}/month ${timing(c.start_offset_months, c.duration_months)}`, c.source]);
-  for (const o of plan.one_offs) items.push([`${o.label}: ${o.amount_chf < 0 ? `receive ${money(-o.amount_chf)}` : `pay ${money(o.amount_chf)}`} ${o.offset_months ? `after ${o.offset_months} months` : 'now'}`, o.source]);
-  for (const a of plan.assets) items.push([`${a.label}: ${money(a.price_chf)} = ${money(a.loan_chf)} loan + ${money(a.down_payment_chf)} down${a.transaction_costs_chf ? `, ${money(a.transaction_costs_chf)} costs` : ''}`, a.source]);
-  if (plan.investment_multiplier !== 1) items.push([`Investments ${plan.investment_multiplier > 1 ? '+' : '−'}${Math.abs(Math.round((plan.investment_multiplier - 1) * 100))}%`, 'assumption']);
+  const items = [];
+  for (const key of ['changes', 'one_offs', 'assets']) for (const item of plan[key]) items.push([BLOCK_SENTENCES[key](item), item.source]);
+  if (plan.investment_multiplier !== 1) items.push([investmentSentence(plan.investment_multiplier), 'assumption']);
   return items;
 }
 
@@ -3860,7 +4049,7 @@ function showComposer(section, node, text = '', presetId = null) {
     }
   });
   section.append(el('h3', { text: 'What if something changed?' }),
-    el('p', { class: 'composer-hint', text: 'Pick an event type, describe your own, or both. The AI sets the numbers; you review every one before the branch is created.' }),
+    el('p', { class: 'composer-hint', text: 'Pick a type or describe the event.' }),
     state.presets.length ? chips : null, form, offline);
 }
 
@@ -3874,10 +4063,10 @@ function sourceLinks(urls) {
     })));
 }
 
-function blockEditor(key, item, onRemove) {
+function blockEditor(key, item, onRemove, { head = true } = {}) {
   const badge = setBadge(el('span'), item.source);
-  const box = el('div', { class: 'block' }, el('div', { class: 'block-head' }, badge,
-    el('button', { type: 'button', class: 'block-remove', 'aria-label': 'Remove this item', text: '×', onclick: onRemove })));
+  const box = el('div', { class: 'block' }, head ? el('div', { class: 'block-head' }, badge,
+    el('button', { type: 'button', class: 'block-remove', 'aria-label': 'Remove this item', text: '×', onclick: onRemove })) : null);
   const grid = el('div', { class: 'block-grid' });
   let down = null;
   const refreshDown = () => { if (down) { item.down_payment_chf = item.price_chf - item.loan_chf; down.textContent = money(item.down_payment_chf); } };
@@ -3959,28 +4148,63 @@ function showNewBranch(node, nodes, revision) {
 function renderReview(section, node, proposal, text, presetId = null) {
   const plan = structuredClone(proposal);
   section.replaceChildren();
-  const title = el('input', { type: 'text', id: 'branch-title', maxlength: 60 });
+  // Heading with the AI's assumptions and sources behind an (i), then the event name as an editable title.
+  const notes = [plan.assumptions ? el('p', { text: localizeAmounts(plan.assumptions) }) : null, sourceLinks(plan.source_urls)].filter(Boolean);
+  const info = notes.length ? el('details', { class: 'info-tip' },
+    el('summary', { 'aria-label': 'Assumptions and sources', title: 'Assumptions and sources', text: 'i' }),
+    el('div', { class: 'info-tip-body' }, ...notes)) : null;
+  const title = el('input', { type: 'text', id: 'branch-title', maxlength: 60, class: 'review-title-input', 'aria-label': 'Event name' });
   title.value = plan.title;
-  section.append(el('span', { class: 'card-kicker', text: 'REVIEW THE NUMBERS' }), el('h3', { text: 'Check the numbers' }),
-    el('label', { for: 'branch-title', text: 'Event name' }), title);
-  const summary = el('div', { class: 'proposal-summary' });
-  const updateSummary = () => { summary.replaceChildren(...describeBlocks(plan).map(([description]) => el('p', { text: description }))); };
-  section.append(summary);
-  if (plan.assumptions) section.append(el('p', { class: 'proposal-assumptions', text: localizeAmounts(plan.assumptions) }));
+  section.append(el('h3', { class: 'review-heading with-info' }, 'Check the numbers ', info),
+    el('div', { class: 'review-title' }, title));
   if (plan.warnings?.length) section.append(el('ul', { class: 'proposal-warnings' }, ...plan.warnings.map(item => el('li', { text: localizeAmounts(item) }))));
-  const sources = sourceLinks(plan.source_urls);
-  if (sources) section.append(sources);
-  const lists = { changes: el('div'), one_offs: el('div'), assets: el('div') };
-  const redraw = () => {
-    for (const key of Object.keys(lists)) lists[key].replaceChildren(...plan[key].map((item, index) => blockEditor(key, item, () => { plan[key].splice(index, 1); redraw(); })));
-    updateSummary();
-  };
-  redraw();
-  const addButton = (key, label) => el('button', { type: 'button', class: 'add-block', text: `+ ${label}`, onclick: () => { plan[key].push(NEW_BLOCKS[key]()); redraw(); } });
+
+  // One sentence row per amount, with Edit (opens its fields in place) and ×. "+ Add…" adds more.
+  const kinds = [['changes', 'Monthly change'], ['one_offs', 'One-off'], ['assets', 'Purchase']];
+  const opened = new Set();
+  const investmentItem = { source: 'assumption' };   // stands for the investment change in `opened`
   const shock = el('input', { type: 'number', step: 'any', id: 'branch-shock' });
   shock.value = Number(((plan.investment_multiplier - 1) * 100).toFixed(2));
-  shock.addEventListener('input', () => { plan.investment_multiplier = 1 + Number(shock.value) / 100; updateSummary(); });
-  Object.values(lists).forEach(list => list.addEventListener('input', updateSummary));
+  let showInvestment = plan.investment_multiplier !== 1;
+  const rows = el('div', { class: 'proposal-rows' });
+  const addMenu = dropdownMenu('Add an amount', '+ Add…', [], { className: 'add-menu' });
+  const row = (item, sentence, editor, onRemove) => {
+    const text = el('span', { class: 'proposal-row-text', text: sentence() });
+    const badge = setBadge(el('span'), item.source);
+    const isOpen = opened.has(item);
+    const toggle = el('button', { type: 'button', class: 'proposal-row-edit', 'aria-expanded': String(isOpen), text: isOpen ? 'Done' : 'Edit',
+      onclick: () => { if (opened.has(item)) opened.delete(item); else opened.add(item); redraw(); } });
+    const remove = el('button', { type: 'button', class: 'block-remove', 'aria-label': 'Remove this item', text: '×', onclick: onRemove });
+    const wrapper = el('div', { class: `proposal-row${isOpen ? ' is-open' : ''}` },
+      el('div', { class: 'proposal-row-main' }, text, badge, toggle, remove));
+    if (isOpen) {
+      const fields = editor();
+      fields.addEventListener('input', () => { text.textContent = sentence(); setBadge(badge, item.source); });
+      wrapper.append(fields);
+    }
+    return wrapper;
+  };
+  const redraw = () => {
+    const parts = [];
+    for (const [key] of kinds) {
+      plan[key].forEach((item, index) => parts.push(row(item, () => BLOCK_SENTENCES[key](item),
+        () => blockEditor(key, item, null, { head: false }),
+        () => { plan[key].splice(index, 1); opened.delete(item); redraw(); })));
+    }
+    if (showInvestment) {
+      parts.push(row(investmentItem, () => investmentSentence(plan.investment_multiplier),
+        () => el('div', { class: 'block' }, el('label', { class: 'block-field', for: 'branch-shock' }, el('span', { text: 'Change in investment value (%)' }), shock)),
+        () => { plan.investment_multiplier = 1; shock.value = 0; showInvestment = false; opened.delete(investmentItem); redraw(); }));
+    }
+    if (!parts.length) parts.push(el('p', { class: 'proposal-empty', text: 'No amounts yet. Add one below.' }));
+    rows.replaceChildren(...parts);
+    addMenu.setItems([
+      ...kinds.map(([key, label]) => ({ label, onSelect: () => { const item = NEW_BLOCKS[key](); plan[key].push(item); opened.add(item); redraw(); } })),
+      ...(showInvestment ? [] : [{ label: 'Investment change', onSelect: () => { showInvestment = true; opened.add(investmentItem); redraw(); shock.focus(); } }]),
+    ]);
+  };
+  shock.addEventListener('input', () => { plan.investment_multiplier = 1 + Number(shock.value) / 100; });
+  redraw();
   const options = branchOptions(node);
   const error = el('p', { class: 'form-error', role: 'alert' });
   const create = actionButton('Create branch');
@@ -4011,9 +4235,11 @@ function renderReview(section, node, proposal, text, presetId = null) {
   const following = followingNode(node);
   const pathLabel = pathName(node);
   const append = el('button', { type: 'button', class: 'ghost-button wide append-button', text: 'Add to this path' });
-  const appendHint = el('p', { class: 'append-hint', text: following
-    ? `Or add it to ${pathLabel} at this point: the months after it are recalculated with this event, keeping the later events and the branches that split off later. Branches that split off at this point stay as they are.`
-    : `Or add it to ${pathLabel}: this is its last point, so the path is extended by the period chosen above.` });
+  const appendInfo = el('details', { class: 'info-tip' },
+    el('summary', { 'aria-label': 'What “Add to this path” does', title: 'What “Add to this path” does', text: 'i' }),
+    el('div', { class: 'info-tip-body' }, el('p', { text: following
+      ? `Instead of a new branch, the event is added to ${pathLabel} at this point. The months after it are recalculated with it, keeping the later events and the branches that split off later. Branches that split off at this point stay as they are.`
+      : `Instead of a new branch, the event is added to ${pathLabel}. This is its last point, so the path is extended by the period chosen above.` })));
   append.addEventListener('click', async () => {
     error.textContent = '';
     append.disabled = create.disabled = true;
@@ -4034,12 +4260,8 @@ function renderReview(section, node, proposal, text, presetId = null) {
       append.textContent = 'Add to this path';
     }
   });
-  section.append(
-    el('h4', { text: 'Monthly changes' }), lists.changes, addButton('changes', 'Add monthly change'),
-    el('h4', { text: 'One-off amounts' }), lists.one_offs, addButton('one_offs', 'Add one-off'),
-    el('h4', { text: 'Purchases' }), lists.assets, addButton('assets', 'Add purchase'),
-    el('h4', { text: 'Investments' }), el('label', { class: 'block-field', for: 'branch-shock' }, el('span', { text: 'Change in investment value (%)' }), shock),
-    options.element, error, create, appendHint, append,
+  section.append(rows, addMenu,
+    options.element, error, create, el('div', { class: 'append-row' }, append, appendInfo),
     el('button', { type: 'button', class: 'back-button', text: '← Choose a different event', onclick: () => showComposer(section, node, text, presetId) }));
 }
 
@@ -4378,12 +4600,6 @@ for (const btn of document.querySelectorAll('.metric-btn')) {
   });
 }
 
-byId('jump-to-summary').addEventListener('click', () => {
-  byId('timeline-summary')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-});
-byId('back-to-top').addEventListener('click', () => {
-  window.scrollTo({ top: 0, behavior: 'smooth' });
-});
 byId('switch-to-tree').addEventListener('click', () => setResultsView('tree'));
 byId('back-to-timeline').addEventListener('click', () => setResultsView('timeline', { focusNodeId: state.selectedId }));
 byId('return-to-original').addEventListener('click', () => {
@@ -4446,10 +4662,25 @@ byId('tree-adjust-scenario').addEventListener('click', () => {
 
 const CURRENCY_STORAGE_KEY = 'financial_twin_currency';
 
+// What the figures assume. Written once; shown behind the (i) on the assumptions page and in the results.
+const ASSUMPTIONS_NOTE = 'Income is take-home pay: taxes and social contributions are not calculated separately. '
+  + 'Calculations are in CHF; other currencies use a dated reference rate, not future or transaction rates. '
+  + 'Inflation follows each path’s assumptions. Negative cash shows funding needed: the model does not borrow '
+  + 'or sell assets to cover it. Missing costs may come from synthetic sample averages, which may not fit your '
+  + 'household. The range shows the effect of changing assumptions and carries no probability.';
+for (const element of document.querySelectorAll('[data-caveat]')) element.textContent = ASSUMPTIONS_NOTE;
+
+// An open (i) or drop-down menu closes when you click elsewhere or press Escape.
+document.addEventListener('click', event => {
+  for (const open of document.querySelectorAll('.info-tip[open], .more-menu[open]')) if (!open.contains(event.target)) open.open = false;
+});
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape') for (const open of document.querySelectorAll('.info-tip[open], .more-menu[open]')) open.open = false;
+});
+
 // Re-renders text that depends on the chosen currency.
 function refreshCurrencyText() {
-  const rate = byId('currency-rate');
-  if (rate) rate.textContent = currencyRateText();
+  for (const pill of document.querySelectorAll('.currency-pill')) pill.title = currencyRateText();
 }
 
 function chooseCurrency(code) {
@@ -4469,13 +4700,12 @@ async function loadCurrencies() {
     if (!response.ok) throw new Error('unavailable');
     const data = await response.json();
     state.currencies = data.currencies.map(item => ({ ...item, date: data.date, source: data.source, live: data.live }));
-    // The assumptions page shows names; the compact menus on the results page show codes, with names on hover.
+    // Compact menus: codes, with the currency's name on hover.
     for (const menu of document.querySelectorAll('.currency-select')) {
-      const compact = menu.id !== 'currency';
       menu.replaceChildren(...state.currencies.map(item => {
         const option = document.createElement('option');
         option.value = item.code;
-        option.textContent = compact ? item.code : `${item.code} · ${item.name}`;
+        option.textContent = item.code;
         option.title = item.name;
         return option;
       }));
@@ -4845,7 +5075,7 @@ byId('download-run').addEventListener('click', () => {
   link.download = `financial-twin-run-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.json`;
   link.click();
   setTimeout(() => URL.revokeObjectURL(link.href), 1000);
-  showToast('Run file saved. Check it with: scripts/reproduce.py <file>');
+  showToast('Run file saved');
 });
 
 /* ==========================================================================
@@ -5405,6 +5635,9 @@ function buildCustomGraphStage(config, leaves) {
 }
 
 function renderGraphStudio(index = buildTreeIndex()) {
+  // Only useful once there is a branch to compare with the Original path.
+  const studio = byId('graph-studio');
+  if (studio) studio.hidden = !state.nodes.size || !index.branchIds.some(id => !isOriginalBranch(id));
   if (!state.nodes.size) return;
   populateGraphMetricSelect();
   const leaves = getLeafPaths(index);

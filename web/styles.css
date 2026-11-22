@@ -496,152 +496,6 @@ dialog p {
   white-space: nowrap;
 }
 
-.intake-faq {
-  margin-top: 32px;
-  padding: 64px 7% 96px;
-  border-top: 1px solid var(--border);
-}
-
-.intake-faq-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-end;
-  gap: 20px;
-  flex-wrap: wrap;
-  margin-bottom: 24px;
-}
-
-.intake-faq-head h2 {
-  font-family: var(--font-serif);
-  font-size: clamp(28px, 2.8vw, 38px);
-  font-weight: 400;
-  line-height: 1.15;
-  letter-spacing: -0.015em;
-  margin: 8px 0 0;
-  color: var(--text-strong);
-}
-
-.intake-faq-note {
-  margin: 10px 0 0;
-  max-width: 68ch;
-  font-size: 12.5px;
-  line-height: 1.6;
-  color: var(--text-muted);
-}
-
-.intake-faq-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 18px 28px;
-  align-items: start;
-}
-
-.intake-faq-col {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  min-width: 0;
-}
-
-.faq-item {
-  margin: 0;
-  background: rgba(52, 32, 22, 0.72);
-  backdrop-filter: blur(8px);
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  padding: 16px 20px;
-  min-width: 0;
-  transition: border-color 0.2s ease, background 0.2s ease;
-}
-
-.faq-item:hover,
-.faq-item[open] {
-  border-color: var(--border-strong);
-}
-
-.faq-item > summary {
-  list-style: none;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 14px;
-  cursor: pointer;
-  font-size: 14.5px;
-  font-weight: 600;
-  color: var(--text-strong);
-}
-
-.faq-item > summary::-webkit-details-marker {
-  display: none;
-}
-
-.faq-item > summary::after {
-  content: '+';
-  font-size: 18px;
-  font-weight: 400;
-  line-height: 1;
-  color: var(--text-muted);
-  flex: none;
-  transition: transform 0.2s ease, color 0.2s ease;
-}
-
-.faq-item[open] > summary::after {
-  content: '−';
-  color: var(--accent-bright);
-}
-
-.faq-body {
-  margin-top: 14px;
-  padding-top: 14px;
-  border-top: 1px solid var(--border);
-  font-size: 13.5px;
-  line-height: 1.65;
-  color: var(--text-secondary);
-}
-
-.faq-body p {
-  margin: 0 0 10px;
-}
-
-.faq-body p:last-child {
-  margin-bottom: 0;
-}
-
-.faq-subdetails {
-  margin: 12px 0;
-}
-
-.faq-subdetails summary {
-  cursor: pointer;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--accent-bright);
-  margin-bottom: 8px;
-}
-
-html[data-theme="light"] .faq-item {
-  background: rgba(255, 255, 255, 0.94);
-  border-color: var(--border);
-  box-shadow: 0 6px 20px rgba(16, 16, 14, 0.035);
-}
-
-html[data-theme="light"] .faq-item:hover,
-html[data-theme="light"] .faq-item[open] {
-  border-color: var(--border-strong);
-}
-
-@media (max-width: 900px) {
-  .intake-faq-grid {
-    grid-template-columns: 1fr;
-    gap: 14px;
-  }
-}
-
-@media (max-width: 560px) {
-  .intake-faq {
-    padding: 36px 18px 64px;
-  }
-}
 
 /* ===================================================================}
 
@@ -2057,13 +1911,6 @@ body.world-mode .results-stage {
   padding: 16px 20px 20px;
 }
 
-.tree-controls-hint {
-  font-size: 12.5px;
-  line-height: 1.5;
-  color: var(--text-muted);
-  margin: 0 0 14px;
-}
-
 .milestone-label {
   margin-bottom: 6px;
   font-size: 12px;
@@ -2259,18 +2106,6 @@ code {
    BRANCH DELETION
    ========================================================================== */
 
-.delete-branch {
-  margin-top: 16px;
-  border: 1px solid #a8473a;
-  background: transparent;
-  color: var(--danger);
-  border-radius: 8px;
-  padding: 8px 14px;
-  font-size: 12px;
-  font-weight: 700;
-  transition: background 0.15s;
-}
-.delete-branch:hover { background: #4a1d17; }
 
 .confirm-dialog {
   max-width: 420px;
@@ -2554,7 +2389,6 @@ code {
 .proposal-sources ul { list-style: none; padding: 0; margin: 4px 0 0; display: flex; flex-wrap: wrap; gap: 4px 12px; }
 .proposal-sources a { color: var(--accent-bright); }
 
-.summary-head-actions { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
 
 /* ===================================================================}
 
@@ -2876,20 +2710,10 @@ input[type="text"].slider-number.is-invalid { color: var(--danger); }
   color: var(--accent-bright); background: var(--accent-soft); border: 1px dashed rgba(255, 161, 89, 0.5);
 }
 .vnode-range { font-size: 12px; color: var(--text-muted); margin: 2px 0 6px; font-variant-numeric: tabular-nums; }
-.inspector-range h3 { font-size: 14px; margin: 16px 0 8px; }
-.inspector-range h4 { font-size: 12px; margin: 14px 0 6px; color: var(--accent-bright); }
-.range-table { width: 100%; border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; }
-.range-table th, .range-table td { padding: 4px 6px; text-align: right; }
-.range-table th:first-child, .range-table td:first-child { text-align: left; }
-.range-table thead th { color: var(--text-muted); font-weight: 600; border-bottom: 1px solid var(--border); }
-.range-table .range-group th { text-align: left; color: var(--text-secondary); padding-top: 10px; }
-.range-table .is-central td { color: var(--text-strong); font-weight: 700; }
-.range-table .is-neg { color: var(--danger); }
 .range-warning { font-size: 12px; color: #f2d38a; margin: 8px 0 0; }
 .range-drivers { list-style: none; padding: 0; margin: 0; font-size: 12px; }
 .range-drivers li { display: flex; justify-content: space-between; gap: 10px; padding: 4px 0; border-top: 1px solid var(--border); color: var(--text-secondary); }
 .range-drivers strong { color: var(--text-strong); font-variant-numeric: tabular-nums; }
-.range-note, .range-pending { font-size: 11px; color: var(--text-muted); line-height: 1.5; margin: 10px 0 0; }
 
 /* Notes on the assumptions page, e.g. converted story amounts */
 .source-note {
@@ -2903,36 +2727,6 @@ input[type="text"].slider-number.is-invalid { color: var(--danger); }
   color: var(--text-secondary);
 }
 
-/* Currency choice on the assumptions page */
-.tuning-currency {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px 12px;
-  margin: 16px 0 20px;
-}
-
-.tuning-currency label {
-  margin: 0;
-}
-
-.tuning-currency .select-wrap {
-  width: 210px;
-}
-
-.currency-rate {
-  flex-basis: 100%;
-  margin: 0;
-  color: var(--text-muted);
-  font-size: 0.8rem;
-  line-height: 1.4;
-}
-
-@media (max-width: 560px) {
-  .tuning-currency .select-wrap {
-    width: 100%;
-  }
-}
 
 /* Currency pill on the results page (timeline and full tree) */
 .currency-pill {
@@ -2987,14 +2781,6 @@ input[type="text"].slider-number.is-invalid { color: var(--danger); }
   overflow: hidden;
   clip: rect(0 0 0 0);
   white-space: nowrap;
-}
-
-/* Adding an event to the current path instead of branching */
-.append-hint {
-  margin: 14px 0 8px;
-  color: var(--text-muted);
-  font-size: 12.5px;
-  line-height: 1.5;
 }
 
 .append-button {
@@ -3611,13 +3397,6 @@ html[data-theme="light"] .currency-pill option {
   color: var(--text);
 }
 
-html[data-theme="light"] .delete-branch {
-  border-color: rgba(200, 50, 43, 0.45);
-}
-
-html[data-theme="light"] .delete-branch:hover {
-  background: rgba(200, 50, 43, 0.07);
-}
 
 html[data-theme="light"] dialog {
   box-shadow: 0 20px 60px rgba(16, 16, 14, 0.18);
@@ -3808,4 +3587,634 @@ html[data-theme="light"] :focus-visible { outline-color: #141412; }
 @media (max-width: 600px) {
   .comparison-table table { min-width: 30rem; }
   .provenance-row { overflow-wrap: anywhere; }
+}
+
+/* Small (i) that opens notes and sources next to a heading */
+.with-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.info-tip {
+  position: relative;
+  display: inline-block;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 400;
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+.info-tip > summary {
+  list-style: none;
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  font: italic 600 12px/1 Georgia, serif;
+  color: var(--text-muted);
+  cursor: pointer;
+  opacity: 0.8;
+}
+
+.info-tip > summary::-webkit-details-marker {
+  display: none;
+}
+
+.info-tip > summary:hover,
+.info-tip[open] > summary {
+  opacity: 1;
+  color: var(--accent);
+}
+
+.info-tip-body {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 8px);
+  left: -10px;
+  width: min(360px, 80vw);
+  max-height: 60vh;
+  overflow: auto;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-elevated);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.info-tip-body p {
+  margin: 0 0 10px;
+}
+
+.info-tip-body h4 {
+  margin: 12px 0 6px;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+html[data-theme="light"] .info-tip-body {
+  box-shadow: 0 12px 32px rgba(60, 40, 20, 0.18);
+}
+
+/* Heading with the currency pill on the right */
+.card-heading-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.card-heading-row h2 {
+  margin: 0;
+}
+
+.label-hint {
+  font-weight: 400;
+  color: var(--text-muted);
+}
+
+/* "How your data is used" under the story form */
+.data-use {
+  margin-top: 14px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.data-use > summary {
+  cursor: pointer;
+  width: fit-content;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.data-use p {
+  margin: 8px 0 0;
+  line-height: 1.55;
+}
+
+/* Breakdown in the details panel */
+.breakdown-group {
+  margin: 14px 0 0;
+}
+
+.breakdown-group h4 {
+  margin: 0 0 6px;
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.breakdown-group .detail-row > span {
+  display: flex;
+  flex-direction: column;
+}
+
+.detail-sub {
+  font-size: 11.5px;
+  color: var(--text-faint);
+}
+
+.detail-row.is-total {
+  border-top: 1px solid var(--border);
+  margin-top: 4px;
+  padding-top: 6px;
+}
+
+.detail-row.is-neg strong {
+  color: var(--danger);
+}
+
+.breakdown-all {
+  margin-top: 16px;
+  font-size: 12.5px;
+}
+
+.breakdown-all > summary {
+  cursor: pointer;
+  color: var(--text-muted);
+}
+
+/* Tree view: Paths and Fit in the bottom-left corner, and a one-time navigation hint */
+.tree-corner-controls {
+  position: absolute;
+  left: 24px;
+  bottom: 24px;
+  z-index: 6;
+  display: flex;
+  gap: 10px;
+  pointer-events: auto;
+}
+
+.tree-hint {
+  position: absolute;
+  left: 50%;
+  bottom: 28px;
+  z-index: 6;
+  transform: translateX(-50%);
+  margin: 0;
+  padding: 8px 16px;
+  border-radius: 999px;
+  background: rgba(40, 24, 16, 0.78);
+  backdrop-filter: blur(8px);
+  color: var(--text-secondary);
+  font-size: 13px;
+  pointer-events: none;
+  transition: opacity 0.6s ease;
+}
+
+.tree-hint.is-fading {
+  opacity: 0;
+}
+
+html[data-theme="light"] .tree-hint {
+  background: rgba(255, 255, 255, 0.85);
+}
+
+/* Sensitivity and run-file buttons, right above the chart */
+.trajectory-column {
+  min-width: 0;
+}
+
+.chart-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+/* Tabs in the details panel */
+.inspector-tabs {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  gap: 4px;
+  margin: 16px 24px 0;   /* same side padding as the panel's sections */
+  padding: 4px;
+  border-radius: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+
+.inspector-tab {
+  flex: 1;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.inspector-tab:hover {
+  color: var(--text);
+}
+
+.inspector-tab.is-active {
+  background: var(--accent-soft);
+  color: var(--text-strong);
+}
+
+.inspector-tabpanel > :first-child {
+  margin-top: 0;
+}
+
+/* Small drop-down menus, such as "+ Add…" in Check the numbers */
+.more-menu {
+  position: relative;
+}
+
+.more-menu > summary {
+  list-style: none;
+  cursor: pointer;
+}
+
+.more-menu > summary::-webkit-details-marker {
+  display: none;
+}
+
+.more-menu-list {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  min-width: 200px;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-elevated);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+}
+
+.more-menu-list button {
+  padding: 9px 12px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 13.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.more-menu-list button:hover,
+.more-menu-list button:focus-visible {
+  background: var(--accent-soft);
+}
+
+.more-menu-list button.is-danger {
+  color: var(--danger);
+}
+
+html[data-theme="light"] .more-menu-list {
+  box-shadow: 0 12px 32px rgba(60, 40, 20, 0.18);
+}
+
+.add-menu {
+  margin: 12px 0 18px;
+}
+
+.add-menu > summary {
+  width: fit-content;
+  color: var(--accent-bright);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.add-menu .more-menu-list {
+  left: 0;
+  right: auto;
+}
+
+.proposal-empty {
+  margin: 12px 0 0;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+/* "Add to this path" with its explanation behind an (i) */
+.append-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.append-row .append-button {
+  flex: 1;
+}
+
+
+/* Delete: a small blackish trash button next to the point's name in the details panel */
+.inspector-title-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 10px 0 6px;   /* the spacing the title had on its own */
+}
+
+.inspector-title-row h2 {
+  margin: 0;
+  min-width: 0;
+}
+
+.delete-path-button {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: #e2584a;   /* warm coral red: matches the orange palette and reads clearly on the brown panel */
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s, transform 0.15s;
+}
+
+.delete-path-button:hover,
+.delete-path-button:focus-visible {
+  color: #ff7566;
+  transform: scale(1.08);
+}
+
+/* Shakes when the selection moves to another path */
+.delete-path-button.is-shaking {
+  animation: delete-shake 0.6s ease-in-out;
+}
+
+@keyframes delete-shake {
+  0%, 100% { transform: rotate(0); }
+  15% { transform: rotate(-14deg); }
+  30% { transform: rotate(12deg); }
+  45% { transform: rotate(-9deg); }
+  60% { transform: rotate(6deg); }
+  75% { transform: rotate(-3deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .delete-path-button.is-shaking {
+    animation: none;
+  }
+}
+
+html[data-theme="light"] .delete-path-button {
+  color: #c43d30;   /* a deeper red for enough contrast on the light background */
+}
+
+html[data-theme="light"] .delete-path-button:hover,
+html[data-theme="light"] .delete-path-button:focus-visible {
+  color: #a52e23;
+}
+
+/* "How far this could move": one bar per figure */
+.inspector-range {
+  padding: 18px 24px 6px;   /* same side padding as the panel's sections */
+}
+
+.range-pending {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin: 10px 0 0;
+}
+
+.range-heading {
+  margin: 4px 0 10px;
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.range-row {
+  display: grid;
+  grid-template-columns: 68px auto minmax(40px, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 0;
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.range-label {
+  color: var(--text-secondary);
+}
+
+.range-end {
+  color: var(--text-muted);
+}
+
+.range-end.is-neg {
+  color: var(--danger);
+}
+
+.range-bar {
+  position: relative;
+  height: 4px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, rgba(255, 127, 112, 0.45), rgba(255, 164, 94, 0.55), rgba(136, 207, 147, 0.5));
+}
+
+.range-dot {
+  position: absolute;
+  top: 50%;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--text-strong);
+  box-shadow: 0 0 0 2px var(--surface-elevated);
+  transform: translate(-50%, -50%);
+}
+
+.range-drivers-fold {
+  margin-top: 8px;
+  font-size: 12px;
+}
+
+.range-drivers-fold > summary {
+  cursor: pointer;
+  color: var(--text-muted);
+}
+
+.range-drivers-fold .range-drivers {
+  margin-top: 6px;
+}
+
+/* Inside the details panel an (i) opens across the full width of its section, so it is never cut off by the
+   panel's edge: the popup is positioned against the section instead of the small icon. */
+.inspector .info-tip {
+  position: static;
+}
+
+.inspector-range,
+.append-row {
+  position: relative;
+}
+
+.inspector-range .info-tip-body {
+  left: 24px;
+  right: 24px;
+  top: 46px;
+  width: auto;
+}
+
+.append-row .info-tip-body {
+  left: 0;
+  right: 0;
+  top: auto;
+  bottom: calc(100% + 8px);
+  width: auto;
+}
+
+/* Space between the event description and "Get the numbers" */
+.branch-form form .primary-button {
+  margin-top: 14px;
+}
+
+/* Custom graph as a fold */
+.graph-studio > summary {
+  list-style: none;
+  cursor: pointer;
+}
+
+.graph-studio > summary::-webkit-details-marker {
+  display: none;
+}
+
+.graph-studio:not([open]) > .graph-studio-head {
+  margin-bottom: 0;
+}
+
+.graph-studio-head {
+  align-items: center;
+}
+
+.graph-studio-toggle {
+  color: var(--text-muted);
+  font-size: 16px;
+  transition: transform 0.2s ease;
+}
+
+.graph-studio[open] .graph-studio-toggle {
+  transform: rotate(180deg);
+}
+
+.graph-studio[hidden] {
+  display: none;
+}
+
+.graph-controls .graph-quick-btn {
+  align-self: flex-end;
+}
+
+/* Check the numbers: an editable title and one sentence row per amount */
+.branch-form {
+  position: relative;
+}
+
+.review-heading {
+  margin: 0 0 6px;
+}
+
+.review-heading .info-tip-body {
+  left: 24px;
+  right: 24px;
+  top: 52px;
+  width: auto;
+}
+
+.review-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.review-title-input {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 6px;
+  margin-left: -6px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-strong);
+  font-family: var(--font-serif);
+  font-size: 16px;
+}
+
+.review-title-input:hover {
+  border-color: var(--border);
+}
+
+.review-title-input:focus {
+  border-color: var(--accent);
+  background: var(--input-bg);
+  outline: none;
+}
+
+.proposal-rows {
+  display: flex;
+  flex-direction: column;
+}
+
+.proposal-row {
+  border-top: 1px solid var(--border);
+  padding: 10px 0;
+}
+
+.proposal-row:last-child {
+  border-bottom: 1px solid var(--border);
+}
+
+.proposal-row-main {
+  display: grid;
+  grid-template-columns: 1fr auto auto auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.proposal-row-text {
+  font-size: 13.5px;
+  line-height: 1.45;
+  color: var(--text);
+}
+
+.proposal-row .source-badge {
+  font-size: 10px;
+}
+
+.proposal-row-edit {
+  border: 0;
+  background: transparent;
+  color: var(--accent-bright);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 2px 4px;
+}
+
+.proposal-row.is-open .block {
+  margin-top: 10px;
 }

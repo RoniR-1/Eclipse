@@ -37,7 +37,7 @@ async function main() {
     assert.equal(await chart.getAttribute('role'), 'img');
     assert.match(await chart.getAttribute('aria-label'), /Net worth/);
     assert.ok(await chart.evaluate(element => element.getBoundingClientRect().width >= 520));
-    const button = page.getByText('Explore this moment', { exact: true }).first();
+    const button = page.getByText('Details', { exact: true }).first();
     await button.focus();
     await page.keyboard.press('Enter');
     await page.locator('#close-drawer').waitFor({ state: 'visible' });
@@ -46,13 +46,15 @@ async function main() {
     assert.equal(await button.evaluate(element => element === document.activeElement), true);
     await button.click();
     const panel = page.locator('#inspector');
+    await panel.getByRole('tab', { name: 'What if' }).click();
     await panel.locator('#branch-event').fill('Take a new job with CHF 500 higher net monthly income beginning immediately.');
     await panel.getByRole('button', { name: 'Get the numbers' }).click();
     await panel.getByText('Check the numbers').waitFor({ timeout: 120000 });
     await inspect('BRANCH REVIEW');
+    await panel.locator('.proposal-row-edit').first().click();
     const field = panel.locator('.block').first().getByLabel(/Change per month/);
     await field.fill('900');
-    assert.match((await panel.locator('.proposal-summary').innerText()).replace(/\s/g, ''), /900/);
+    assert.match((await panel.locator('.proposal-row-text').first().innerText()).replace(/\s/g, ''), /900/);
     const request = page.waitForRequest(response => response.url().endsWith('/api/branch/apply'));
     const response = page.waitForResponse(response => response.url().endsWith('/api/branch/apply'));
     await panel.getByRole('button', { name: 'Create branch' }).click();

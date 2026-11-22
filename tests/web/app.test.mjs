@@ -1,7 +1,7 @@
 // Tests for the browser logic in web/app.js. Run with: node --test tests/web/
 import { test, describe, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { loadApp, fakeDocument } from './load-app.mjs';
+import { loadApp, fakeDocument, FakeElement } from './load-app.mjs';
 
 const flow = (overrides = {}) => ({
   income_chf: 5000, expenses_chf: 3000, one_off_costs_chf: 0, debt_payments_chf: 0, debt_interest_chf: 0,
@@ -148,6 +148,198 @@ describe('branch deletion', () => {
     app.state.nodes.set(late.id, late); // arrives before the user confirms
     await pending;
     assert.ok(!app.state.nodes.has('x7'));
+  });
+});
+
+describe('breakdown in the details panel', () => {
+  const text = item => typeof item === 'string' ? item : [item.textContent, ...(item.children || []).map(text)].join(' ');
+  const point = () => ({
+    id: 'p', month: 7, date: '2026-08-01', branch_id: 'main', parent_id: 'o',
+    state: {
+      cash_chf: 16000, total_assets_chf: 53771.57, total_debt_chf: 19805.53, net_worth_chf: 33966.04,
+      price_factor: 1.0066, real_cash_chf: 15895, real_net_worth_chf: 33743, base_cpi: 100, cpi_unit: 'index',
+      assets: [{ id: 'etf', type: 'investment', value_chf: 37606.67, annual_return: 0.05 },
+        { id: '__contributions__', type: 'investment', value_chf: 164.9, annual_return: 0.04 },
+        { id: 'event-asset-p1-0', name: 'Car', type: 'vehicle', value_chf: 0, annual_return: -0.1 }],
+      debts: [{ id: 'student-loan', principal_chf: 19805.53, annual_interest_rate: 0.03, monthly_payment_chf: 350 }],
+      cash_flow: { income_chf: 7135.24, expenses_chf: 6130.27, one_off_costs_chf: 0, debt_payments_chf: 350, debt_interest_chf: 50.26,
+        investment_return_chf: 153.13, investment_contribution_chf: 54.75, net_cash_flow_chf: 600.22, cash_change_after_transfers_chf: 600.22,
+        debt_breakdown: [{ name: 'student-loan', type: null }] },
+      active_variables: { phase: { name: 'Work', end_month: null } },
+    },
+  });
+
+  test('shows the month as a statement that adds up, then holdings by name', () => {
+    ({ app } = loadApp({ document: fakeDocument() }));
+    const output = text(app.renderBreakdown(point()));
+    for (const expected of ['This month', 'Income', 'CHF +7,135', 'Living costs', 'CHF -6,130', 'Loan payments', 'of which interest CHF 50',
+      'Moved into investments', 'CHF -55', 'Change in cash', 'CHF +600', 'Investment growth', 'not cash',
+      'What you own', 'ETF', '5% a year', 'Invested savings', 'What you owe', 'Student loan', '3% a year · CHF 350 a month',
+      'In today’s prices', 'prices are 0.66% higher', 'Show all fields']) {
+      assert.ok(output.includes(expected), `missing: ${expected}`);
+    }
+    const summary = text({ textContent: '', children: app.renderBreakdown(point()).children.slice(0, -1) });
+    assert.ok(!summary.includes('One-off costs'), 'zero rows are left out');
+    assert.ok(!summary.includes('Car'), 'an empty holding is left out of the summary');
+  });
+
+  test('the full field list leaves out empty values', () => {
+    ({ app } = loadApp({ document: fakeDocument() }));
+    const output = text(app.renderBreakdown(point()));
+    assert.ok(output.includes('Base cpi'), 'every field is still listed under Show all fields');
+    assert.ok(!output.includes('End month') && !output.includes('Type —'), 'null fields are hidden');
+  });
+
+  test('the starting point has no month and no inflation section', () => {
+    ({ app } = loadApp({ document: fakeDocument() }));
+    const start = point();
+    Object.assign(start, { month: 0 });
+    start.state.price_factor = 1;
+    const output = text(app.renderBreakdown(start));
+    assert.ok(!output.includes('This month') && !output.includes('In today’s prices'));
+    assert.equal(app.holdingName({ id: 'event-asset-p1a2-0' }), 'Purchase');
+  });
+});
+
+describe('replaced plans on a branch\'s first point', () => {
+  const text = item => typeof item === 'string' ? item : [item.textContent, ...(item.children || []).map(text)].join(' ');
+  const commitments = replaced => ({
+    branch_commitments: { fork_month: 6, fork_date: '2026-07-01', replaced: { phases: [], one_off_costs: [], preferences: {}, annual_inflation: null, ...replaced },
+      new: { preferences: { savings_rate: 0.2 }, annual_inflation: 0.02 } },
+  });
+
+  test('lists only plans the branch dropped', () => {
+    ({ app } = loadApp({ document: fakeDocument() }));
+    const output = text(app.renderReplacedPlans(commitments({
+      phases: [{ name: 'Studying', start_month: 0, effective_date: '2026-07-01', monthly_income_chf: 1500, monthly_expenses_chf: 2400 },
+        { name: 'Working', start_month: 24, effective_date: '2028-01-01', monthly_income_chf: 6500, monthly_expenses_chf: 2400 }],
+      one_off_costs: [{ description: 'Tuition', date: '2026-09-01', amount_chf: 730 }],
+      preferences: { savings_rate: 0.4 }, annual_inflation: 0.015,
+    })));
+    for (const expected of ['Replaced plans', 'From 2026-07-01', 'Working from 2028-01-01: income CHF 6,500, costs CHF 2,400 a month',
+      'Tuition on 2026-09-01: CHF 730', 'Savings rate: 40% → 20%', 'Inflation: 1.5% → 2%']) {
+      assert.ok(output.includes(expected), `missing: ${expected}`);
+    }
+    assert.ok(!output.includes('Studying'), 'the phase running at the split continues, so it is not listed');
+  });
+
+  test('nothing is shown when nothing was replaced, or on other points', () => {
+    ({ app } = loadApp({ document: fakeDocument() }));
+    assert.equal(app.renderReplacedPlans(commitments({ phases: [{ name: 'Now', start_month: 0 }] })), null);
+    assert.equal(app.renderReplacedPlans({}), null);
+  });
+});
+
+describe('details panel tabs', () => {
+  const tabs = () => [
+    { id: 'overview', label: 'Overview', content: ['story', null] },
+    { id: 'details', label: 'Details', content: ['numbers'] },
+    { id: 'whatif', label: 'What if', content: ['composer'] },
+  ];
+  const parts = wrapper => ({ buttons: wrapper.children[0].children, panels: wrapper.children.slice(1) });
+
+  test('one tab shows at a time, empty sections are left out, and the choice is remembered', () => {
+    ({ app } = loadApp({ document: fakeDocument() }));
+    let { buttons, panels } = parts(app.inspectorTabs(tabs()));
+    assert.deepEqual(buttons.map(button => button.textContent), ['Overview', 'Details', 'What if']);
+    assert.deepEqual(panels.map(panel => panel.hidden), [false, true, true], 'Overview first');
+    assert.deepEqual(plain(panels[0].children), ['story'], 'missing sections are skipped');
+    buttons[2].dispatch('click');
+    assert.deepEqual(panels.map(panel => panel.hidden), [true, true, false]);
+    assert.equal(buttons[2].attributes['aria-selected'], 'true');
+    ({ buttons, panels } = parts(app.inspectorTabs(tabs())));
+    assert.equal(panels[2].hidden, false, 'the next point opens on the same tab');
+    buttons[2].dispatch('keydown', { key: 'ArrowRight' });
+    assert.equal(app.state.inspectorTab, 'overview', 'arrow keys wrap around');
+  });
+});
+
+describe('Check the numbers', () => {
+  const text = item => typeof item === 'string' ? item : [item.textContent, ...(item.children || []).map(text)].join(' ');
+  const headings = section => [...section.walk()].filter(item => item.tagName === 'H4').map(item => item.textContent);
+  const plan = { title: 'Car repair', summary: '', assumptions: '', warnings: [], changes: [], assets: [], investment_multiplier: 1,
+    one_offs: [{ label: 'Repair', amount_chf: 900, offset_months: 0, source: 'ai_estimate' }] };
+
+  test('one sentence row per amount; Edit opens its fields in place and the sentence follows the edits', () => {
+    ({ app } = loadApp({ document: fakeDocument() }));
+    const section = new FakeElement('div');
+    app.state.nodes = new Map(graph().map(item => [item.id, item]));
+    app.state.extraction = { scenario: {}, variables: [] };
+    app.renderReview(section, app.state.nodes.get('a4'), { ...plan, assumptions: 'Repair cost from a garage quote.' }, 'repair');
+    const all = () => [...section.walk()];
+    const rows = () => all().filter(item => item.classList?.contains('proposal-row'));
+    assert.equal(rows().length, 1);
+    assert.match(text(rows()[0]), /Repair: pay CHF 900 now/);
+    assert.equal(all().filter(item => item.classList?.contains('block')).length, 0, 'fields stay closed until Edit');
+    assert.equal(all().find(item => item.attributes?.id === 'branch-title').value, 'Car repair', 'the name is an editable title');
+    assert.ok(text(section).includes('Repair cost from a garage quote.'), 'assumptions are behind the (i)');
+    assert.ok(!all().some(item => item.classList?.contains('card-kicker')), 'one heading only');
+
+    rows()[0].find(item => item.textContent === 'Edit').dispatch('click');
+    const amount = rows()[0].find(item => item.tagName === 'INPUT' && item.attributes?.type === 'number');
+    amount.value = '1200';
+    amount.dispatch('input');
+    rows()[0].find(item => item.classList?.contains('block')).dispatch('input');
+    assert.match(text(rows()[0]), /Repair: pay CHF 1,200 now/);
+    assert.match(text(rows()[0]), /User confirmed/, 'an edited amount is marked as confirmed by you');
+
+    const menu = all().find(item => item.classList?.contains('add-menu'));
+    menu.find(child => child.textContent === 'Purchase').dispatch('click');
+    assert.equal(rows().length, 2);
+    assert.ok(rows()[1].classList.contains('is-open'), 'a new amount opens for editing');
+    rows()[0].find(item => item.attributes?.['aria-label'] === 'Remove this item').dispatch('click');
+    assert.equal(rows().length, 1);
+  });
+
+  test('the delete menu runs its action and closes', () => {
+    ({ app } = loadApp({ document: fakeDocument() }));
+    let chosen = 0;
+    const menu = app.dropdownMenu('More actions', '⋯', [{ label: 'Delete this path', danger: true, onSelect: () => { chosen += 1; } }]);
+    menu.open = true;
+    const button = menu.find(child => child.textContent === 'Delete this path');
+    assert.ok(button.classList.contains('is-danger'));
+    button.dispatch('click');
+    assert.equal(chosen, 1);
+    assert.equal(menu.open, false);
+  });
+});
+
+describe('how far this could move', () => {
+  const text = item => typeof item === 'string' ? item : [item.textContent, ...(item.children || []).map(text)].join(' ');
+  const show = (range) => {
+    ({ app } = loadApp({ document: fakeDocument() }));
+    app.state.nodes = new Map(graph().map(item => [item.id, item]));
+    Object.assign(app.state, { showRange: true, range, rangeKey: app.nodesKey() });
+    const section = new FakeElement('div');
+    app.fillRangeSection(section, app.state.nodes.get('a5'));
+    return section;
+  };
+
+  test('one bar per figure, the projection marked, one warning and the drivers folded', () => {
+    const section = show({
+      note: 'Each input moves within its stated range.',
+      nodes: { a5: { net_worth: [-9000, 4000], cash: [-9000, 4000] } },
+      first_shortfall: { A: { date: '2026-05-01' } },
+      drivers: { A: [{ label: 'Income', low: -3000, high: 3000 }, { label: 'Rent', low: -800, high: 900 },
+        { label: 'Tuition', low: -400, high: 400 }, { label: 'Inflation', low: -100, high: 100 }] },
+    });
+    const output = text(section);
+    const rows = [...section.walk()].filter(item => item.classList?.contains('range-row'));
+    assert.equal(rows.length, 2);
+    assert.match(output, /Net worth CHF -9\.0k\s+CHF 4\.0k/);
+    const dot = [...section.walk()].find(item => item.classList?.contains('range-dot'));
+    assert.equal(dot.attributes.style, 'left: 67.7%', 'projection −200 between −9,000 and 4,000');
+    assert.equal([...section.walk()].filter(item => item.classList?.contains('range-warning')).length, 1);
+    assert.match(output, /runs out of cash in 2026-05-01/);
+    assert.ok(output.includes('What matters most') && output.includes('Tuition') && !output.includes('Inflation'), 'top 3 drivers');
+    assert.ok(output.includes('Each input moves within its stated range.'), 'the note is behind the (i)');
+  });
+
+  test('off by default: just the button', () => {
+    ({ app } = loadApp({ document: fakeDocument() }));
+    const section = new FakeElement('div');
+    app.fillRangeSection(section, graph()[3]);
+    assert.equal(text(section).trim(), 'Show how far this could move');
   });
 });
 
