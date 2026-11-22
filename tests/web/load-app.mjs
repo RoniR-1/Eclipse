@@ -5,7 +5,7 @@ import vm from 'node:vm';
 
 const EXPORTS = [
   'state', 'branchNodeIds', 'originalPathRemovals', 'isOriginalBranch', 'deleteBranch', 'buildRunFile',
-  'buildTreeIndex', 'followingNode', 'showAppendedEvent', 'pathName', 'deleteFromNode', 'nodesFrom', 'isBranchStart',
+  'buildTreeIndex', 'renderBreakdown', 'holdingName', 'inspectorTabs', 'fillRangeSection', 'nodesKey', 'renderReview', 'dropdownMenu', 'renderReplacedPlans', 'followingNode', 'showAppendedEvent', 'pathName', 'deleteFromNode', 'nodesFrom', 'isBranchStart',
   'getPathMilestones', 'getAllGraphMilestones', 'setHideRecaps', 'getLeafPaths', 'niceTicks', 'GRAPH_METRICS', 'nodeHealth',
   'formatVariable', 'milestoneTitle', 'money', 'moneySigned', 'compactChf', 'escapeHtml',
   'variableToDisplay', 'parseVariableInput', 'renderTuning', 'renderStructuredComparison', 'inputSource',
@@ -94,6 +94,7 @@ export class FakeElement {
   setAttribute(name, value) { this.attributes[name] = String(value); }
   removeAttribute(name) { delete this.attributes[name]; }
   addEventListener(type, listener) { (this.listeners[type] ||= []).push(listener); }
+  focus() {}
   dispatch(type, extra = {}) { for (const listener of this.listeners[type] || []) listener({ type, target: this, preventDefault() {}, ...extra }); }
   *walk() { for (const child of this.children) { yield child; if (child instanceof FakeElement) yield* child.walk(); } }
   find(predicate) { for (const node of this.walk()) if (predicate(node)) return node; return null; }

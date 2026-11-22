@@ -71,10 +71,9 @@
           <div class="intake-card">
             <div class="card-top"><span class="card-kicker">YOUR STARTING POINT</span></div>
             <h2>What’s on your mind?</h2>
-            <p>Use a fictional household. Include take-home pay, living costs and the decision you want to compare.</p>
 
             <form id="intake-form">
-              <label for="statement">Your financial story</label>
+              <label for="statement">Your financial story <span class="label-hint">(use a fictional household)</span></label>
               <textarea id="statement" name="statement" required minlength="10" placeholder="I have CHF 15,000 saved and earn CHF 5,000 a month. I’m thinking about going back to school in two years and want to understand what that could mean for my savings..."></textarea>
 
               <div class="preset-chips">
@@ -101,35 +100,14 @@
               </div>
               <p class="form-error" id="intake-error" role="alert"></p>
             </form>
-          </div>
-        </div>
-
-        <div class="intake-faq" aria-label="Methodology and privacy">
-          <div class="intake-faq-head">
-            <div>
-              <span class="card-kicker">ABOUT &amp; METHODOLOGY</span>
-              <h2>Assumptions &amp; privacy</h2>
-            </div>
-          </div>
-
-          <div class="intake-faq-grid">
-            <details class="privacy-details faq-item">
+            <details class="data-use">
               <summary>How your data is used</summary>
-              <div class="faq-body">
-                <p>Free-text extraction sends the story to the configured AI provider. A branch proposal sends the event description and selected financial details. A named public milestone may trigger a provider search. Provider retention depends on the account and service used.</p>
-                <p>The server stores validated AI answers in <code>AI_CACHE_DIR</code> (normally <code>.local/ai-cache</code>) until the operator removes those files. PostgreSQL stores public milestone names, estimates and sources. Entries expire for reuse after 180 days by default and remain in the database until the operator deletes them. Downloaded runs contain scenario inputs and results. You can delete them from your device.</p>
-              </div>
-            </details>
-
-            <details class="privacy-details faq-item">
-              <summary>Income, currency and household assumptions</summary>
-              <div class="faq-body">
-                <p>Enter income after taxes and social contributions. The engine calculates in CHF using a dated reference rate for other currencies. Cross-border paths use the supplied amounts throughout and omit changes in exchange rates, local taxes and exchange fees.</p>
-                <p>Missing costs may come from synthetic sample averages. Households in that sample have similar spending even when their income, employment and family size differ. Review whether those amounts fit your fictional household.</p>
-              </div>
+              <p>Your story is sent to the AI provider to read your numbers. A new event sends its description and the figures it needs, and a named public place or programme, such as a university, may be looked up on the web. How long the provider keeps requests depends on its terms.</p>
+              <p>Checked AI answers are saved on this server, so the same story gives the same numbers. Figures and sources for public milestones are kept in its database and reused for 180 days. Both stay until the operator deletes them. Run files you download stay on your device until you delete them.</p>
             </details>
           </div>
         </div>
+
       </section>
 
       <!-- STAGE 2: TUNING -->
@@ -138,7 +116,6 @@
           <div>
             <div class="eyebrow"><span></span> YOUR SCENARIO</div>
             <h1>Make it <em>yours.</em></h1>
-            <p>Fine-tune the assumptions that matter to your story.</p>
           </div>
           <button class="text-button" id="edit-story" type="button">Edit your story</button>
         </div>
@@ -146,30 +123,23 @@
         <div class="tuning-grid">
           <div class="summary-card">
             <div class="card-kicker">THE PICTURE SO FAR</div>
-            <h2>Your starting point</h2>
+            <h2 class="with-info">Your starting point <details class="info-tip"><summary aria-label="About these figures and their sources" title="About these figures and their sources">i</summary><div class="info-tip-body"><p id="currency-note" hidden></p><p class="caveat" data-caveat></p><h4>Sources of starting values</h4><div id="input-provenance"></div></div></details></h2>
             <p id="scenario-summary"></p>
-            <p id="currency-note" class="source-note" hidden></p>
             <div id="baseline" class="baseline"></div>
             <div id="assumptions" class="assumptions"></div>
-            <details class="privacy-details"><summary>Sources of starting values</summary><div id="input-provenance"></div></details>
             <div id="goal-editor"></div>
-            <p class="summary-note">Income is net. Taxes and social contributions are not deducted separately. Calculations use CHF and the displayed reference FX rate may not reflect future or transaction rates. Inflation follows the supplied assumptions. The model does not automatically borrow or sell assets to cover a cash gap. Synthetic sample averages may not describe an individual household.</p>
-            <p class="summary-note">Review these inferred figures before exploring your future.</p>
           </div>
 
           <div class="sliders-card">
             <div class="card-top"><span class="card-kicker">FINE-TUNE YOUR FUTURE</span></div>
-            <h2>Adjust your assumptions</h2>
-            <p>Move the controls to reflect what feels right for you.</p>
-            <!-- Outside the form: the simulation only takes the slider values -->
-            <div class="tuning-currency">
-              <label for="currency">Currency</label>
-              <div class="select-wrap">
-                <select id="currency" class="currency-select" aria-describedby="currency-rate">
-                  <option value="CHF" selected>CHF · Swiss franc</option>
+            <div class="card-heading-row">
+              <h2>Adjust your assumptions</h2>
+              <label class="currency-pill" title="Calculations are in Swiss francs.">
+                <span class="visually-hidden">Currency</span>
+                <select id="currency" class="currency-select" aria-label="Currency">
+                  <option value="CHF" selected>CHF</option>
                 </select>
-              </div>
-              <p class="currency-rate" id="currency-rate">Calculations are in Swiss francs.</p>
+              </label>
             </div>
             <form id="simulate-form">
               <div id="sliders"></div>
@@ -196,7 +166,6 @@
             <div class="results-actions">
               <button class="text-button" id="return-to-original" type="button" hidden><span aria-hidden="true">←</span> Original path</button>
               <button class="ghost-button recaps-toggle" id="toggle-recaps-timeline" type="button" aria-pressed="false" title="Hide periodic recap points, leaving only starting points, events and endpoints">Hide recaps</button>
-              <button class="ghost-button" id="jump-to-summary" type="button">Summary <span aria-hidden="true">↓</span></button>
               <button class="ghost-button" id="switch-to-tree" type="button">Full tree <span aria-hidden="true">⑂</span></button>
               <label class="currency-pill" title="Currency for every amount shown. Calculations stay in CHF.">
                 <span class="visually-hidden">Currency</span>
@@ -219,17 +188,17 @@
             <div class="summary-head">
               <div>
                 <div class="eyebrow"><span></span> HORIZON SUMMARY</div>
-                <h2>Where this path <em>leads.</em></h2>
-              </div>
-              <div class="summary-head-actions">
-                <button class="ghost-button" id="toggle-sensitivity-panel" type="button" aria-expanded="false">Sensitivity & checks</button>
-                <button class="ghost-button" id="download-run" type="button" title="Save every input and result of this run so it can be replayed exactly with scripts/reproduce.py">Download run file <span aria-hidden="true">⤓</span></button>
-                <button class="text-button" id="back-to-top" type="button">↑ Back to top</button>
+                <h2 class="with-info">Where this path <em>leads.</em> <details class="info-tip"><summary aria-label="About these results" title="About these results">i</summary><div class="info-tip-body"><p class="caveat" data-caveat></p></div></details></h2>
               </div>
             </div>
 
             <div class="summary-layout">
               <div class="summary-numbers" id="path-kpis"></div>
+              <div class="trajectory-column">
+              <div class="chart-actions">
+                <button class="ghost-button" id="toggle-sensitivity-panel" type="button" aria-expanded="false">Sensitivity &amp; checks</button>
+                <button class="ghost-button" id="download-run" type="button" title="Save this run's inputs and results so it can be checked later">Download run file <span aria-hidden="true">⤓</span></button>
+              </div>
               <div class="trajectory-card">
                 <div class="trajectory-top">
                   <span class="card-kicker" id="trajectory-title">NET WORTH OVER TIME</span>
@@ -242,21 +211,21 @@
                 <div class="trajectory-chart-wrap" id="trajectory-chart"></div>
                 <div class="trajectory-legend" id="trajectory-legend"></div>
               </div>
+              </div>
             </div>
-            <p class="summary-note">Amounts use CHF calculations and the selected display rate. Income is take-home pay with no separate tax or social-contribution calculation. Inflation follows each path’s assumptions. Negative cash shows funding needed before any borrowing or asset sale. The range shows the effect of changing assumptions and carries no probability.</p>
 
             <!-- Full-width Sensitivity & Model Checks Panel (opens on demand) -->
             <div id="path-report-panel" class="path-report-panel" aria-live="polite" hidden></div>
 
-            <!-- Minimalistic Custom Comparison Graph (always visible, starts empty) -->
-            <div id="graph-studio" class="graph-studio">
-              <div class="graph-studio-head">
+            <!-- Custom comparison graph: shown once there is a branch to compare, folded until opened -->
+            <details id="graph-studio" class="graph-studio" hidden>
+              <summary class="graph-studio-head">
                 <div>
                   <span class="card-kicker">CUSTOM GRAPH</span>
                   <h3>Compare branches over time</h3>
                 </div>
-                <button type="button" class="text-button graph-quick-btn" id="graph-clear-all" hidden>Clear graph</button>
-              </div>
+                <span class="graph-studio-toggle" aria-hidden="true">▾</span>
+              </summary>
 
               <div class="graph-controls">
                 <div class="graph-control">
@@ -272,11 +241,12 @@
                     <select id="graph-branch-select"></select>
                   </div>
                 </div>
+                <button type="button" class="text-button graph-quick-btn" id="graph-clear-all" hidden>Clear graph</button>
               </div>
 
               <div class="graph-selected-chips" id="graph-selected-branches" aria-label="Branches on graph" hidden></div>
               <div id="graph-preview-slot" class="graph-preview-slot"></div>
-            </div>
+            </details>
           </section>
 
           <!-- Floating Corner Tree Minimap (click block for full tree, click dot to jump) -->
@@ -294,9 +264,7 @@
           <div class="tree-top-bar">
             <div class="tree-top-left">
               <button class="ghost-button" id="back-to-timeline" type="button">← Back to timeline</button>
-              <button class="ghost-button" id="toggle-paths-panel" type="button" aria-expanded="false">Your paths</button>
               <button class="ghost-button recaps-toggle" id="toggle-recaps-tree" type="button" aria-pressed="false" title="Hide periodic recap points, leaving only starting points, events and endpoints">Hide recaps</button>
-              <button class="ghost-button" id="fit-graph" type="button">Fit</button>
               <label class="currency-pill" title="Currency for every amount shown. Calculations stay in CHF.">
                 <span class="visually-hidden">Currency</span>
                 <select id="currency-tree" class="currency-select" aria-label="Currency">
@@ -311,13 +279,18 @@
             </div>
           </div>
 
+          <div class="tree-corner-controls">
+            <button class="ghost-button" id="toggle-paths-panel" type="button" aria-expanded="false">Your paths</button>
+            <button class="ghost-button" id="fit-graph" type="button" title="Show the whole tree">Fit</button>
+          </div>
+          <p class="tree-hint" id="tree-hint" role="status" hidden>Drag to pan · Scroll to zoom · Click a point for details</p>
+
           <div class="graph-card tree-left-sheet" id="tree-controls-panel" hidden>
             <div class="panel-bar">
               <span class="card-kicker">YOUR PATHS</span>
               <button class="drawer-close" id="close-paths-panel" type="button" aria-label="Close paths">×</button>
             </div>
             <div class="panel-body">
-              <p class="tree-controls-hint">Drag canvas to pan · Scroll to zoom · Click any node for details</p>
               <label class="milestone-label" for="milestone-select">Jump to point</label>
               <div class="select-wrap">
                 <select id="milestone-select"></select>

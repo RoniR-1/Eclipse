@@ -183,7 +183,7 @@ Run `.local/venv/bin/python -m unittest discover -s tests -v` from the workspace
 
 ## Currencies
 
-The assumptions page has a **Currency** menu with CHF, EUR, USD, GBP, JPY, CNY, CAD, AUD, SEK, NOK, DKK, PLN and INR, and the timeline and full-tree views have a compact one next to their buttons. All menus stay in sync. Switching redraws what is on screen in the new currency and keeps the values set so far. The choice is remembered in the browser, and the next story is read with it: amounts written without a currency count as that currency, which the assumptions page states.
+The assumptions page has a **Currency** menu with CHF, EUR, USD, GBP, JPY, CNY, CAD, AUD, SEK, NOK, DKK, PLN and INR, and the timeline and full-tree views have a compact one next to their buttons. All menus stay in sync. Switching redraws what is on screen in the new currency and keeps the values set so far. The choice is remembered in the browser, and the next story is read with it: amounts written without a currency count as that currency, which the assumptions page's ⓘ states.
 
 The engine always calculates in CHF, because the Swiss reference data is in CHF. Another currency is a view on the same numbers:
 
@@ -191,7 +191,7 @@ The engine always calculates in CHF, because the Swiss reference data is in CHF.
 - **Typed amounts** are read in the chosen currency and converted to CHF before they are sent: assumption text boxes, node edits and the building blocks of a branch proposal.
 - **The story and branch events** are converted on the server before the AI sees them. An amount written with a currency (`€15,000`, `4'200 EUR`, `50k euros`, `£1.5m`, `USD 20,000`) is rewritten as CHF in code, for example `CHF 13,835.09 (written as €15,000)`, so the AI does no arithmetic on it. For amounts without a currency, the prompt states the chosen currency and the exact rate. `$`, `¥` and `kr` mean the chosen currency when it uses that symbol; otherwise `$` is USD, `¥` is JPY, and `kr` is left to the AI. The assumptions page lists every conversion it made.
 
-Rates are the European Central Bank reference rates from the free Frankfurter service (`https://api.frankfurter.dev`, no key; only the base currency is sent). They are kept for 6 hours and saved in `.local/exchange-rates.json`. If the service cannot be reached, the saved rates are used, and failing that, built-in rates of 2026-11-20 in `financial_twin/currency.py`; offline, the service is tried again after 5 minutes. The assumptions page states the rate, its date and its source, and `GET /api/currencies` returns them.
+Rates are the European Central Bank reference rates from the free Frankfurter service (`https://api.frankfurter.dev`, no key; only the base currency is sent). They are kept for 6 hours and saved in `.local/exchange-rates.json`. If the service cannot be reached, the saved rates are used, and failing that, built-in rates of 2026-11-20 in `financial_twin/currency.py`; offline, the service is tried again after 5 minutes. Hovering over a currency menu shows the rate, its date and its source, and `GET /api/currencies` returns them.
 
 Run files keep every number in CHF and record the display currency and its rate under `display_currency`, so replays are unaffected. The AI cache key includes the converted text and the rate: the same story in the same currency gives the same numbers for as long as the rate is unchanged. Comparison API amounts carry explicit CHF units.
 

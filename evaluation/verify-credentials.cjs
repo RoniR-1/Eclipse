@@ -51,8 +51,9 @@ async function verify(browser, status) {
     assert.equal(await page.locator('#offline-demo').evaluate(button => button === document.activeElement), true);
     await page.locator('#offline-demo').press('Enter');
     await page.locator('#results').waitFor();
-    const inspect = page.getByText('Explore this moment', { exact: true }).first();
+    const inspect = page.getByText('Details', { exact: true }).first();
     await inspect.click();
+    await page.locator('#inspector').getByRole('tab', { name: 'What if' }).click();
     await page.locator('#branch-event').fill(proposal);
     await page.getByRole('button', { name: 'Get the numbers' }).press('Enter');
     await page.locator('#inspector [role="alert"]').filter({ hasText: pattern }).waitFor();
