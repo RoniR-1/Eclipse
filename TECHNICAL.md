@@ -159,6 +159,20 @@ Each addition is recorded in the run file's `branches` list as `kind: "append"` 
 
 The pessimistic run moves every input to its unfavourable side at once and the optimistic run to its favourable side, to construct two stress scenarios. Neither line estimates a probability or bounds every possible outcome. Ranges are centred on the values shown: low = shown + (pessimistic − unadjusted re-simulation), so the band never drifts from the timeline. The response also lists, per branch, the first month cash turns negative in the pessimistic case and the inputs ranked by their effect on the branch's final net worth (each moved on its own). The starting-cost stress applies even when someone has entered that value. `tests/test_uncertainty.py` checks that the unadjusted re-simulation reproduces every node exactly, hand-calculated driver effects, widening over time and input validation.
 
+## Goals scorecard
+
+**Goals** (in the results header and the tree's top bar) opens a panel where users describe their goals in their own words or add them in a form, then rank every path on screen with **Find the best path**. Goals are kept in the browser (`localStorage`).
+
+The AI does one thing: `POST /api/goals/parse` turns the user's sentence into structured goals (`financial_twin/goals.py`, `GOALS_SCHEMA`), through the AI cache, for the user to review and edit. Nothing is trained, and the AI never ranks. `POST /api/goals/score` is deterministic: it takes the nodes on screen and the goals, computes the uncertainty range (`financial_twin/uncertainty.py`) and checks every path:
+
+| Goal type | Met when |
+| --- | --- |
+| `cash_by_date` | cash at the goal month ≥ target (e.g. a down payment) |
+| `net_worth_by_date` | net worth at the goal month ≥ target |
+| `never_short` | cash never negative over the path |
+
+Per goal and path the response gives the gap (value − target), the closeness (value ÷ target capped at 100%, or the share of months with cash ≥ 0) and a status: *robust* (met even in the pessimistic range), *fragile* (met, but not pessimistically), *within reach* (met only in the optimistic range) or *missed*. A path's score is the priority-weighted mean closeness (high 3, medium 2, low 1); ties go to more robust goals, then higher final net worth. Goals are judged independently, so two cash goals do not share one pot of money, and a goal dated after a path ends is judged at its last month. `tests/test_goals.py` checks hand-calculated statuses and gaps, the weighting, ranking, validation and the parsing step.
+
 ## Check the implementation
 
 Run `.local/venv/bin/python -m unittest discover -s tests -v` from the workspace root. Historical organizer-data audits additionally use a local, authorized copy of the challenge files. This also runs the browser-logic tests when Node.js is installed; run them on their own with `node --test tests/web/app.test.mjs`. The starter's original tests can also be run from `ai-financial-twin-lauzhack-2026/starter-kit` with `python3 -m unittest -v`.

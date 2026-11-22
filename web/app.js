@@ -5021,6 +5021,142 @@ document.addEventListener('visibilitychange', () => {
 });
 
 document.querySelectorAll('.range-toggle').forEach(toggle => toggle.addEventListener('click', () => setRangeVisible(!state.showRange)));
+
+// ── Goals scorecard: the user's goals, checked against every path (POST /api/goals/score) ──
+
+const GOAL_TYPES = { cash_by_date: 'Cash by a date', net_worth_by_date: 'Net worth by a date', never_short: 'Never run out of cash' };
+const GOAL_STATUS = {
+  robust: ['✓', 'Met, even if estimates are off'], fragile: ['✓', 'Met, but not if estimates are worse'],
+  within_reach: ['~', 'Only met if estimates turn out better'], missed: ['✗', 'Missed'],
+};
+const GOALS_STORAGE = 'eclipse_goals';
+state.goals = (() => { try { return JSON.parse(localStorage.getItem(GOALS_STORAGE)) || []; } catch { return []; } })();
+
+function saveGoals() {
+  try { localStorage.setItem(GOALS_STORAGE, JSON.stringify(state.goals)); } catch { /* storage unavailable */ }
+}
+
+function startMonth(offsetMonths = 0) {
+  const root = [...state.nodes.values()].find(node => !node.parent_id);
+  const base = new Date(`${(root?.date || new Date().toISOString()).slice(0, 7)}-01T00:00:00`);
+  base.setMonth(base.getMonth() + offsetMonths);
+  return `${base.getFullYear()}-${String(base.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function goalRow(goal, index) {
+  const update = () => { saveGoals(); };
+  const name = el('input', { type: 'text', maxlength: 60, placeholder: 'Name', 'aria-label': 'Goal name' });
+  name.value = goal.name || '';
+  name.addEventListener('input', () => { goal.name = name.value; update(); });
+  const type = el('select', { 'aria-label': 'Goal type' }, ...Object.entries(GOAL_TYPES).map(([value, text]) => el('option', { value, text })));
+  type.value = goal.type;
+  const amount = el('input', { type: 'number', min: 0, step: 100, 'aria-label': 'Target in CHF' });
+  amount.value = goal.target_chf ?? '';
+  amount.addEventListener('input', () => { goal.target_chf = amount.value === '' ? null : Number(amount.value); update(); });
+  const when = el('input', { type: 'month', 'aria-label': 'Target month' });
+  when.value = goal.date || '';
+  when.addEventListener('input', () => { goal.date = when.value; update(); });
+  const priority = el('select', { 'aria-label': 'Priority' }, ...['high', 'medium', 'low'].map(value => el('option', { value, text: `${value[0].toUpperCase()}${value.slice(1)} priority` })));
+  priority.value = goal.priority || 'medium';
+  priority.addEventListener('change', () => { goal.priority = priority.value; update(); });
+  const amountWrap = el('label', { class: 'goal-field' }, el('span', { text: 'Target (CHF)' }), amount);
+  const whenWrap = el('label', { class: 'goal-field' }, el('span', { text: 'By' }), when);
+  const showFields = () => { const hidden = goal.type === 'never_short'; amountWrap.hidden = hidden; whenWrap.hidden = hidden; };
+  type.addEventListener('change', () => { goal.type = type.value; showFields(); update(); });
+  showFields();
+  const remove = el('button', { type: 'button', class: 'block-remove', 'aria-label': 'Remove this goal', text: '×',
+    onclick: () => { state.goals.splice(index, 1); saveGoals(); renderGoalsList(); } });
+  return el('div', { class: 'goal-row' },
+    el('div', { class: 'goal-row-top' }, name, remove),
+    el('div', { class: 'goal-row-fields' },
+      el('label', { class: 'goal-field' }, el('span', { text: 'Type' }), type), amountWrap, whenWrap,
+      el('label', { class: 'goal-field' }, el('span', { text: 'Priority' }), priority)));
+}
+
+function renderGoalsList() {
+  const list = byId('goals-list');
+  list.replaceChildren(...state.goals.map((goal, index) => goalRow(goal, index)));
+  if (!state.goals.length) list.append(el('p', { class: 'goals-empty', text: 'No goals yet. Describe them above or add one.' }));
+}
+
+function goalCell(result) {
+  const [icon, title] = GOAL_STATUS[result.status] || ['?', result.status];
+  const gap = result.gap_chf === null || result.gap_chf === undefined ? '' : ` ${result.gap_chf >= 0 ? '+' : '−'}${compactChf(Math.abs(result.gap_chf))}`;
+  return el('td', { class: `goal-cell is-${result.status}`, title: [title, result.note].filter(Boolean).join(' · ') },
+    el('span', { class: 'goal-icon', text: icon }), el('span', { text: result.gap_chf ? gap : '' }));
+}
+
+function renderScorecard(card) {
+  const box = byId('goals-result');
+  const index = buildTreeIndex();
+  const table = el('table', { class: 'goals-table' },
+    el('thead', {}, el('tr', {}, el('th', { text: '#' }), el('th', { text: 'Path' }), el('th', { text: 'Closeness' }),
+      ...card.goals.map(goal => el('th', { text: goal.name, title: GOAL_TYPES[goal.type] })), el('th', { text: '' }))));
+  const body = el('tbody');
+  for (const row of card.paths) {
+    const label = index.branchMeta.get(row.branch_id)?.label || (row.branch_id === 'main' ? 'Original path' : 'Path');
+    const view = el('button', { type: 'button', class: 'text-button goals-view', text: 'View',
+      onclick: () => { byId('goals-dialog').close(); switchActivePath(row.branch_id, { focusNodeId: row.tip_id }); } });
+    body.append(el('tr', { class: row.rank === 1 ? 'is-best' : '' },
+      el('td', { text: String(row.rank) }), el('td', { class: 'goals-path', text: label }),
+      el('td', { text: `${Math.round(row.score * 100)}%`, title: `${row.goals_met} of ${card.goals.length} goals met, ${row.robust} robustly` }),
+      ...row.results.map(goalCell), el('td', {}, view)));
+  }
+  table.append(body);
+  const best = card.paths[0];
+  const bestLabel = index.branchMeta.get(best.branch_id)?.label || 'Original path';
+  box.replaceChildren(
+    el('h3', { text: `Closest to your goals: ${bestLabel}` }),
+    el('p', { class: 'goals-summary', text: `${best.goals_met} of ${card.goals.length} goals met (${best.robust} even if estimates are off).` }),
+    el('div', { class: 'goals-table-wrap' }, table),
+    el('p', { class: 'goals-legend', text: '✓ met · ~ only if estimates turn out better · ✗ missed · amounts show how far above or below the target the path is. Hover a cell for details.' }),
+    el('p', { class: 'range-note', text: card.method }));
+}
+
+async function readGoals() {
+  const text = byId('goals-text').value.trim();
+  const error = byId('goals-error');
+  error.textContent = '';
+  if (!text) { error.textContent = 'Describe your goals first.'; return; }
+  const button = byId('goals-read');
+  setButtonLoading(button, true, 'Reading…', 'Read my goals');
+  try {
+    const root = [...state.nodes.values()].find(node => !node.parent_id);
+    const result = await request('/api/goals/parse', { text, start_date: root?.date });
+    state.goals = result.goals.map(({ id, ...goal }) => goal);
+    saveGoals();
+    renderGoalsList();
+  } catch (problem) { error.textContent = problem.message; }
+  finally { setButtonLoading(button, false, 'Reading…', 'Read my goals'); }
+}
+
+async function scoreGoals() {
+  const error = byId('goals-error');
+  error.textContent = '';
+  if (!state.nodes.size) { error.textContent = 'Run a simulation first.'; return; }
+  if (!state.goals.length) { error.textContent = 'Add at least one goal.'; return; }
+  const button = byId('goals-score');
+  setButtonLoading(button, true, 'Checking every path…', 'Find the best path');
+  try {
+    const card = await request('/api/goals/score', { nodes: [...state.nodes.values()], goals: state.goals });
+    renderScorecard(card);
+    byId('goals-result').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  } catch (problem) { error.textContent = problem.message; }
+  finally { setButtonLoading(button, false, 'Checking every path…', 'Find the best path'); }
+}
+
+for (const button of document.querySelectorAll('.goals-open')) {
+  button.addEventListener('click', () => { renderGoalsList(); byId('goals-dialog').showModal(); });
+}
+byId('goals-close')?.addEventListener('click', () => byId('goals-dialog').close());
+byId('goals-read')?.addEventListener('click', readGoals);
+byId('goals-score')?.addEventListener('click', scoreGoals);
+byId('goals-add')?.addEventListener('click', () => {
+  state.goals.push({ name: '', type: 'cash_by_date', target_chf: 20000, date: startMonth(36), priority: 'medium' });
+  saveGoals();
+  renderGoalsList();
+});
+
 for (const btn of document.querySelectorAll('.recaps-toggle')) {
   btn.addEventListener('click', () => setHideRecaps(!state.hideRecaps));
 }
